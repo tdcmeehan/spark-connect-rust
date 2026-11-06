@@ -3,22 +3,21 @@
 //! # Overview
 //!
 //! Spark Connect has no native "run this Rust code" UDF type. What it *does*
-//! have is the [`PythonUDF`](crate::udf) path: a cloudpickled `(callable,
+//! have is the [`PythonUDF`](crate::udf) path: a pickled `(callable,
 //! return_type)` tuple shipped inside a `CommonInlineUserDefinedFunction` and
-//! executed row-by-row on the Spark executors by a Python worker.
+//! executed on the Spark executors by a Python worker.
 //!
 //! This module leverages that path to run **Rust** UDFs, distributed on the
 //! cluster, without touching the Spark server:
 //!
 //! 1. The user compiles their Rust function to a WebAssembly module.
-//! 2. [`udf`] embeds the `.wasm` bytes and the signature and runs a packer script
-//!    **embedded in this crate** as `python -c` (so it executes as `__main__`),
-//!    which uses `cloudpickle` to serialize a `WasmScalarUDF` runner **by value**
-//!    into the `command`. Running it as `__main__` is what makes cloudpickle embed
-//!    the runner by value, so there is no separate `pyspark_wasm_udf` pip package to
-//!    install on the client and the executors need only the `wasmtime` package.
+//! 2. [`udf`] writes the `command` pickle itself, so the client needs no Python. It
+//!    carries the `.wasm` bytes, the signature, and the source of the Python runner
+//!    embedded in this crate (`wasm_runner.py`), which the worker compiles when it
+//!    loads the command.
 //! 3. On each executor the runner instantiates the module with `wasmtime` and
-//!    invokes the exported entrypoint once per input row.
+//!    calls the exported entrypoint once per Arrow batch, or once per row for
+//!    signatures the batch export doesn't cover.
 //!
 //! # ABI
 //!
@@ -50,17 +49,10 @@
 //!
 //! # Requirements
 //!
-//! Building the command requires, on the client machine only, a Python
-//! interpreter with `pyspark` importable (for its vendored `cloudpickle` and the
-//! pure-Python type parser). The packer script itself is embedded in this crate, so
-//! nothing extra needs installing — and the Spark executors need only the
-//! `wasmtime` Python package.
-
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-
-use base64::Engine as _;
+//! Nothing on the client. The Spark executors need the `wasmtime` Python package,
+//! and `pyarrow` for batch UDFs. The command names the executors' Python version,
+//! which the worker checks: set it with [`UserDefinedFunction::with_python_ver`] or
+//! `$SPARK_CONNECT_PYTHON_VERSION` (default `3.11`).
 
 use crate::column::Column;
 use crate::expression::ExpressionNode;
@@ -141,7 +133,7 @@ impl AbiType {
     }
 
     /// Spark's canonical type JSON (`DataType.jsonValue()` form), which the
-    /// packer parses with `_parse_datatype_json_value` — so any type maps
+    /// worker parses with `_parse_datatype_json_string` — so any type maps
     /// generically without a hand-maintained token table.
     fn to_spark_json(&self) -> serde_json::Value {
         use serde_json::json;
@@ -163,110 +155,72 @@ impl AbiType {
     }
 }
 
-/// The packer script, embedded at compile time. Run as `python -c <this>` (so it
-/// executes as `__main__`), which makes cloudpickle serialize the `WasmScalarUDF`
-/// runner by value automatically — no `pyspark_wasm_udf` pip package is needed on
-/// the client (only a Python interpreter with `pyspark`) or on the executors (only
-/// `wasmtime`).
-const PACKER_SRC: &str = include_str!("wasm_packer.py");
+/// The Python runner the executors use, carried inside every command.
+const RUNNER_SRC: &str = include_str!("wasm_runner.py");
 
-/// How to invoke the Python packer that turns a WASM UDF into the cloudpickled
-/// `command` bytes.
-#[derive(Debug, Clone)]
-pub struct PythonPacker {
-    /// The Python executable to run (default: `$SPARK_CONNECT_PYTHON`, else
-    /// `$PYSPARK_PYTHON`, else `python3`).
-    pub python_exe: String,
-    /// Extra directories prepended to `PYTHONPATH` (e.g. to locate `pyspark` if it
-    /// is not already importable by `python_exe`); default `$SPARK_CONNECT_WASM_PACKER_PATH`
-    /// if set. The packer itself is embedded in the crate, so this is only for deps.
-    pub pythonpath: Vec<PathBuf>,
-}
-
-impl Default for PythonPacker {
-    fn default() -> Self {
-        let python_exe = std::env::var("SPARK_CONNECT_PYTHON")
-            .or_else(|_| std::env::var("PYSPARK_PYTHON"))
-            .unwrap_or_else(|_| "python3".to_string());
-        let pythonpath = std::env::var("SPARK_CONNECT_WASM_PACKER_PATH")
-            .ok()
-            .map(|p| vec![PathBuf::from(p)])
-            .unwrap_or_default();
-        PythonPacker {
-            python_exe,
-            pythonpath,
-        }
-    }
-}
-
-impl PythonPacker {
-    /// Run the embedded packer via `python -c <PACKER_SRC>`, feeding `spec_json` on
-    /// stdin and returning the raw `command` bytes from stdout. Running it as `-c`
-    /// (i.e. `__main__`) is what lets cloudpickle embed the runner by value.
-    fn run(&self, spec_json: &str) -> Result<Vec<u8>> {
-        use spark_connect_core::error::SparkError;
-        let mut cmd = Command::new(&self.python_exe);
-        cmd.arg("-c")
-            .arg(PACKER_SRC)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if !self.pythonpath.is_empty() {
-            let mut joined = self
-                .pythonpath
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join(pathsep());
-            if let Ok(existing) = std::env::var("PYTHONPATH") {
-                joined.push_str(pathsep());
-                joined.push_str(&existing);
+/// The UDF's `command`: a protocol-4 pickle that, when the Python worker loads it,
+/// compiles [`RUNNER_SRC`] into a fresh namespace and returns
+/// `_spark_connect_wasm_udf_command(wasm, entrypoint, arg_types, ret_type,
+/// output_type, batch)`. Spark loads commands with `pickle`, so writing these few
+/// opcodes here is what keeps Python off the client.
+fn command_pickle(
+    wasm: &[u8],
+    entrypoint: &str,
+    arg_types: &[String],
+    ret_type: &str,
+    output_type: &str,
+    batch: bool,
+) -> Vec<u8> {
+    fn text(out: &mut Vec<u8>, s: &str) {
+        match u8::try_from(s.len()) {
+            Ok(n) => out.extend_from_slice(&[0x8c, n]), // SHORT_BINUNICODE
+            Err(_) => {
+                out.push(b'X'); // BINUNICODE
+                out.extend_from_slice(&(s.len() as u32).to_le_bytes());
             }
-            cmd.env("PYTHONPATH", joined);
         }
-
-        let mut child = cmd.spawn().map_err(|e| {
-            SparkError::connect_msg(format!(
-                "failed to spawn WASM UDF packer '{}': {e}",
-                self.python_exe
-            ))
-        })?;
-
-        child
-            .stdin
-            .take()
-            .expect("stdin was piped")
-            .write_all(spec_json.as_bytes())
-            .map_err(|e| SparkError::connect_msg(format!("failed to write UDF spec: {e}")))?;
-
-        let output = child
-            .wait_with_output()
-            .map_err(|e| SparkError::connect_msg(format!("WASM UDF packer failed: {e}")))?;
-
-        if !output.status.success() {
-            return Err(SparkError::connect_msg(format!(
-                "WASM UDF packer exited with {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
-        }
-        if output.stdout.is_empty() {
-            return Err(SparkError::connect_msg(
-                "WASM UDF packer produced an empty command".to_string(),
-            ));
-        }
-        Ok(output.stdout)
+        out.extend_from_slice(s.as_bytes());
     }
-}
+    fn global(out: &mut Vec<u8>, module: &str, name: &str) {
+        text(out, module);
+        text(out, name);
+        out.push(0x93); // STACK_GLOBAL
+    }
 
-#[cfg(windows)]
-fn pathsep() -> &'static str {
-    ";"
-}
-#[cfg(not(windows))]
-fn pathsep() -> &'static str {
-    ":"
+    let mut out = vec![0x80, 4]; // PROTO 4
+    out.extend_from_slice(b"}\x94"); // EMPTY_DICT, MEMOIZE: the namespace is memo 0
+    text(&mut out, "__name__");
+    text(&mut out, "spark_connect_wasm_udf");
+    out.extend_from_slice(b"s0"); // SETITEM, POP
+    global(&mut out, "builtins", "exec");
+    text(&mut out, RUNNER_SRC);
+    out.extend_from_slice(b"h\x00\x86R0"); // BINGET 0, TUPLE2, REDUCE, POP
+    global(&mut out, "operator", "getitem");
+    out.extend_from_slice(b"h\x00");
+    text(&mut out, "_spark_connect_wasm_udf_command");
+    out.extend_from_slice(b"\x86R("); // TUPLE2, REDUCE, then MARK the call's arguments
+    match u32::try_from(wasm.len()) {
+        Ok(n) => {
+            out.push(b'B'); // BINBYTES
+            out.extend_from_slice(&n.to_le_bytes());
+        }
+        Err(_) => {
+            out.push(0x8e); // BINBYTES8
+            out.extend_from_slice(&(wasm.len() as u64).to_le_bytes());
+        }
+    }
+    out.extend_from_slice(wasm);
+    text(&mut out, entrypoint);
+    out.extend_from_slice(b"]("); // EMPTY_LIST, MARK
+    for t in arg_types {
+        text(&mut out, t);
+    }
+    out.push(b'e'); // APPENDS
+    text(&mut out, ret_type);
+    text(&mut out, output_type);
+    out.push(if batch { 0x88 } else { 0x89 }); // NEWTRUE / NEWFALSE
+    out.extend_from_slice(b"tR."); // TUPLE, REDUCE, STOP
+    out
 }
 
 /// Create a Rust/WASM user-defined function, mirroring
@@ -300,7 +254,6 @@ pub fn udf(
         eval_type: eval_type::SQL_ARROW_BATCHED_UDF,
         batch_entrypoint: None,
         python_ver: default_python_ver(),
-        packer: PythonPacker::default(),
     }
 }
 
@@ -317,7 +270,6 @@ pub struct UserDefinedFunction {
     eval_type: i32,
     batch_entrypoint: Option<String>,
     python_ver: String,
-    packer: PythonPacker,
 }
 
 impl UserDefinedFunction {
@@ -352,15 +304,10 @@ impl UserDefinedFunction {
         self
     }
 
-    /// Override the Python version tag sent to the server (`"major.minor"`).
+    /// Override the Python version sent with the command (`"major.minor"`). It must
+    /// match the executors' Python, which the worker checks.
     pub fn with_python_ver(mut self, value: impl Into<String>) -> Self {
         self.python_ver = value.into();
-        self
-    }
-
-    /// Override how the Python packer is invoked (executable / `PYTHONPATH`).
-    pub fn with_packer(mut self, packer: PythonPacker) -> Self {
-        self.packer = packer;
         self
     }
 
@@ -369,22 +316,20 @@ impl UserDefinedFunction {
         self.ret_type.to_data_type()
     }
 
-    /// Build the JSON spec handed to the Python packer.
-    fn build_spec(&self) -> String {
-        let spec = serde_json::json!({
-            "wasm_b64": base64::engine::general_purpose::STANDARD.encode(&self.wasm_module),
-            "entrypoint": self.entrypoint,
-            "arg_types": self.arg_types.iter().map(|t| t.descriptor()).collect::<Vec<_>>(),
-            "ret_type": self.ret_type.descriptor(),
-            "output_type": self.ret_type.to_spark_json(),
-            "batch_entrypoint": self.batch_entrypoint,
-        });
-        spec.to_string()
-    }
-
-    /// Build the cloudpickle-compatible `command` bytes by invoking the packer.
-    fn build_command(&self) -> Result<Vec<u8>> {
-        self.packer.run(&self.build_spec())
+    fn build_command(&self) -> Vec<u8> {
+        let (entrypoint, batch) = match &self.batch_entrypoint {
+            Some(e) => (e.as_str(), true),
+            None => (self.entrypoint.as_str(), false),
+        };
+        let arg_types: Vec<String> = self.arg_types.iter().map(AbiType::descriptor).collect();
+        command_pickle(
+            &self.wasm_module,
+            entrypoint,
+            &arg_types,
+            &self.ret_type.descriptor(),
+            &self.ret_type.to_spark_json().to_string(),
+            batch,
+        )
     }
 
     /// Build the [`PythonUDFPayload`] carrying the pickled command.
@@ -392,7 +337,7 @@ impl UserDefinedFunction {
         Ok(PythonUDFPayload::new(
             self.output_type(),
             self.eval_type,
-            self.build_command()?,
+            self.build_command(),
             self.python_ver.clone(),
         ))
     }
@@ -446,9 +391,9 @@ impl<'a> UdfRegistration<'a> {
     /// Register `udf` under `name` so it can be called from SQL
     /// (`spark.sql("SELECT name(col) ...")`) and the DataFrame API.
     ///
-    /// Mirrors `spark.udf.register(name, udf)`: the cloudpickled WASM runner is shipped
-    /// by value inside a `RegisterFunction` command, so the Spark executors only need
-    /// the `wasmtime` Python package (not `pyspark_wasm_udf`).
+    /// Mirrors `spark.udf.register(name, udf)`: the runner travels inside the pickled
+    /// command of a `RegisterFunction` command, so the Spark executors need only the
+    /// `wasmtime` Python package (and `pyarrow` for batch UDFs).
     pub fn register(&self, name: &str, udf: &UserDefinedFunction) -> Result<()> {
         self.session
             .register_function(udf.registration_expression(name)?)
@@ -463,53 +408,14 @@ impl crate::session::SparkSession {
     }
 }
 
-/// Default Python version tag, matching how pyspark reports it
-/// (`"%d.%d" % sys.version_info[:2]`). Callers can override with
-/// [`UserDefinedFunction::with_python_ver`].
+/// The executors' Python version (`"major.minor"`, as pyspark reports
+/// `sys.version_info[:2]`): `$SPARK_CONNECT_PYTHON_VERSION`, else `3.11`. Callers can
+/// override with [`UserDefinedFunction::with_python_ver`].
 fn default_python_ver() -> String {
-    // Try to detect the Python version from the interpreter used by PythonPacker
-    let python_exe = std::env::var("SPARK_CONNECT_PYTHON")
-        .or_else(|_| std::env::var("PYSPARK_PYTHON"))
-        .unwrap_or_else(|_| "python3".to_string());
-
-    match detect_python_version(&python_exe) {
-        Some(version) => version,
-        None => {
-            // Fallback to a reasonable default if detection fails
-            "3.11".to_string()
-        }
-    }
-}
-
-/// Detect the Python version by running the interpreter.
-/// Returns MAJOR.MINOR format (e.g., "3.11"), or None if detection fails.
-fn detect_python_version(python_exe: &str) -> Option<String> {
-    use std::process::Command;
-
-    let output = Command::new(python_exe)
-        .arg("-c")
-        .arg("import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    String::from_utf8(output.stdout)
+    std::env::var("SPARK_CONNECT_PYTHON_VERSION")
         .ok()
-        .and_then(|s| parse_python_version_output(&s))
-}
-
-/// Parse Python version output (MAJOR.MINOR format).
-/// Handles whitespace and newlines.
-fn parse_python_version_output(output: &str) -> Option<String> {
-    let trimmed = output.trim().to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "3.11".to_string())
 }
 
 #[cfg(test)]
@@ -584,51 +490,59 @@ mod tests {
         );
     }
 
-    #[test]
-    fn build_spec_encodes_signature_and_wasm() {
-        let f = sample();
-        let spec: serde_json::Value = serde_json::from_str(&f.build_spec()).unwrap();
-        assert_eq!(spec["entrypoint"], "add_one");
-        assert_eq!(spec["arg_types"], serde_json::json!(["i64"]));
-        assert_eq!(spec["ret_type"], "i64");
-        assert_eq!(spec["output_type"], "long");
-        assert_eq!(spec["wasm_b64"], "AGFzbQEA");
-    }
-
-    /// End-to-end packer test. Requires only a Python interpreter with `pyspark`
-    /// importable (for its vendored `cloudpickle` + the pure-Python type parser);
-    /// the packer script is embedded in the crate. Point `python_exe` at that
-    /// interpreter via `$SPARK_CONNECT_PYTHON`. Run with
+    /// Loads the command as a Python worker does. Needs a Python with `pyspark`
+    /// (`$SPARK_CONNECT_TEST_PYTHON`, default `python3`); run with
     /// `cargo test --features wasm-udf -- --ignored`.
     #[test]
     #[ignore]
-    fn packer_produces_nonempty_command() {
-        let f = sample();
-        let cmd = f.build_command().expect("packer should succeed");
-        assert!(!cmd.is_empty());
-        assert_eq!(cmd[0], 0x80); // cloudpickle PROTO opcode
-    }
+    fn command_loads_as_runner_and_return_type() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
 
-    #[test]
-    fn parse_python_version_output_trims_whitespace() {
-        // Test that we correctly parse Python version strings from stdout
-        // (with potential trailing whitespace/newline). Note: this test must not be
-        // named `parse_python_version_output`, or it would shadow the function under
-        // test (imported via `use super::*`) and fail to compile.
+        let python =
+            std::env::var("SPARK_CONNECT_TEST_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let load = |f: &UserDefinedFunction| -> String {
+            let mut child = Command::new(&python)
+                .args([
+                    "-c",
+                    "import pickle, sys; r, t = pickle.loads(sys.stdin.buffer.read()); \
+                     print(type(r).__name__, r.entrypoint, r.arg_types, r.ret_type, \
+                     len(r.wasm), t.simpleString())",
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("python should start");
+            let command = f.build_command();
+            child.stdin.take().unwrap().write_all(&command).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+
         assert_eq!(
-            parse_python_version_output("3.11\n"),
-            Some("3.11".to_string())
+            load(&sample()),
+            "WasmScalarUDF add_one ['i64'] i64 6 bigint"
         );
         assert_eq!(
-            parse_python_version_output("3.12"),
-            Some("3.12".to_string())
+            load(&sample().with_batch_entrypoint("spark_udf_batch_add_one")),
+            "WasmArrowUDF spark_udf_batch_add_one ['i64'] i64 6 bigint"
+        );
+        let nested = udf(
+            "f",
+            vec![0u8; 300],
+            "f",
+            vec![AbiType::Str, AbiType::Nullable(Box::new(AbiType::I32))],
+            AbiType::Array(Box::new(AbiType::Nullable(Box::new(AbiType::I64)))),
         );
         assert_eq!(
-            parse_python_version_output("3.9\n\n"),
-            Some("3.9".to_string())
+            load(&nested),
+            "WasmScalarUDF f ['string', 'option:i32'] array:option:i64 300 array<bigint>"
         );
-        // Empty or invalid output
-        assert_eq!(parse_python_version_output(""), None);
-        assert_eq!(parse_python_version_output("   \n"), None);
     }
 }

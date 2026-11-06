@@ -25,7 +25,7 @@
 //! executors):
 //!
 //!     rustup target add wasm32-unknown-unknown
-//!     export SPARK_CONNECT_WASM_PACKER_PATH=$PWD/python
+//!     export SPARK_CONNECT_PYTHON_VERSION=3.12   # the executors' Python
 //!     cargo run -p wasm-udf-inline
 
 use spark_connect_macros::spark_wasm_udf;

@@ -279,21 +279,22 @@ Do not rely on the previous version's suite. When bumping to vX.Y.Z:
 
 ## 8. WASM UDFs
 
-- The packer is a Python script **embedded in the crate**
-  (`crates/spark-connect/src/wasm_packer.py`, pulled in with `include_str!`). The
-  Rust client runs it as `python -c <src>` (so it executes as `__main__`), which
-  makes cloudpickle serialize the `WasmScalarUDF` runner **by value** into the UDF
-  command. Because it runs as `__main__` there is **no** separate `pyspark_wasm_udf`
-  pip package: the client needs only a Python interpreter with `pyspark` (for its
-  vendored `cloudpickle` + `pyspark.sql.types._parse_datatype_json_value`), and the
-  executors need only `wasmtime`. If the packer's ABI/codec changes, keep it
-  byte-compatible with `spark_connect::wasm_udf::AbiType` and the build-time runtime
-  in `apache-spark-connect-build`.
+- The runner is a Python script **embedded in the crate**
+  (`crates/spark-connect/src/wasm_runner.py`, pulled in with `include_str!`). The
+  Rust client writes the UDF command pickle itself (`command_pickle` in
+  `wasm_udf.rs`): loading it on the worker `exec`s the runner source into a fresh
+  namespace and calls `_spark_connect_wasm_udf_command`, which returns the
+  `(runner, return_type)` pair. So the client needs no Python, and the executors
+  need only `wasmtime` (plus `pyarrow` for batch UDFs). The command's Python
+  version comes from `.with_python_ver()` or `SPARK_CONNECT_PYTHON_VERSION`. If the
+  runner's ABI/codec changes, keep it byte-compatible with
+  `spark_connect::wasm_udf::AbiType` and the build-time runtime in
+  `apache-spark-connect-build`.
 - Registration mirrors pyspark: `spark.udf().register("name", &udf)` (a
   session-side `UdfRegistration` handle), then callable from SQL.
-- Removing Python on the client entirely would mean pre-baking the cloudpickled
-  runner template per Python version and emitting the varying bytes with a Rust
-  pickle writer; executor Python+wasmtime is intrinsic to Spark and cannot be removed.
+- The command carries runner *source*, not cloudpickled bytecode, so one command
+  works on any Python 3 worker; executor Python + wasmtime is intrinsic to the
+  PythonUDF path.
 
 ## 9. Condensed checklist
 

@@ -110,12 +110,13 @@ These nest arbitrarily - e.g. `Vec<Option<String>>` -> `ArrayType(StringType, nu
 build time   build.rs -> embed_wasm_udf() recompiles the source for wasm32
              (host-only code is cfg'd out) and embeds the .wasm module.
 
-client       udf::add_one(col) builds a standard PythonUDF: a tiny Python runner
-             plus the module are cloudpickled by value, so executors need only
-             `wasmtime` - nothing to pre-deploy.
+client       udf::add_one(col) builds a standard PythonUDF in Rust: its pickled
+             command carries the module and the source of a small Python runner,
+             so the client needs no Python and executors need nothing pre-deployed.
 
-executors    the Python worker instantiates the module with wasmtime and invokes
-             the exported entrypoint once per input row over the binary ABI.
+executors    the Python worker compiles the runner, instantiates the module with
+             wasmtime, and calls the exported entrypoint once per Arrow batch (or
+             once per row for signatures the batch export doesn't cover).
 ```
 
 The user never writes WASM, never touches the ABI, and never loads a `.wasm`
@@ -128,18 +129,16 @@ Nothing here is needed unless the `wasm-udf` feature is enabled:
 - **Build machine** - the `wasm32-unknown-unknown` target (`rustup target add
   wasm32-unknown-unknown`), plus `apache-spark-connect-macros` and
   `apache-spark-connect-build` as (build-)dependencies.
-- **Client** (building the UDF command) - a Python interpreter with `pyspark`
-  importable (used for its vendored `cloudpickle` and the pure-Python type
-  parser). The packer script is embedded in the crate and run as `python -c`, so
-  there is nothing extra to install or put on a path; point `SPARK_CONNECT_PYTHON`
-  at the interpreter if it isn't your default `python3`.
-- **Executors** - the `wasmtime` Python package.
+- **Client** - nothing beyond the Rust program. Set `SPARK_CONNECT_PYTHON_VERSION`
+  (or call `.with_python_ver()`) to the executors' Python version, such as `3.12`,
+  if it isn't `3.11`: the worker rejects a UDF built for another version.
+- **Executors** - the `wasmtime` Python package, and `pyarrow` for batch UDFs.
 - **Spark** - 4.3.0+.
 
 ## Advanced
 
-For non-deterministic UDFs or custom packer configuration, the macro also
-generates a builder `udf::<name>_udf()`:
+For non-deterministic UDFs, the per-row path, or another Python version, the
+macro also generates a builder `udf::<name>_udf()`:
 
 ```{.rust .no-run}
 udf::add_one_udf()

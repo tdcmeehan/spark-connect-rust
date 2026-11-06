@@ -14,29 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""WASM UDF packer, embedded in the Rust crate (`spark_connect::wasm_udf`).
+"""WASM UDF runners, run by Spark's Python workers (``spark_connect::wasm_udf``).
 
-The Rust client runs this source as ``python -c <this>`` (so it executes as
-``__main__``), feeding a JSON spec on stdin and reading the raw cloudpickled
-``command`` bytes from stdout. Because the ``WasmScalarUDF`` runner is defined
-here in ``__main__``, cloudpickle serializes it **by value** automatically -- so
-neither a separate ``pyspark_wasm_udf`` pip package on the client nor this module
-on the executors is required. Executors need only the ``wasmtime`` package (and
-Spark's own Python worker) to unpickle and run the ``(WasmScalarUDF, return_type)``
-tuple. The only client-side requirement is a Python interpreter with ``pyspark``
-(for its vendored ``cloudpickle`` and the pure-Python type parser).
+The Rust client embeds this source in each UDF's pickled ``command``. When the
+worker loads the command, it compiles this source into a fresh namespace and
+calls ``_spark_connect_wasm_udf_command``, which returns the ``(runner,
+return_type)`` pair a Python UDF's command holds. So the client needs no Python,
+and the executors need only Spark's Python worker, ``wasmtime``, and (for batch
+UDFs) ``pyarrow``.
 
-Input JSON (stdin)::
-
-    {
-      "wasm_b64":    "<base64 of the .wasm module>",
-      "entrypoint":  "add_one",
-      "arg_types":   ["i64", "array:string", ...],   # ABI descriptors
-      "ret_type":    "i64",
-      "output_type": "long"                           # Spark type-JSON value
-    }
-
-The binary ABI (little-endian, mirroring ``spark_connect::wasm_udf::AbiType``):
+The per-row binary ABI (little-endian, mirroring ``spark_connect::wasm_udf::AbiType``):
 
 * ``i32``/``f32``: 4 bytes; ``i64``/``f64``: 8 bytes; ``bool``: 1 byte.
 * ``string``: ``u32`` byte-length then UTF-8; ``binary``: ``u32`` length then bytes.
@@ -48,8 +35,6 @@ The module exports ``spark_udf_alloc(len)->ptr`` / ``spark_udf_dealloc(ptr,len)`
 and each UDF as ``fn(args_ptr, args_len) -> (ptr << 32 | len)`` of the result.
 """
 
-import base64
-import json
 import struct
 import sys
 from typing import Any, List, Tuple
@@ -155,14 +140,13 @@ def decode_value(ret_type: str, buf: bytes) -> Any:
     return value
 
 
-# --- the picklable, per-row callable -----------------------------------------
+# --- the per-row callable -----------------------------------------------------
 
 
 class WasmScalarUDF:
     """A per-row callable that runs a WASM export via ``wasmtime``.
 
-    Serialized by value with cloudpickle (it is defined in ``__main__``); all
-    live wasmtime state is created lazily on the executor (never pickled).
+    The wasmtime state is created lazily, on the first call.
     """
 
     def __init__(
@@ -177,11 +161,6 @@ class WasmScalarUDF:
         self.arg_types = list(arg_types)
         self.ret_type = ret_type
         self._rt = None  # lazily-built wasmtime state
-
-    def __getstate__(self) -> dict:
-        state = self.__dict__.copy()
-        state["_rt"] = None
-        return state
 
     def _ensure(self):
         if self._rt is not None:
@@ -263,11 +242,6 @@ class WasmArrowUDF:
         self.arg_types = list(arg_types)
         self.ret_type = ret_type
         self._rt = None
-
-    def __getstate__(self) -> dict:
-        state = self.__dict__.copy()
-        state["_rt"] = None
-        return state
 
     @staticmethod
     def _base(desc: str) -> str:
@@ -411,46 +385,20 @@ class WasmArrowUDF:
         return pa.Array.from_buffers(out_type, n, buffers, null_count=nulls)
 
 
-# --- packing: (WasmScalarUDF, return_type) -> cloudpickled command bytes -----
+# --- the command: called when the worker loads the pickle the client wrote ---
 
 
-def build_command(spec: dict) -> bytes:
-    # Prefer Spark's vendored cloudpickle (the exact one the reference client and
-    # the worker ship); fall back to the standalone cloudpickle package.
-    try:
-        from pyspark import cloudpickle
-    except ImportError:  # pragma: no cover - depends on client env
-        import cloudpickle
+def _spark_connect_wasm_udf_command(
+    wasm: bytes,
+    entrypoint: str,
+    arg_types: List[str],
+    ret_type: str,
+    output_type: str,
+    batch: bool,
+) -> Tuple[Any, Any]:
+    """Return ``(runner, return_type)``; ``output_type`` is Spark's type JSON."""
+    from pyspark.sql.types import _parse_datatype_json_string
 
-    from pyspark.sql.types import _parse_datatype_json_value
-
-    wasm = base64.b64decode(spec["wasm_b64"])
-    if spec.get("batch_entrypoint"):
-        runner = WasmArrowUDF(
-            wasm,
-            spec["batch_entrypoint"],
-            spec["arg_types"],
-            spec["ret_type"],
-        )
-    else:
-        runner = WasmScalarUDF(
-            wasm,
-            spec["entrypoint"],
-            spec["arg_types"],
-            spec["ret_type"],
-        )
-    # `output_type` is an already-parsed JSON value (str or dict), parsed generically
-    # (pure Python; no JVM). `runner`'s class lives in __main__, so cloudpickle embeds
-    # it by value automatically -- executors need only `wasmtime`, not this packer.
-    output_type = _parse_datatype_json_value(spec["output_type"])
-    return cloudpickle.dumps((runner, output_type))
-
-
-def main() -> None:
-    spec = json.loads(sys.stdin.read())
-    sys.stdout.buffer.write(build_command(spec))
-    sys.stdout.buffer.flush()
-
-
-if __name__ == "__main__":
-    main()
+    runner_cls = WasmArrowUDF if batch else WasmScalarUDF
+    runner = runner_cls(wasm, entrypoint, arg_types, ret_type)
+    return runner, _parse_datatype_json_string(output_type)

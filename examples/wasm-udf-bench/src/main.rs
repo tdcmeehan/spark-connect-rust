@@ -22,7 +22,7 @@
 //! module start-up costs cancel out. Best of 3 per row count, after one warm-up run.
 //!
 //!     rustup target add wasm32-unknown-unknown
-//!     SPARK_CONNECT_PYTHON=<python with pyspark> cargo run --release -p wasm-udf-bench
+//!     SPARK_CONNECT_PYTHON_VERSION=<the executors' Python, e.g. 3.12> cargo run --release
 
 use spark_connect_macros::spark_wasm_udf;
 
@@ -121,6 +121,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let (_, batch) = run(&|| Ok(udf::half_if_even(col("id"))?), false, n)?;
     assert_eq!((per_row, batch), (half_sum(n), half_sum(n)), "half_if_even");
+
+    let start = Instant::now();
+    for _ in 0..1000 {
+        udf::add_one(col("id"))?;
+    }
+    let us = start.elapsed().as_secs_f64() / 1000.0 * 1e6;
+    println!("{:22} {us:10.1} us", "build a UDF column");
 
     ns_per_row(
         "builtin id + 1",
