@@ -29,6 +29,7 @@ members = [
 exclude = [
     "examples/wasm-udfs",
     "examples/wasm-udf-inline",
+    "examples/wasm-udf-bench",
 ]
 # `pyspark-rs` (the CPython extension cdylib, built via maturin) and the
 # Rust-native `examples` crate both link the pure-Rust core directly; both are

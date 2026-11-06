@@ -198,6 +198,296 @@ pub mod spark_wasm_rt {
         unsafe { std::slice::from_raw_parts_mut(p, out.len()) }.copy_from_slice(&out);
         ((p as u64) << 32) | (out.len() as u64)
     }
+
+    thread_local! {
+        static SCRATCH: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::new());
+        static KEEP: std::cell::RefCell<Vec<Box<[u8]>>> = std::cell::RefCell::new(Vec::new());
+    }
+
+    // A buffer the runner reuses across batches for the descriptor and the input Arrow buffers.
+    #[no_mangle]
+    pub extern "C" fn spark_udf_scratch(len: u32) -> u32 {
+        SCRATCH.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.len() < len as usize {
+                s.resize(len as usize, 0);
+            }
+            s.as_mut_ptr() as u32
+        })
+    }
+
+    // Batch ABI of the `spark_udf_batch_*` exports. Input descriptor, little-endian u32s:
+    // [rows, columns, then per column: validity ptr (0: no nulls), values ptr, values len,
+    // offsets ptr (0: fixed width), offsets len]. Output descriptor: [status (0 ok, 1 error),
+    // null count, validity ptr, validity len, values ptr, values len, offsets ptr, offsets len];
+    // on error, the message is at (validity ptr, validity len). Outputs live until the next call.
+    pub mod batch {
+        use super::KEEP;
+
+        pub struct Col {
+            validity: Option<&'static [u8]>,
+            values: &'static [u8],
+            offsets: Option<&'static [u8]>,
+        }
+
+        impl Col {
+            #[inline]
+            pub fn is_valid(&self, i: usize) -> bool {
+                match self.validity {
+                    None => true,
+                    Some(v) => (v[i >> 3] >> (i & 7)) & 1 == 1,
+                }
+            }
+            #[inline]
+            fn offset(&self, i: usize) -> usize {
+                let o = self.offsets.expect("variable-width column without offsets");
+                i32::from_le_bytes(o[i * 4..i * 4 + 4].try_into().unwrap()) as usize
+            }
+            #[inline]
+            fn bytes(&self, i: usize) -> &'static [u8] {
+                &self.values[self.offset(i)..self.offset(i + 1)]
+            }
+        }
+
+        pub trait FromCol: Sized {
+            fn get_valid(col: &Col, i: usize) -> Self;
+            // None: a null in an argument that isn't an Option.
+            #[inline]
+            fn get(col: &Col, i: usize) -> Option<Self> {
+                if col.is_valid(i) { Some(Self::get_valid(col, i)) } else { None }
+            }
+        }
+
+        macro_rules! prim_in { ($t:ty, $n:expr) => {
+            impl FromCol for $t {
+                #[inline]
+                fn get_valid(col: &Col, i: usize) -> Self {
+                    <$t>::from_le_bytes(col.values[i * $n..i * $n + $n].try_into().unwrap())
+                }
+            }
+        }}
+        prim_in!(i32, 4); prim_in!(i64, 8); prim_in!(f32, 4); prim_in!(f64, 8);
+
+        impl FromCol for bool {
+            #[inline]
+            fn get_valid(col: &Col, i: usize) -> Self { (col.values[i >> 3] >> (i & 7)) & 1 == 1 }
+        }
+        impl FromCol for String {
+            #[inline]
+            fn get_valid(col: &Col, i: usize) -> Self {
+                String::from_utf8(col.bytes(i).to_vec()).unwrap()
+            }
+        }
+        impl FromCol for Vec<u8> {
+            #[inline]
+            fn get_valid(col: &Col, i: usize) -> Self { col.bytes(i).to_vec() }
+        }
+        impl<T: FromCol> FromCol for Option<T> {
+            #[inline]
+            fn get_valid(col: &Col, i: usize) -> Self { Some(T::get_valid(col, i)) }
+            #[inline]
+            fn get(col: &Col, i: usize) -> Option<Self> {
+                Some(if col.is_valid(i) { Some(T::get_valid(col, i)) } else { None })
+            }
+        }
+
+        pub struct Out {
+            n: usize,
+            row: usize,
+            validity: Vec<u8>,
+            null_count: u32,
+            values: Vec<u8>,
+            offsets: Vec<u8>,
+        }
+
+        impl Out {
+            fn new(n: usize) -> Self {
+                Out {
+                    n,
+                    row: 0,
+                    validity: vec![0xFF; (n + 7) / 8],
+                    null_count: 0,
+                    values: Vec::new(),
+                    offsets: Vec::new(),
+                }
+            }
+            #[inline]
+            fn set_null(&mut self) {
+                let r = self.row;
+                self.validity[r >> 3] &= !(1u8 << (r & 7));
+                self.null_count += 1;
+            }
+            #[inline]
+            fn start_var(&mut self) {
+                if self.offsets.is_empty() {
+                    self.offsets.reserve(4 * (self.n + 1));
+                    self.offsets.extend_from_slice(&0i32.to_le_bytes());
+                }
+            }
+            #[inline]
+            fn end_var(&mut self) {
+                let end = self.values.len() as i32;
+                self.offsets.extend_from_slice(&end.to_le_bytes());
+            }
+            #[inline]
+            fn bits(&mut self) {
+                if self.values.is_empty() {
+                    self.values = vec![0u8; (self.n + 7) / 8];
+                }
+            }
+            fn finish(self) -> u32 {
+                let nulls = self.null_count;
+                let (vp, vl) = if nulls == 0 { (0, 0) } else { keep(self.validity) };
+                let (xp, xl) = keep(self.values);
+                let (op, ol) = keep(self.offsets);
+                descriptor(&[0, nulls, vp, vl, xp, xl, op, ol])
+            }
+        }
+
+        pub trait ToCol {
+            fn push(&self, out: &mut Out);
+            fn push_null(out: &mut Out);
+        }
+
+        macro_rules! prim_out { ($t:ty) => {
+            impl ToCol for $t {
+                #[inline]
+                fn push(&self, out: &mut Out) {
+                    out.values.extend_from_slice(&self.to_le_bytes());
+                    out.row += 1;
+                }
+                #[inline]
+                fn push_null(out: &mut Out) {
+                    out.set_null();
+                    out.values.extend_from_slice(&<$t>::default().to_le_bytes());
+                    out.row += 1;
+                }
+            }
+        }}
+        prim_out!(i32); prim_out!(i64); prim_out!(f32); prim_out!(f64);
+
+        impl ToCol for bool {
+            #[inline]
+            fn push(&self, out: &mut Out) {
+                out.bits();
+                if *self {
+                    let r = out.row;
+                    out.values[r >> 3] |= 1u8 << (r & 7);
+                }
+                out.row += 1;
+            }
+            #[inline]
+            fn push_null(out: &mut Out) {
+                out.bits();
+                out.set_null();
+                out.row += 1;
+            }
+        }
+        impl ToCol for String {
+            #[inline]
+            fn push(&self, out: &mut Out) {
+                out.start_var();
+                out.values.extend_from_slice(self.as_bytes());
+                out.end_var();
+                out.row += 1;
+            }
+            #[inline]
+            fn push_null(out: &mut Out) {
+                out.start_var();
+                out.set_null();
+                out.end_var();
+                out.row += 1;
+            }
+        }
+        impl ToCol for Vec<u8> {
+            #[inline]
+            fn push(&self, out: &mut Out) {
+                out.start_var();
+                out.values.extend_from_slice(self);
+                out.end_var();
+                out.row += 1;
+            }
+            #[inline]
+            fn push_null(out: &mut Out) {
+                out.start_var();
+                out.set_null();
+                out.end_var();
+                out.row += 1;
+            }
+        }
+        impl<T: ToCol> ToCol for Option<T> {
+            #[inline]
+            fn push(&self, out: &mut Out) {
+                match self {
+                    Some(v) => v.push(out),
+                    None => T::push_null(out),
+                }
+            }
+            #[inline]
+            fn push_null(out: &mut Out) { T::push_null(out) }
+        }
+
+        fn keep(b: Vec<u8>) -> (u32, u32) {
+            if b.is_empty() {
+                return (0, 0);
+            }
+            let b = b.into_boxed_slice();
+            let (p, l) = (b.as_ptr() as u32, b.len() as u32);
+            KEEP.with(|k| k.borrow_mut().push(b));
+            (p, l)
+        }
+
+        fn descriptor(words: &[u32]) -> u32 {
+            let mut d = Vec::with_capacity(words.len() * 4);
+            for w in words {
+                d.extend_from_slice(&w.to_le_bytes());
+            }
+            keep(d).0
+        }
+
+        fn error(msg: String) -> u32 {
+            let (mp, ml) = keep(msg.into_bytes());
+            descriptor(&[1, 0, mp, ml, 0, 0, 0, 0])
+        }
+
+        fn raw(p: usize, l: usize) -> &'static [u8] {
+            if l == 0 { &[] } else { unsafe { core::slice::from_raw_parts(p as *const u8, l) } }
+        }
+
+        // `f` evaluates row `i`; Err(arg) means a null in argument `arg`, which isn't an Option.
+        pub fn run<F>(desc: u32, nargs: usize, mut f: F) -> u32
+        where
+            F: FnMut(&[Col], usize, &mut Out) -> Result<(), usize>,
+        {
+            KEEP.with(|k| k.borrow_mut().clear());
+            let words = raw(desc as usize, 8 + 20 * nargs);
+            let w = |k: usize| u32::from_le_bytes(words[4 * k..4 * k + 4].try_into().unwrap()) as usize;
+            let n = w(0);
+            if w(1) != nargs {
+                return error(format!("the batch has {} columns, the function takes {}", w(1), nargs));
+            }
+            let cols: Vec<Col> = (0..nargs)
+                .map(|a| {
+                    let b = 2 + 5 * a;
+                    Col {
+                        validity: if w(b) == 0 { None } else { Some(raw(w(b), (n + 7) / 8)) },
+                        values: raw(w(b + 1), w(b + 2)),
+                        offsets: if w(b + 3) == 0 { None } else { Some(raw(w(b + 3), w(b + 4))) },
+                    }
+                })
+                .collect();
+            let mut out = Out::new(n);
+            for i in 0..n {
+                if let Err(arg) = f(&cols, i, &mut out) {
+                    return error(format!(
+                        "null value for non-nullable WASM UDF argument {arg} (row {i}); \
+                         use Option<T> to accept nulls"
+                    ));
+                }
+            }
+            out.finish()
+        }
+    }
 }
 "#;
 

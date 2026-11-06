@@ -82,6 +82,26 @@ fn abi_type(ty: &Type) -> Result<proc_macro2::TokenStream, syn::Error> {
     ))
 }
 
+/// Whether the batch export can carry `ty`: scalars, `String`, `Vec<u8>` and one `Option` level.
+/// Arrays (`Vec<T>`) stay on the per-row path.
+fn batch_supported(ty: &Type) -> bool {
+    if let Some(ident) = path_ident(ty) {
+        if matches!(
+            ident.as_str(),
+            "i32" | "i64" | "f32" | "f64" | "bool" | "String"
+        ) {
+            return true;
+        }
+    }
+    if let Some(inner) = generic_inner(ty, "Vec") {
+        return path_ident(inner).as_deref() == Some("u8");
+    }
+    if let Some(inner) = generic_inner(ty, "Option") {
+        return generic_inner(inner, "Option").is_none() && batch_supported(inner);
+    }
+    false
+}
+
 /// The last path segment ident of a plain type path (`i64`, `String`, ...).
 fn path_ident(ty: &Type) -> Option<String> {
     match ty {
@@ -211,6 +231,38 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
                 crate::spark_wasm_rt::finish(__o)
             }
         });
+        if arg_tys.iter().chain([ret_ty]).all(batch_supported) {
+            let batch_export = format_ident!("spark_udf_batch_{}", name);
+            let nargs = arg_tys.len();
+            let vars: Vec<syn::Ident> = (0..nargs).map(|i| format_ident!("__a{i}")).collect();
+            let gets: Vec<_> = arg_tys
+                .iter()
+                .zip(&vars)
+                .enumerate()
+                .map(|(i, (ty, v))| {
+                    quote! {
+                        let #v: #ty = match <#ty as crate::spark_wasm_rt::batch::FromCol>::get(
+                            &__cols[#i], __i,
+                        ) {
+                            Some(v) => v,
+                            None => return Err(#i),
+                        };
+                    }
+                })
+                .collect();
+            wrappers.push(quote! {
+                #[cfg(target_arch = "wasm32")]
+                #[no_mangle]
+                pub extern "C" fn #batch_export(__desc: u32) -> u32 {
+                    crate::spark_wasm_rt::batch::run(__desc, #nargs, |__cols, __i, __out| {
+                        #(#gets)*
+                        let __r: #ret_ty = #name(#(#vars),*);
+                        crate::spark_wasm_rt::batch::ToCol::push(&__r, __out);
+                        Ok(())
+                    })
+                }
+            });
+        }
     }
     if let Some((_, content)) = &mut module.content {
         for w in wrappers {
@@ -239,6 +291,12 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
         let builder = format_ident!("{}_udf", name);
         let arg_abis: Vec<_> = arg_tys.iter().map(abi_type).collect::<Result<_, _>>()?;
         let ret_abi = abi_type(ret_ty)?;
+        let with_batch = if arg_tys.iter().chain([ret_ty]).all(batch_supported) {
+            let batch_str = format!("spark_udf_batch_{name}");
+            quote!(.with_batch_entrypoint(#batch_str))
+        } else {
+            quote!()
+        };
         let params: Vec<syn::Ident> = (0..arg_tys.len())
             .map(|i| format_ident!("__a{i}"))
             .collect();
@@ -262,6 +320,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
                     ::std::vec![#(#arg_abis),*],
                     #ret_abi,
                 )
+                #with_batch
             }
 
             #[doc = #call_doc]
