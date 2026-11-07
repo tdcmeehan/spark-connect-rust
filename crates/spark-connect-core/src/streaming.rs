@@ -24,6 +24,7 @@ pub enum Trigger {
 
 impl Trigger {
     /// The trigger of a `WriteStreamOperationStart`.
+    #[doc(hidden)]
     pub fn to_proto(&self) -> proto::write_stream_operation_start::Trigger {
         use proto::write_stream_operation_start::Trigger as Proto;
         match self {

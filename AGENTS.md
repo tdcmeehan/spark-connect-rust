@@ -142,8 +142,9 @@ version's source, not just the name:
 subtree `python/pyspark/sql/connect/`). Implement on **both** sides:
 
 1. **Rust core** (`crates/spark-connect-core/src/*.rs` for types, columns,
-   functions, plans and the protos of commands; `crates/spark-connect/src/*.rs` for
-   the DataFrame API) — the
+   functions, plans, the protos of writes, write streams, merge actions, ML and
+   pipelines, and WASM UDF construction; `crates/spark-connect/src/*.rs` for the
+   DataFrame API, including the catalog and streaming query commands) — the
    real behavior / plan or proto construction. Add the method if the core lacks it.
 2. **PyO3 wrapper** (`crates/pyspark-rs/src/*.rs`) — `#[pymethods]` delegating to
    core, with `#[pyo3(name = "camelCase", signature = (...))]`.
@@ -255,7 +256,7 @@ Run all of these green before pushing:
 ```
 cargo test -p apache-spark-connect -p apache-spark-connect-core --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
-cargo test -p apache-spark-connect --release --features wasm-udf --no-run
+cargo test -p apache-spark-connect -p apache-spark-connect-core --release --features wasm-udf --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate
 cargo clippy --workspace --all-targets                             # advisory (|| true in CI), but fix errors
 ```

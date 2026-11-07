@@ -403,6 +403,7 @@ impl UserDefinedFunction {
 
     /// Build the registration expression for this UDF under `name` (no bound
     /// arguments — arguments are supplied at each SQL/DataFrame call site).
+    #[doc(hidden)]
     pub fn registration_expression(
         &self,
         name: &str,
