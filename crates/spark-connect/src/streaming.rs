@@ -9,6 +9,7 @@ use uuid;
 
 use spark_connect_core::client::ReattachableResponseStream;
 use spark_connect_core::error::{Result, SparkError};
+use spark_connect_core::execution;
 use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
@@ -1084,24 +1085,19 @@ impl StreamingQueryManager {
     /// Stream listener events from the server incrementally (live).
     /// Returns a ListenerEventStream that yields events as they arrive.
     pub fn listener_event_stream(&self) -> Result<ListenerEventStream> {
-        let mut cmd = proto::Command::default();
         let mut listener_bus_cmd = proto::StreamingQueryListenerBusCommand::default();
         // Subscribe to receive events via the oneof command field
         listener_bus_cmd.command = Some(
             proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
         );
-        cmd.command_type =
-            Some(proto::command::CommandType::StreamingQueryListenerBusCommand(listener_bus_cmd));
 
-        let mut plan = proto::Plan::default();
-        plan.op_type = Some(proto::plan::OpType::Command(cmd));
-
-        let request = proto::ExecutePlanRequest {
-            session_id: self.session.client().session_id().to_string(),
-            user_context: Some(proto::UserContext::default()),
-            plan: Some(plan),
-            ..Default::default()
-        };
+        let request = execution::execute_plan_request(
+            self.session.client().session_id(),
+            Vec::new(),
+            execution::command(
+                proto::command::CommandType::StreamingQueryListenerBusCommand(listener_bus_cmd),
+            ),
+        );
 
         let response_stream = block_on(self.session.client().execute_plan_reattachable(request))?;
 

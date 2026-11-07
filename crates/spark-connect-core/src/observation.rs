@@ -103,8 +103,7 @@ impl Observation {
 
     /// Set the metrics that an action observed, as PySpark's client updates the result of
     /// the observation with them: a metric replaces the value of a metric of its name.
-    #[doc(hidden)]
-    pub fn update(&self, keys: &[String], values: &[proto::expression::Literal]) {
+    pub(crate) fn update(&self, keys: &[String], values: &[proto::expression::Literal]) {
         let mut state = self.lock();
         let Some(result) = state.result.as_mut() else {
             return;
@@ -118,8 +117,7 @@ impl Observation {
     }
 
     /// Set the error of collecting the metrics, which `get` returns.
-    #[doc(hidden)]
-    pub fn set_error(&self, error: SparkError) {
+    pub(crate) fn set_error(&self, error: SparkError) {
         self.lock().error = Some(error);
     }
 

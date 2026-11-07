@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use spark_connect_core::channel::ChannelBuilder;
 use spark_connect_core::client::SparkConnectClient;
 use spark_connect_core::error::{Result, SparkError};
+use spark_connect_core::execution;
 use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
@@ -16,27 +17,12 @@ use crate::plan::{LogicalPlan, PlanIds};
 use crate::profiler::ProfilerCollector;
 use crate::row::{Row, Value};
 use crate::types::DataType;
+pub use spark_connect_core::execution::ExecutionInfo;
 
 /// A progress handler invoked with each `ExecutionProgress` message received on
 /// the response stream. Mirrors `SparkSession.registerProgressHandler`.
 pub type ProgressHandler =
     Arc<dyn Fn(&proto::execute_plan_response::ExecutionProgress) + Send + Sync>;
-
-/// Metrics captured from the last executed query. Mirrors the data behind
-/// `pyspark.sql.DataFrame.executionInfo` / `client.core.ExecutionInfo`.
-#[derive(Debug, Clone, Default)]
-pub struct ExecutionInfo {
-    /// Plan metrics (typically present on the final response of an execution).
-    pub metrics: Option<proto::execute_plan_response::Metrics>,
-    /// Observed metrics collected during execution (also where `observe(...)`
-    /// and UDF-profiler results surface).
-    pub observed_metrics: Vec<proto::execute_plan_response::ObservedMetrics>,
-    /// The ExecutePlan operation id: assigned by the client before the request is sent
-    /// (the request's id, or a new UUID) and echoed by the server in
-    /// `ExecutePlanResponse.operation_id`. Mirrors `ExecutionInfo.operation_id` (new in
-    /// pyspark 4.3.0).
-    pub operation_id: Option<String>,
-}
 
 /// A Spark Connect session for interacting with a remote Spark cluster.
 ///
@@ -275,16 +261,12 @@ impl SparkSession {
     /// Parse a DDL string on the server, mirroring PySpark Connect's `_parse_ddl`: the
     /// `DDLParse` of an `AnalyzePlanRequest`, of a schema or a type, as Spark parses it.
     pub fn parse_ddl(&self, ddl: &str) -> Result<DataType> {
-        let request = proto::AnalyzePlanRequest {
-            session_id: self.client().session_id().to_string(),
-            user_context: Some(proto::UserContext::default()),
-            analyze: Some(proto::analyze_plan_request::Analyze::DdlParse(
-                proto::analyze_plan_request::DdlParse {
-                    ddl_string: ddl.to_string(),
-                },
-            )),
-            ..Default::default()
-        };
+        let request = execution::analyze_plan_request(
+            self.client().session_id(),
+            proto::analyze_plan_request::Analyze::DdlParse(proto::analyze_plan_request::DdlParse {
+                ddl_string: ddl.to_string(),
+            }),
+        );
         let response = block_on(self.client().analyze_plan(request))?;
         match response.result {
             Some(proto::analyze_plan_response::Result::DdlParse(r)) => {
@@ -601,12 +583,12 @@ impl SparkSession {
         if let Some(version) = cached.as_ref() {
             return Ok(version.clone());
         }
-        let mut request = proto::AnalyzePlanRequest::default();
-        request.session_id = self.client.session_id().to_string();
-        request.user_context = Some(proto::UserContext::default());
-        request.analyze = Some(proto::analyze_plan_request::Analyze::SparkVersion(
-            proto::analyze_plan_request::SparkVersion::default(),
-        ));
+        let request = execution::analyze_plan_request(
+            self.client.session_id(),
+            proto::analyze_plan_request::Analyze::SparkVersion(
+                proto::analyze_plan_request::SparkVersion::default(),
+            ),
+        );
         let resp = block_on(self.client.analyze_plan(request))?;
         match resp.result {
             Some(proto::analyze_plan_response::Result::SparkVersion(v)) => {

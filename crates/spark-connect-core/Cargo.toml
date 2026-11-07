@@ -17,6 +17,7 @@ tonic = { workspace = true, features = ["tls-ring", "tls-native-roots"] }
 prost.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+arrow.workspace = true
 futures.workspace = true
 bytes.workspace = true
 thiserror.workspace = true

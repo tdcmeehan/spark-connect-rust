@@ -3,7 +3,8 @@
 //! The transport mirrors `pyspark.sql.connect.client.*`: connection-string parsing and
 //! channel configuration ([`channel`]), the gRPC client, retries, reattach, artifacts,
 //! and structured errors ([`error`]). Plans are built from the [`types`], columns,
-//! [`expression`]s, [`functions`] and [`window`]s of the [`plan`] module.
+//! [`expression`]s, [`functions`] and [`window`]s of the [`plan`] module, sent with the
+//! requests of [`execution`], and their results decoded by [`decode`].
 
 #![allow(clippy::result_large_err)] // SparkError is large; changing the type would break the API
 
@@ -12,7 +13,9 @@ pub mod bytes_codec;
 pub mod channel;
 pub mod client;
 pub mod column;
+pub mod decode;
 pub mod error;
+pub mod execution;
 pub mod expression;
 pub mod functions;
 pub mod observation;
