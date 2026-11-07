@@ -3191,6 +3191,27 @@ mod plan_construction_tests {
         assert_eq!(info.operation_id.as_deref(), Some("op-1"));
     }
 
+    #[test]
+    fn capture_execution_gives_the_profiler_the_observed_metrics() {
+        let spark = session();
+        let mut info = ExecutionInfo::default();
+        let mut resp = proto::ExecutePlanResponse {
+            observed_metrics: vec![proto::execute_plan_response::ObservedMetrics {
+                name: "metrics".to_string(),
+                plan_id: 7,
+                keys: vec!["rows".to_string()],
+                values: vec![crate::expression::LiteralExpression::long(3).to_literal_proto()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        capture_execution(&mut resp, &mut info, &spark);
+        assert_eq!(
+            spark.profiler().show(Some(7)),
+            "name: metrics, plan_id: 7\nrows: 3"
+        );
+    }
+
     fn session() -> SparkSession {
         SparkSession::builder()
             .remote("sc://localhost:15002")

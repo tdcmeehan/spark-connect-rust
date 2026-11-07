@@ -117,3 +117,52 @@ pub fn analyze_plan_request(
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn observed(name: &str) -> proto::execute_plan_response::ObservedMetrics {
+        proto::execute_plan_response::ObservedMetrics {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn metrics(plan_id: i64) -> proto::execute_plan_response::Metrics {
+        proto::execute_plan_response::Metrics {
+            metrics: vec![proto::execute_plan_response::metrics::MetricObject {
+                plan_id,
+                ..Default::default()
+            }],
+        }
+    }
+
+    fn names(metrics: &[proto::execute_plan_response::ObservedMetrics]) -> Vec<&str> {
+        metrics.iter().map(|m| m.name.as_str()).collect()
+    }
+
+    #[test]
+    fn capture_returns_only_the_observed_metrics_of_its_response() {
+        let plan_ids = PlanIds::new();
+        let mut info = ExecutionInfo::default();
+        let mut first = proto::ExecutePlanResponse {
+            operation_id: "op-1".to_string(),
+            metrics: Some(metrics(1)),
+            observed_metrics: vec![observed("a")],
+            ..Default::default()
+        };
+        assert_eq!(names(info.capture(&mut first, &plan_ids)), ["a"]);
+        let mut second = proto::ExecutePlanResponse {
+            operation_id: "op-2".to_string(),
+            metrics: Some(metrics(2)),
+            observed_metrics: vec![observed("b"), observed("c")],
+            ..Default::default()
+        };
+        assert_eq!(names(info.capture(&mut second, &plan_ids)), ["b", "c"]);
+        assert_eq!(info.operation_id.as_deref(), Some("op-1"));
+        assert_eq!(info.metrics, Some(metrics(2)));
+        assert_eq!(names(&info.observed_metrics), ["a", "b", "c"]);
+        assert!(second.metrics.is_none() && second.observed_metrics.is_empty());
+    }
+}

@@ -1,10 +1,5 @@
-//! The shared core of the Spark Connect client: the transport, and the building of plans.
-//!
-//! The transport mirrors `pyspark.sql.connect.client.*`: connection-string parsing and
-//! channel configuration ([`channel`]), the gRPC client, retries, reattach, artifacts,
-//! and structured errors ([`error`]). Plans are built from the [`types`], columns,
-//! [`expression`]s, [`functions`] and [`window`]s of the [`plan`] module, sent with the
-//! requests of [`execution`], and their results decoded by [`decode`].
+//! The shared core of the Spark Connect client: the gRPC transport, the plans and requests
+//! that it sends, and the decoding of their results.
 
 #![allow(clippy::result_large_err)] // SparkError is large; changing the type would break the API
 

@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "Spark Connect client transport: gRPC channel, retries, reattach, artifacts, config, errors"
+description = "The shared core of the Spark Connect client: transport, plan building, execution requests and Arrow decoding"
 
 [lib]
 name = "spark_connect_core"
