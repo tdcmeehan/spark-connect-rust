@@ -25,6 +25,8 @@
 //!
 //! Rewrite the snapshots with `SPARK_CONNECT_UPDATE_REQUEST_SNAPSHOTS=1`.
 
+#![allow(clippy::result_large_err)] // SparkError is large; the API returns it
+
 macro_rules! cases {
     ($($name:literal => $run:expr),* $(,)?) => {
         vec![$(crate::Case { name: $name, run: $run }),*]
@@ -130,7 +132,7 @@ fn placeholder(value: &str) -> Vec<u8> {
         .collect()
 }
 
-fn replace_all(bytes: &mut Vec<u8>, needle: &[u8], with: &[u8]) {
+fn replace_all(bytes: &mut [u8], needle: &[u8], with: &[u8]) {
     if needle.is_empty() {
         return;
     }
