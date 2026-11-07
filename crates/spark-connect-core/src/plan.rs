@@ -454,7 +454,8 @@ pub enum SetOpType {
 /// which keeps the allocation, and so the key, from being reused while the entry exists.
 /// Entries of dropped nodes are pruned as the map grows.
 #[derive(Debug)]
-pub(crate) struct PlanIds {
+#[doc(hidden)]
+pub struct PlanIds {
     nodes: Mutex<PlanIdNodes>,
 }
 
@@ -469,7 +470,8 @@ struct PlanIdNodes {
 impl PlanIds {
     const MIN_PRUNE_AT: usize = 1024;
 
-    pub(crate) fn new() -> Self {
+    #[doc(hidden)]
+    pub fn new() -> Self {
         PlanIds {
             nodes: Mutex::new(PlanIdNodes {
                 next: 1,
@@ -480,7 +482,8 @@ impl PlanIds {
     }
 
     /// The plan ID of `node`, assigned the first time it is serialized.
-    pub(crate) fn id_of(&self, node: &Arc<LogicalPlan>) -> i64 {
+    #[doc(hidden)]
+    pub fn id_of(&self, node: &Arc<LogicalPlan>) -> i64 {
         self.id_of_key(node, Arc::as_ptr(node) as usize)
     }
 
@@ -510,7 +513,8 @@ impl PlanIds {
     }
 
     /// The live node of the plan ID `id`, as the server reports a relation by its plan ID.
-    pub(crate) fn node_of(&self, id: i64) -> Option<Arc<LogicalPlan>> {
+    #[doc(hidden)]
+    pub fn node_of(&self, id: i64) -> Option<Arc<LogicalPlan>> {
         let nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
         nodes
             .ids
@@ -519,15 +523,16 @@ impl PlanIds {
             .and_then(|(node, _)| node.upgrade())
     }
 
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    #[doc(hidden)]
+    pub fn len(&self) -> usize {
         self.nodes.lock().unwrap().ids.len()
     }
 }
 
 /// Serialize a shared plan node for a request: the node and every node below it carry
 /// their stable plan IDs.
-pub(crate) fn relation_with_ids(node: &Arc<LogicalPlan>, ids: &PlanIds) -> proto::Relation {
+#[doc(hidden)]
+pub fn relation_with_ids(node: &Arc<LogicalPlan>, ids: &PlanIds) -> proto::Relation {
     relation_of(node, Some(ids))
 }
 
@@ -1588,7 +1593,8 @@ impl LogicalPlan {
 /// The `CommonInlineUserDefinedTableFunction` of a Python UDTF: of a call with `arguments`,
 /// or of its registration without any. Mirrors PySpark's `CommonInlineUserDefinedTableFunction`
 /// of a `PythonUDTF`.
-pub(crate) fn common_inline_udtf(
+#[doc(hidden)]
+pub fn common_inline_udtf(
     function_name: &str,
     deterministic: bool,
     arguments: &[Expression],
@@ -1915,7 +1921,8 @@ pub fn hint(
 
 /// The literal of a hint parameter given as a string: an Integer for an integer-looking one,
 /// otherwise the String.
-pub(crate) fn hint_parameter(parameter: &str) -> Expression {
+#[doc(hidden)]
+pub fn hint_parameter(parameter: &str) -> Expression {
     Expression::literal(match parameter.parse::<i32>() {
         Ok(n) => LiteralExpression::int(n),
         Err(_) => LiteralExpression::string(parameter),
@@ -1993,7 +2000,8 @@ fn value_to_proto_literal(v: &crate::row::Value) -> proto::expression::Literal {
 
 /// The literal of a replacement given as a string: a double for a numeric-looking string,
 /// otherwise the string (used by the NAReplace of strings).
-pub(crate) fn numeric_or_string_literal(s: &str) -> LiteralExpression {
+#[doc(hidden)]
+pub fn numeric_or_string_literal(s: &str) -> LiteralExpression {
     match s.parse::<f64>() {
         Ok(v) => LiteralExpression::double(v),
         Err(_) => LiteralExpression::string(s),

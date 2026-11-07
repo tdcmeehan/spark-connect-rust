@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 use std::hash::{Hash, Hasher};
 
-use spark_connect_core::error::{Result, SparkError};
+use crate::error::{Result, SparkError};
 
 /// The base DataType representation, mirroring `pyspark.sql.types.DataType`.
 ///

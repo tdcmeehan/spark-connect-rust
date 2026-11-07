@@ -61,7 +61,6 @@ dependencies = [
  "arrow",
  "base64 0.21.7",
  "bytes",
- "chrono",
  "datafusion",
  "futures",
  "polars",
@@ -83,6 +82,7 @@ version = "4.3.0"
 dependencies = [
  "apache-spark-connect-proto",
  "bytes",
+ "chrono",
  "crc32fast",
  "futures",
  "prost",

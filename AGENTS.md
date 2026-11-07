@@ -141,8 +141,9 @@ version's source, not just the name:
 `https://github.com/apache/spark/tree/vX.Y.Z/python/pyspark` (and the connect
 subtree `python/pyspark/sql/connect/`). Implement on **both** sides:
 
-1. **Rust core** (`crates/spark-connect/src/*.rs`) — the real behavior / plan or
-   proto construction. Add the method if the core lacks it.
+1. **Rust core** (`crates/spark-connect-core/src/*.rs` for types, columns,
+   functions and plans; `crates/spark-connect/src/*.rs` for the DataFrame API) — the
+   real behavior / plan or proto construction. Add the method if the core lacks it.
 2. **PyO3 wrapper** (`crates/pyspark-rs/src/*.rs`) — `#[pymethods]` delegating to
    core, with `#[pyo3(name = "camelCase", signature = (...))]`.
 3. **Python shim** (`python/pyspark/...`) only when the class is not a direct

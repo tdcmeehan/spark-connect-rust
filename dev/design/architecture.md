@@ -42,10 +42,12 @@ crates/
   spark-connect-proto   generated spark.connect.* (prost + tonic-prost). DONE.
   spark-connect-core    transport: channel builder, gRPC client, retries,
                         reattach, artifacts, config, error mapping (core.py,
-                        retries.py, reattach.py, artifact.py, channel_builder)
-  spark-connect         pure-Rust API mirroring pyspark: types, expressions,
-                        column, plan, dataframe, functions, session, readwriter,
-                        catalog, group, window, udf/udtf, streaming, observation
+                        retries.py, reattach.py, artifact.py, channel_builder);
+                        plan building: types, expressions, column, plan,
+                        functions, window, udf, observation
+  spark-connect         pure-Rust API mirroring pyspark: dataframe, session,
+                        readwriter, catalog, group, udf/udtf, streaming; re-exports
+                        the plan-building modules of spark-connect-core
   pyspark-rs            PyO3 bindings -> native module `_pyspark`
 python/
   pyspark/…             thin drop-in package; public modules re-export from
@@ -126,7 +128,7 @@ audit_no_stubs.sh` fails the build on any TODO/`unimplemented!`/stub/"for now"/
 files green.
 
 **Known partials to COMPLETE (not defer):** reattach loop (currently a stub in
-`spark-connect-core/src/reattach.rs`), `UserDefinedType` in `spark-connect/src/
+`spark-connect-core/src/reattach.rs`), `UserDefinedType` in `spark-connect-core/src/
 types.rs`, TLS/secure channel dialing in `spark-connect-core`. These are tracked
 as open ledger `wip` rows and must be finished before their phases count as done.
 

@@ -2798,6 +2798,15 @@ impl<'a> ArrowValueLayout<'a> {
     }
 }
 
+impl crate::expression::AsSubquery for DataFrame {
+    fn as_subquery(
+        &self,
+        subquery_type: crate::expression::SubqueryType,
+    ) -> crate::expression::SubqueryExpression {
+        self.subquery(subquery_type)
+    }
+}
+
 #[cfg(test)]
 fn arrow_value_at(array: &dyn arrow::array::Array, index: usize) -> Result<Value> {
     ArrowValueLayout::new(array).value_at(index)

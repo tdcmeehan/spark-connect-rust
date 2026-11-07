@@ -29,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-FUNCTIONS_RS = "crates/spark-connect/src/functions.rs"
+FUNCTIONS_RS = "crates/spark-connect-core/src/functions.rs"
 OUTPUT = "crates/spark-connect/tests/request_snapshots/cases/functions_generated.rs"
 
 LICENSE = """\

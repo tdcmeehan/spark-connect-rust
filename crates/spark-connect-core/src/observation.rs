@@ -4,12 +4,12 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use spark_connect_core::error::{Result, SparkError, SparkErrorKind};
+use crate::error::{Result, SparkError, SparkErrorKind};
 use spark_connect_proto as proto;
 
 /// Metrics that the server observes on a DataFrame, mirroring `pyspark.sql.Observation`.
 ///
-/// [`crate::DataFrame::observe_with`] observes them, by a `CollectMetrics` relation of the
+/// `DataFrame::observe_with` observes them, by a `CollectMetrics` relation of the
 /// name of the observation. Each action that runs the DataFrame, or a DataFrame of it, sets
 /// them as the server observed them, which [`Observation::get`] returns. A clone shares the
 /// state of the observation.
@@ -79,7 +79,8 @@ impl Observation {
     /// The name to observe the metrics by, as PySpark's `Observation._on` before it
     /// observes them: `REUSE_OBSERVATION` for an observation used already, and the name,
     /// a random UUID that it keeps for an unnamed observation.
-    pub(crate) fn name_to_observe(&self) -> Result<String> {
+    #[doc(hidden)]
+    pub fn name_to_observe(&self) -> Result<String> {
         let mut state = self.lock();
         if state.result.is_some() {
             return Err(SparkError::classed(
@@ -95,13 +96,15 @@ impl Observation {
     }
 
     /// Mark the observation used, with no metrics until an action observes them.
-    pub(crate) fn start(&self) {
+    #[doc(hidden)]
+    pub fn start(&self) {
         self.lock().result = Some(Vec::new());
     }
 
     /// Set the metrics that an action observed, as PySpark's client updates the result of
     /// the observation with them: a metric replaces the value of a metric of its name.
-    pub(crate) fn update(&self, keys: &[String], values: &[proto::expression::Literal]) {
+    #[doc(hidden)]
+    pub fn update(&self, keys: &[String], values: &[proto::expression::Literal]) {
         let mut state = self.lock();
         let Some(result) = state.result.as_mut() else {
             return;
@@ -115,7 +118,8 @@ impl Observation {
     }
 
     /// Set the error of collecting the metrics, which `get` returns.
-    pub(crate) fn set_error(&self, error: SparkError) {
+    #[doc(hidden)]
+    pub fn set_error(&self, error: SparkError) {
         self.lock().error = Some(error);
     }
 

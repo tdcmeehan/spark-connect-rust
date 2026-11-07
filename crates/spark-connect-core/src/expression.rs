@@ -105,6 +105,12 @@ pub enum ExpressionNode {
     Subquery(Box<SubqueryExpression>),
 }
 
+/// A plan that an expression can refer to as a subquery, such as that of a DataFrame.
+pub trait AsSubquery {
+    /// The subquery expression of `subquery_type` over this plan.
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression;
+}
+
 /// The type of a [`SubqueryExpression`]. Mirrors the `subquery_type` of
 /// `pyspark.sql.connect.expressions.SubqueryExpression`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +143,8 @@ impl SubqueryType {
 #[derive(Debug, Clone)]
 pub struct SubqueryExpression {
     /// The plan of the subquery.
-    pub(crate) plan: Arc<LogicalPlan>,
+    #[doc(hidden)]
+    pub plan: Arc<LogicalPlan>,
     /// The plan ID of `plan` in the session of its DataFrame.
     pub(crate) plan_id: i64,
     /// The type of the subquery.
@@ -167,7 +174,8 @@ impl PartialEq for SubqueryExpression {
 
 impl SubqueryExpression {
     /// A subquery of `subquery_type` of `plan`, whose plan ID is `plan_id`.
-    pub(crate) fn new(plan: Arc<LogicalPlan>, plan_id: i64, subquery_type: SubqueryType) -> Self {
+    #[doc(hidden)]
+    pub fn new(plan: Arc<LogicalPlan>, plan_id: i64, subquery_type: SubqueryType) -> Self {
         SubqueryExpression {
             plan,
             plan_id,
@@ -1431,7 +1439,8 @@ fn python_bytes_repr(bytes: &[u8]) -> String {
 }
 
 /// Python's `repr` of a string, as a list shows its strings.
-pub(crate) fn python_str_repr(value: &str) -> String {
+#[doc(hidden)]
+pub fn python_str_repr(value: &str) -> String {
     let quote = python_quote(value.contains('\''), value.contains('"'));
     let mut out = String::new();
     out.push(quote);
