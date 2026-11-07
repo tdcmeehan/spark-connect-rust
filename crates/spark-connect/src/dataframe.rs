@@ -4391,6 +4391,27 @@ mod subquery_tests {
         relation.common.as_ref().and_then(|common| common.plan_id)
     }
 
+    #[test]
+    fn isin_subquery_takes_a_dataframe_behind_references_and_pointers() {
+        let df = session().range(3).unwrap();
+        let expected = col("id").isin_subquery(&df).to_proto();
+        assert_eq!(col("id").isin_subquery(&&df).to_proto(), expected);
+        assert_eq!(
+            col("id").isin_subquery(&Box::new(df.clone())).to_proto(),
+            expected
+        );
+        assert_eq!(
+            col("id")
+                .isin_subquery(&std::rc::Rc::new(df.clone()))
+                .to_proto(),
+            expected
+        );
+        assert_eq!(
+            col("id").isin_subquery(&Arc::new(df.clone())).to_proto(),
+            expected
+        );
+    }
+
     /// The root and the references of a `WithRelations`.
     fn with_relations(relation: &proto::Relation) -> (&proto::Relation, &[proto::Relation]) {
         let Some(RelType::WithRelations(with)) = &relation.rel_type else {

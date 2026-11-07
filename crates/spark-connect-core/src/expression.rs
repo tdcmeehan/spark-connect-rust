@@ -111,6 +111,30 @@ pub trait AsSubquery {
     fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression;
 }
 
+impl<T: AsSubquery + ?Sized> AsSubquery for &T {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for Box<T> {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for std::rc::Rc<T> {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for Arc<T> {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
 /// The type of a [`SubqueryExpression`]. Mirrors the `subquery_type` of
 /// `pyspark.sql.connect.expressions.SubqueryExpression`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

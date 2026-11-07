@@ -524,6 +524,7 @@ impl PlanIds {
     }
 
     #[doc(hidden)]
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.nodes.lock().unwrap().ids.len()
     }

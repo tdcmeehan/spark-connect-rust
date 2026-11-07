@@ -110,10 +110,10 @@ skip_functions = {
     "cast",
     "column",
     # Non-standard signatures:
-    #   broadcast(DataFrame) -> DataFrame  (a join hint, not a column function)
     #   variant_delete(Column, Vec<Column>) -> Column  (variadic paths)
-    "broadcast",
     "variant_delete",
+    # cume_dist() -> Column: called through pyfunc_invoke_function, not the dispatch.
+    "cume_dist",
     # variant_strip_nulls(Column, bool) -> Column: bool arg, dedicated pyfunc binding
     # (the generic Vec<Column> dispatch would drop the trailing scalar).
     "variant_strip_nulls",
