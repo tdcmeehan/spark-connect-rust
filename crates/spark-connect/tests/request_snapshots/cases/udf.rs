@@ -109,7 +109,7 @@ pub fn cases() -> Vec<Case> {
     cases
 }
 
-#[cfg(feature = "wasm-udf")]
+#[cfg(all(feature = "wasm-udf", unix))]
 mod wasm {
     use spark_connect::column::col;
     use spark_connect::wasm_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
@@ -118,7 +118,10 @@ mod wasm {
 
     /// A packer that answers with the spec it is given, so the command is the spec.
     fn echo_packer() -> PythonPacker {
-        let path = std::env::temp_dir().join("spark-connect-request-snapshots-echo-packer");
+        let path = std::env::temp_dir().join(format!(
+            "spark-connect-request-snapshots-echo-packer-{}",
+            std::process::id()
+        ));
         std::fs::write(&path, "#!/bin/sh\ncat\n").unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -170,7 +173,7 @@ mod wasm {
     }
 }
 
-#[cfg(not(feature = "wasm-udf"))]
+#[cfg(not(all(feature = "wasm-udf", unix)))]
 mod wasm {
     pub fn cases() -> Vec<crate::Case> {
         Vec::new()

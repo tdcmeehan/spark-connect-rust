@@ -360,7 +360,8 @@ fn requests_of_the_rust_api_are_unchanged() {
     );
     assert!(
         failures.is_empty(),
-        "{} of {} request snapshots differ:\n{}",
+        "{} of {} request snapshots differ:\n{}\nIf the change is intended, rerun with \
+         SPARK_CONNECT_UPDATE_REQUEST_SNAPSHOTS=1 to rewrite them.",
         failures.len(),
         actual.len(),
         failures.join("\n")

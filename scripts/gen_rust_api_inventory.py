@@ -25,8 +25,18 @@ Items re-exported from other crates are listed as ``<path>\treexport``.
 Generate the JSON with a nightly toolchain:
 
     cargo +nightly rustdoc -p apache-spark-connect --lib --all-features -- \
-        -Z unstable-options --output-format json
+        -Z unstable-options --output-format json --document-hidden-items
     python3 scripts/gen_rust_api_inventory.py target/doc/spark_connect.json
+
+tests/golden/rust_api_inventory.tsv is this inventory of the API of commit
+62080cbe5ac168a112dea656134c580b9ae4df03, before its modules moved into
+apache-spark-connect-core. Regenerate it from a copy of that commit:
+
+    git archive 62080cbe5ac168a112dea656134c580b9ae4df03 | tar -x -C <dir>
+    (cd <dir> && cargo +nightly rustdoc -p apache-spark-connect --lib --all-features -- \
+        -Z unstable-options --output-format json --document-hidden-items)
+    python3 scripts/gen_rust_api_inventory.py <dir>/target/doc/spark_connect.json \
+        > tests/golden/rust_api_inventory.tsv
 """
 
 import argparse

@@ -264,6 +264,14 @@ Then re-run the step-2 diff (0 user-facing gaps) and the parity gate
 transport; `FLAKY_FILES` = retry, not skip). Only then
 `gh auth switch -u HyukjinKwon` and push.
 
+The request snapshots (`crates/spark-connect/tests/request_snapshots`) pin the bytes of
+every request the Rust API builds. A change that alters them on purpose rewrites
+`tests/golden/rust_requests.jsonl` with `SPARK_CONNECT_UPDATE_REQUEST_SNAPSHOTS=1 cargo test
+-p apache-spark-connect --features wasm-udf,datafusion,polars --test request_snapshots`. A new
+public function gets a case: rerun `scripts/gen_request_snapshot_functions.py` for a SQL
+function, or add one under `cases/`; `scripts/check_request_snapshot_coverage.py` lists any
+function without one.
+
 **Run the NEW version's own official test cases — they change every release.**
 Do not rely on the previous version's suite. When bumping to vX.Y.Z:
 - Pull vX.Y.Z's official Python connect tests from `apache/spark` at the tag —

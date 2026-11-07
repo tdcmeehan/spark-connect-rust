@@ -17,7 +17,13 @@
 
 """Check that every public function of the Rust API has a request-snapshot case.
 
-Takes the inventory printed by scripts/gen_rust_api_inventory.py. An item is
+Takes the inventory printed by scripts/gen_rust_api_inventory.py, by default
+tests/golden/rust_api_inventory.tsv, the API that the snapshots were captured
+from (see that script for how to regenerate it). Run it from the repository root:
+
+    python3 scripts/check_request_snapshot_coverage.py
+
+An item is
 covered by a case named after it (``DataFrame::select`` or ``DataFrame::select/variant``
 for ``spark_connect::dataframe::DataFrame::select``, ``functions::col`` for the free
 function ``spark_connect::functions::col``), or by a pattern in
@@ -33,6 +39,7 @@ import fnmatch
 import json
 import sys
 
+INVENTORY = "tests/golden/rust_api_inventory.tsv"
 SNAPSHOTS = "tests/golden/rust_requests.jsonl"
 EXCLUDED = "tests/golden/rust_requests_excluded.tsv"
 KINDS = {"fn", "method", "trait-method"}
@@ -46,7 +53,7 @@ def case_key(path, kind):
 
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("inventory")
+    parser.add_argument("inventory", nargs="?", default=INVENTORY)
     parser.add_argument("--snapshots", default=SNAPSHOTS)
     parser.add_argument("--excluded", default=EXCLUDED)
     args = parser.parse_args(argv)
