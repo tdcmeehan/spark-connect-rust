@@ -169,5 +169,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         1_000_000,
         5_000_000,
     )?;
+
+    // The same functions in C++ (any spark_udf.h module), from CXX_UDF_WASM.
+    if let Ok(path) = std::env::var("CXX_UDF_WASM") {
+        use spark_connect::wasm_udf::{udf as wasm_udf, AbiType};
+        let module = std::fs::read(&path)?;
+        let cxx = |name: &str, arg: AbiType, ret: AbiType| {
+            wasm_udf(name, module.clone(), name, vec![arg], ret).with_batch_entrypoint(name)
+        };
+        let nullable = || AbiType::Nullable(Box::new(AbiType::I64));
+        let (_, v) = run(
+            &|| Ok(cxx("half_if_even", nullable(), nullable()).call(vec![col("id")])?),
+            false,
+            n,
+        )?;
+        assert_eq!(v, half_sum(n), "C++ half_if_even");
+        ns_per_row(
+            "C++ add_one per batch",
+            &|| Ok(cxx("add_one", AbiType::I64, AbiType::I64).call(vec![col("id")])?),
+            false,
+            &add_one_sum,
+            2_000_000,
+            20_000_000,
+        )?;
+        ns_per_row(
+            "C++ shout per batch",
+            &|| Ok(cxx("shout", AbiType::Str, AbiType::Str).call(vec![id_str()])?),
+            true,
+            &shout_len,
+            1_000_000,
+            5_000_000,
+        )?;
+    }
     Ok(())
 }

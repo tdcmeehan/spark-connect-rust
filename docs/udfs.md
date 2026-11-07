@@ -116,7 +116,7 @@ client       udf::add_one(col) builds a standard PythonUDF in Rust: its pickled
 
 executors    the Python worker compiles the runner, instantiates the module with
              wasmtime, and calls the exported entrypoint once per Arrow batch (or
-             once per row for signatures the batch export doesn't cover).
+             once per row for signatures the batch path doesn't cover).
 ```
 
 The user never writes WASM, never touches the ABI, and never loads a `.wasm`

@@ -290,6 +290,12 @@ Do not rely on the previous version's suite. When bumping to vX.Y.Z:
   runner's ABI/codec changes, keep it byte-compatible with
   `spark_connect::wasm_udf::AbiType` and the build-time runtime in
   `apache-spark-connect-build`.
+- The per-batch path is a host of `spark_udf.h` (version 1): the macro emits
+  `spark_udf_init` (one library per module, so one `#[spark_wasm_udf]` module per
+  crate) with a `create`/`eval` pair per batch-capable function, and the runner
+  passes each batch as Arrow C data arrays laid out in the module's memory and
+  calls `eval` through the exported function table. Any module that implements
+  the header (C++, for one) runs through `udf(...).with_batch_entrypoint(name)`.
 - Registration mirrors pyspark: `spark.udf().register("name", &udf)` (a
   session-side `UdfRegistration` handle), then callable from SQL.
 - The command carries runner *source*, not cloudpickled bytecode, so one command

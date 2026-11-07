@@ -82,7 +82,25 @@ fn abi_type(ty: &Type) -> Result<proc_macro2::TokenStream, syn::Error> {
     ))
 }
 
-/// Whether the batch export can carry `ty`: scalars, `String`, `Vec<u8>` and one `Option` level.
+/// The Arrow format string of a type the batch path supports (see `batch_supported`).
+fn arrow_format(ty: &Type) -> &'static str {
+    if let Some(inner) = generic_inner(ty, "Option") {
+        return arrow_format(inner);
+    }
+    if generic_inner(ty, "Vec").is_some() {
+        return "z";
+    }
+    match path_ident(ty).as_deref() {
+        Some("i32") => "i",
+        Some("i64") => "l",
+        Some("f32") => "f",
+        Some("f64") => "g",
+        Some("bool") => "b",
+        _ => "u",
+    }
+}
+
+/// Whether the batch path (spark_udf.h) can carry `ty`: scalars, `String`, `Vec<u8>` and one `Option` level.
 /// Arrays (`Vec<T>`) stay on the per-row path.
 fn batch_supported(ty: &Type) -> bool {
     if let Some(ident) = path_ident(ty) {
@@ -208,6 +226,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
 
     // WASM export wrappers, injected into the module (compiled only for wasm32).
     let mut wrappers = Vec::new();
+    let mut functions = Vec::new();
     for u in &udfs {
         let Udf {
             name,
@@ -232,7 +251,11 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
             }
         });
         if arg_tys.iter().chain([ret_ty]).all(batch_supported) {
-            let batch_export = format_ident!("spark_udf_batch_{}", name);
+            let create = format_ident!("__spark_udf_create_{}", name);
+            let eval = format_ident!("__spark_udf_eval_{}", name);
+            let arg_formats: Vec<_> = arg_tys.iter().map(arrow_format).collect();
+            let ret_format = arrow_format(ret_ty);
+            let c_name = syn::LitByteStr::new(format!("{name}\0").as_bytes(), name.span());
             let nargs = arg_tys.len();
             let vars: Vec<syn::Ident> = (0..nargs).map(|i| format_ident!("__a{i}")).collect();
             let gets: Vec<_> = arg_tys
@@ -252,18 +275,67 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
                 .collect();
             wrappers.push(quote! {
                 #[cfg(target_arch = "wasm32")]
-                #[no_mangle]
-                pub extern "C" fn #batch_export(__desc: u32) -> u32 {
-                    crate::spark_wasm_rt::batch::run(__desc, #nargs, |__cols, __i, __out| {
-                        #(#gets)*
-                        let __r: #ret_ty = #name(#(#vars),*);
-                        crate::spark_wasm_rt::batch::ToCol::push(&__r, __out);
-                        Ok(())
-                    })
+                unsafe extern "C" fn #create(
+                    __info: *const crate::spark_wasm_rt::abi::CreateInfo,
+                    __state: *mut *mut u8,
+                ) -> i32 {
+                    crate::spark_wasm_rt::abi::create(__info, __state, &[#(#arg_formats),*], #ret_format)
+                }
+            });
+            wrappers.push(quote! {
+                #[cfg(target_arch = "wasm32")]
+                unsafe extern "C" fn #eval(
+                    _state: *mut u8,
+                    __input: *const crate::spark_wasm_rt::abi::ArrowArray,
+                    __output: *mut crate::spark_wasm_rt::abi::ArrowArray,
+                ) -> i32 {
+                    crate::spark_wasm_rt::batch::run::<#ret_ty, _>(
+                        __input, __output, #nargs, |__cols, __i, __out| {
+                            #(#gets)*
+                            let __r: #ret_ty = #name(#(#vars),*);
+                            crate::spark_wasm_rt::batch::ToCol::push(&__r, __out);
+                            Ok(())
+                        },
+                    )
+                }
+            });
+            functions.push(quote! {
+                crate::spark_wasm_rt::abi::Function {
+                    size: ::core::mem::size_of::<crate::spark_wasm_rt::abi::Function>() as i64,
+                    name: #c_name.as_ptr(),
+                    kind: crate::spark_wasm_rt::abi::SCALAR,
+                    create: #create,
+                    eval: #eval,
+                    close: crate::spark_wasm_rt::abi::close,
                 }
             });
         }
     }
+    let nfunctions = functions.len();
+    wrappers.push(quote! {
+        #[cfg(target_arch = "wasm32")]
+        static __SPARK_UDF_FUNCTIONS: [crate::spark_wasm_rt::abi::Function; #nfunctions] =
+            [#(#functions),*];
+    });
+    wrappers.push(quote! {
+        #[cfg(target_arch = "wasm32")]
+        static __SPARK_UDF_LIBRARY: crate::spark_wasm_rt::abi::Library =
+            crate::spark_wasm_rt::abi::Library {
+                size: ::core::mem::size_of::<crate::spark_wasm_rt::abi::Library>() as i64,
+                abi_version: 1,
+                last_error: crate::spark_wasm_rt::abi::last_error,
+                num_functions: #nfunctions as i64,
+                functions: &__SPARK_UDF_FUNCTIONS as *const _ as *const crate::spark_wasm_rt::abi::Function,
+            };
+    });
+    wrappers.push(quote! {
+        // One per module: a crate can hold one #[spark_wasm_udf] module.
+        #[cfg(target_arch = "wasm32")]
+        #[no_mangle]
+        pub extern "C" fn spark_udf_init(_host: *const u8) -> *const crate::spark_wasm_rt::abi::Library {
+            &__SPARK_UDF_LIBRARY
+        }
+    });
     if let Some((_, content)) = &mut module.content {
         for w in wrappers {
             content.push(syn::parse2(w)?);
@@ -292,8 +364,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
         let arg_abis: Vec<_> = arg_tys.iter().map(abi_type).collect::<Result<_, _>>()?;
         let ret_abi = abi_type(ret_ty)?;
         let with_batch = if arg_tys.iter().chain([ret_ty]).all(batch_supported) {
-            let batch_str = format!("spark_udf_batch_{name}");
-            quote!(.with_batch_entrypoint(#batch_str))
+            quote!(.with_batch_entrypoint(#name_str))
         } else {
             quote!()
         };
