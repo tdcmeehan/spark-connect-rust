@@ -6,187 +6,12 @@
 //! - Base traits: `Estimator`, `Transformer`, `Model`, `Evaluator`
 //! - Concrete example: `StandardScaler` estimator + `StandardScalerModel`
 
+use spark_connect_core::ml;
+pub use spark_connect_core::ml::{MlOperator, OperatorType, Params};
 use spark_connect_proto as proto;
-use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::dataframe::DataFrame;
 use crate::plan::LogicalPlan;
-
-/// ML parameter handling: stores name -> literal value mappings.
-///
-/// Mirrors the structure of parameter handling in `pyspark.ml.param.Params`.
-#[derive(Debug, Clone, Default)]
-pub struct Params {
-    /// User-supplied parameters as name -> Literal mappings
-    params: HashMap<String, proto::Expression>,
-}
-
-impl Params {
-    /// Create a new empty Params collection.
-    pub fn new() -> Self {
-        Params {
-            params: HashMap::new(),
-        }
-    }
-
-    /// Set a parameter to an integer value.
-    pub fn set_param_int(mut self, name: &str, value: i64) -> Self {
-        let mut literal = proto::Expression::default();
-        let mut lit = proto::expression::Literal::default();
-        lit.literal_type = Some(proto::expression::literal::LiteralType::Long(value));
-        literal.expr_type = Some(proto::expression::ExprType::Literal(lit));
-        self.params.insert(name.to_string(), literal);
-        self
-    }
-
-    /// Set a parameter to a double value.
-    pub fn set_param_double(mut self, name: &str, value: f64) -> Self {
-        let mut literal = proto::Expression::default();
-        let mut lit = proto::expression::Literal::default();
-        lit.literal_type = Some(proto::expression::literal::LiteralType::Double(value));
-        literal.expr_type = Some(proto::expression::ExprType::Literal(lit));
-        self.params.insert(name.to_string(), literal);
-        self
-    }
-
-    /// Set a parameter to a string value.
-    pub fn set_param_string(mut self, name: &str, value: &str) -> Self {
-        let mut literal = proto::Expression::default();
-        let mut lit = proto::expression::Literal::default();
-        lit.literal_type = Some(proto::expression::literal::LiteralType::String(
-            value.to_string(),
-        ));
-        literal.expr_type = Some(proto::expression::ExprType::Literal(lit));
-        self.params.insert(name.to_string(), literal);
-        self
-    }
-
-    /// Set a parameter to a boolean value.
-    pub fn set_param_bool(mut self, name: &str, value: bool) -> Self {
-        let mut literal = proto::Expression::default();
-        let mut lit = proto::expression::Literal::default();
-        lit.literal_type = Some(proto::expression::literal::LiteralType::Boolean(value));
-        literal.expr_type = Some(proto::expression::ExprType::Literal(lit));
-        self.params.insert(name.to_string(), literal);
-        self
-    }
-
-    /// Get a parameter value.
-    pub fn get_param(&self, name: &str) -> Option<&proto::Expression> {
-        self.params.get(name)
-    }
-
-    /// Convert to proto MlParams for transmission. MlParams stores `Literal`
-    /// values, so we unwrap the literal from each stored Expression.
-    pub fn to_proto(&self) -> proto::MlParams {
-        let mut ml_params = proto::MlParams::default();
-        for (name, expr) in &self.params {
-            if let Some(proto::expression::ExprType::Literal(lit)) = &expr.expr_type {
-                ml_params.params.insert(name.clone(), lit.clone());
-            }
-        }
-        ml_params
-    }
-
-    /// Convert from proto MlParams (wrapping each Literal back into an Expression).
-    pub fn from_proto(proto_params: &proto::MlParams) -> Self {
-        let mut params = HashMap::new();
-        for (name, lit) in &proto_params.params {
-            let mut e = proto::Expression::default();
-            e.expr_type = Some(proto::expression::ExprType::Literal(lit.clone()));
-            params.insert(name.clone(), e);
-        }
-        Params { params }
-    }
-}
-
-/// ML Operator type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperatorType {
-    /// An estimator that learns from data via fit().
-    Estimator,
-    /// A transformer that applies transformations (possibly stateless).
-    Transformer,
-    /// An evaluator that measures model quality.
-    Evaluator,
-    /// A fitted model (result of fit).
-    Model,
-}
-
-impl OperatorType {
-    /// Convert to proto OperatorType.
-    pub fn to_proto(&self) -> proto::ml_operator::OperatorType {
-        match self {
-            OperatorType::Estimator => proto::ml_operator::OperatorType::Estimator,
-            OperatorType::Transformer => proto::ml_operator::OperatorType::Transformer,
-            OperatorType::Evaluator => proto::ml_operator::OperatorType::Evaluator,
-            OperatorType::Model => proto::ml_operator::OperatorType::Model,
-        }
-    }
-
-    /// Convert from proto OperatorType.
-    pub fn from_proto(proto_type: i32) -> Self {
-        match proto::ml_operator::OperatorType::try_from(proto_type) {
-            Ok(proto::ml_operator::OperatorType::Estimator) => OperatorType::Estimator,
-            Ok(proto::ml_operator::OperatorType::Transformer) => OperatorType::Transformer,
-            Ok(proto::ml_operator::OperatorType::Evaluator) => OperatorType::Evaluator,
-            Ok(proto::ml_operator::OperatorType::Model) => OperatorType::Model,
-            _ => OperatorType::Transformer,
-        }
-    }
-}
-
-/// ML Operator represents an ML class (Estimator, Transformer, Model, or Evaluator).
-///
-/// Mirrors `spark.connect.MlOperator` protobuf.
-#[derive(Debug, Clone)]
-pub struct MlOperator {
-    /// Qualified class name (e.g., "org.apache.spark.ml.feature.StandardScaler")
-    pub name: String,
-    /// Unique identifier for this operator instance
-    pub uid: String,
-    /// Type of operator
-    pub op_type: OperatorType,
-}
-
-impl MlOperator {
-    /// Create a new MlOperator with auto-generated UID.
-    pub fn new(name: &str, op_type: OperatorType) -> Self {
-        MlOperator {
-            name: name.to_string(),
-            uid: Uuid::new_v4().to_string(),
-            op_type,
-        }
-    }
-
-    /// Create with a specific UID.
-    pub fn with_uid(name: &str, uid: &str, op_type: OperatorType) -> Self {
-        MlOperator {
-            name: name.to_string(),
-            uid: uid.to_string(),
-            op_type,
-        }
-    }
-
-    /// Convert to proto MlOperator.
-    pub fn to_proto(&self) -> proto::MlOperator {
-        proto::MlOperator {
-            name: self.name.clone(),
-            uid: self.uid.clone(),
-            r#type: self.op_type.to_proto() as i32,
-        }
-    }
-
-    /// Convert from proto MlOperator.
-    pub fn from_proto(proto_op: &proto::MlOperator) -> Self {
-        MlOperator {
-            name: proto_op.name.clone(),
-            uid: proto_op.uid.clone(),
-            op_type: OperatorType::from_proto(proto_op.r#type),
-        }
-    }
-}
 
 /// Base trait for ML Estimators that fit to data and produce Models.
 ///
@@ -258,16 +83,11 @@ pub trait Transformer: Send + Sync {
 
     /// Build the MlRelation for this transformation.
     fn build_ml_relation(&self, input: &DataFrame) -> proto::MlRelation {
-        let mut transform = proto::ml_relation::Transform::default();
-        transform.operator = Some(proto::ml_relation::transform::Operator::Transformer(
-            self.operator().to_proto(),
-        ));
-        transform.input = Some(Box::new(input.relation()));
-        transform.params = Some(self.params().to_proto());
-
-        let mut ml_relation = proto::MlRelation::default();
-        ml_relation.ml_type = Some(proto::ml_relation::MlType::Transform(Box::new(transform)));
-        ml_relation
+        ml::transform(
+            proto::ml_relation::transform::Operator::Transformer(self.operator().to_proto()),
+            self.params(),
+            input.relation(),
+        )
     }
 }
 
@@ -304,18 +124,9 @@ fn evaluate_via_command(
     params: &Params,
     df: &DataFrame,
 ) -> spark_connect_core::error::Result<f64> {
-    let dataset = df.relation();
-    let evaluate = proto::ml_command::Evaluate {
-        evaluator: Some(operator.to_proto()),
-        params: Some(params.to_proto()),
-        dataset: Some(dataset),
-    };
-    let mut ml_command = proto::MlCommand::default();
-    ml_command.command = Some(proto::ml_command::Command::Evaluate(evaluate));
-
     let responses = crate::dataframe::execute_command_collect(
         &df.session,
-        proto::command::CommandType::MlCommand(ml_command),
+        ml::evaluate(operator, params, df.relation()),
     )?;
     for resp in responses {
         if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
@@ -923,16 +734,9 @@ impl Estimator for LogisticRegression {
     }
 
     fn fit_impl(&mut self, df: &DataFrame) -> spark_connect_core::error::Result<Box<dyn Model>> {
-        let command = proto::MlCommand {
-            command: Some(proto::ml_command::Command::Fit(proto::ml_command::Fit {
-                estimator: Some(self.operator.to_proto()),
-                params: Some(self.params.to_proto()),
-                dataset: Some(df.relation()),
-            })),
-        };
         let responses = crate::dataframe::execute_command_collect(
             &df.session,
-            proto::command::CommandType::MlCommand(command),
+            ml::fit(&self.operator, &self.params, df.relation()),
         )?;
         for response in responses {
             if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
@@ -987,18 +791,11 @@ impl Transformer for LogisticRegressionModel {
     }
 
     fn build_ml_relation(&self, input: &DataFrame) -> proto::MlRelation {
-        proto::MlRelation {
-            ml_type: Some(proto::ml_relation::MlType::Transform(Box::new(
-                proto::ml_relation::Transform {
-                    operator: Some(proto::ml_relation::transform::Operator::ObjRef(
-                        self.model_ref.clone(),
-                    )),
-                    input: Some(Box::new(input.relation())),
-                    params: Some(self.params.to_proto()),
-                },
-            ))),
-            ..Default::default()
-        }
+        ml::transform(
+            proto::ml_relation::transform::Operator::ObjRef(self.model_ref.clone()),
+            &self.params,
+            input.relation(),
+        )
     }
 
     fn transform_impl(&mut self, df: &DataFrame) -> spark_connect_core::error::Result<DataFrame> {

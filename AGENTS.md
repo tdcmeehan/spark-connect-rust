@@ -142,7 +142,8 @@ version's source, not just the name:
 subtree `python/pyspark/sql/connect/`). Implement on **both** sides:
 
 1. **Rust core** (`crates/spark-connect-core/src/*.rs` for types, columns,
-   functions and plans; `crates/spark-connect/src/*.rs` for the DataFrame API) — the
+   functions, plans and the protos of commands; `crates/spark-connect/src/*.rs` for
+   the DataFrame API) — the
    real behavior / plan or proto construction. Add the method if the core lacks it.
 2. **PyO3 wrapper** (`crates/pyspark-rs/src/*.rs`) — `#[pymethods]` delegating to
    core, with `#[pyo3(name = "camelCase", signature = (...))]`.
@@ -281,7 +282,7 @@ Do not rely on the previous version's suite. When bumping to vX.Y.Z:
 ## 8. WASM UDFs
 
 - The packer is a Python script **embedded in the crate**
-  (`crates/spark-connect/src/wasm_packer.py`, pulled in with `include_str!`). The
+  (`crates/spark-connect-core/src/wasm_packer.py`, pulled in with `include_str!`). The
   Rust client runs it as `python -c <src>` (so it executes as `__main__`), which
   makes cloudpickle serialize the `WasmScalarUDF` runner **by value** into the UDF
   command. Because it runs as `__main__` there is **no** separate `pyspark_wasm_udf`

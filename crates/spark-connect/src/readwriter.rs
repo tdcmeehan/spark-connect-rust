@@ -12,7 +12,8 @@ use crate::column::Column;
 use crate::dataframe::{build_input_relation, DataFrame};
 use crate::plan::LogicalPlan;
 use crate::session::SparkSession;
-pub use spark_connect_core::readwriter::ReadType;
+use spark_connect_core::readwriter::{table_destination, WriteSpec, WriteV2Spec};
+pub use spark_connect_core::readwriter::{ReadType, SaveMode, TableSaveMethod};
 
 /// DataFrameReader for reading data from various sources.
 ///
@@ -174,55 +175,6 @@ impl DataFrameReader {
     }
 }
 
-/// SaveMode for write operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SaveMode {
-    Append,
-    Overwrite,
-    ErrorIfExists,
-    Ignore,
-}
-
-impl SaveMode {
-    /// Convert SaveMode to proto i32 value.
-    pub fn to_proto(&self) -> i32 {
-        match self {
-            SaveMode::Append => 1i32,
-            SaveMode::Overwrite => 2i32,
-            SaveMode::ErrorIfExists => 3i32,
-            SaveMode::Ignore => 4i32,
-        }
-    }
-
-    /// Parse SaveMode from string.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "append" => Some(SaveMode::Append),
-            "overwrite" => Some(SaveMode::Overwrite),
-            "error" | "errorifexists" => Some(SaveMode::ErrorIfExists),
-            "ignore" => Some(SaveMode::Ignore),
-            _ => None,
-        }
-    }
-}
-
-/// TableSaveMethod for WriteOperation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TableSaveMethod {
-    SaveAsTable,
-    InsertInto,
-}
-
-impl TableSaveMethod {
-    /// Convert to proto i32 value.
-    pub fn to_proto(&self) -> i32 {
-        match self {
-            TableSaveMethod::SaveAsTable => 1i32,
-            TableSaveMethod::InsertInto => 2i32,
-        }
-    }
-}
-
 /// DataFrameWriter for writing DataFrames to various destinations.
 ///
 /// Mirrors `pyspark.sql.connect.readwriter.DataFrameWriter`.
@@ -230,14 +182,7 @@ impl TableSaveMethod {
 pub struct DataFrameWriter {
     session: SparkSession,
     input_plan: Arc<LogicalPlan>,
-    format: Option<String>,
-    mode: SaveMode,
-    options: HashMap<String, String>,
-    partition_cols: Vec<String>,
-    cluster_cols: Vec<String>,
-    bucket_cols: Vec<String>,
-    sort_cols: Vec<String>,
-    num_buckets: Option<i32>,
+    spec: WriteSpec,
     execution: Option<crate::dataframe::ExecutionSlot>,
 }
 
@@ -252,14 +197,7 @@ impl DataFrameWriter {
         DataFrameWriter {
             session,
             input_plan,
-            format: None,
-            mode: SaveMode::ErrorIfExists,
-            options: HashMap::new(),
-            partition_cols: vec![],
-            cluster_cols: vec![],
-            bucket_cols: vec![],
-            sort_cols: vec![],
-            num_buckets: None,
+            spec: WriteSpec::default(),
             execution: None,
         }
     }
@@ -282,39 +220,39 @@ impl DataFrameWriter {
 
     /// Cluster the output by the given columns (liquid clustering).
     pub fn cluster_by<S: Into<String>>(mut self, cols: impl IntoIterator<Item = S>) -> Self {
-        self.cluster_cols = cols.into_iter().map(Into::into).collect();
+        self.spec.cluster_cols = cols.into_iter().map(Into::into).collect();
         self
     }
 
     /// Set the save mode.
     pub fn mode(mut self, mode: &str) -> Self {
         if let Some(m) = SaveMode::from_str(mode) {
-            self.mode = m;
+            self.spec.mode = m;
         }
         self
     }
 
     /// Set the format/source type.
     pub fn format(mut self, source: &str) -> Self {
-        self.format = Some(source.to_string());
+        self.spec.format = Some(source.to_string());
         self
     }
 
     /// Set a single option.
     pub fn option(mut self, key: &str, value: &str) -> Self {
-        self.options.insert(key.to_string(), value.to_string());
+        self.spec.options.insert(key.to_string(), value.to_string());
         self
     }
 
     /// Set multiple options.
     pub fn options(mut self, options: HashMap<String, String>) -> Self {
-        self.options.extend(options);
+        self.spec.options.extend(options);
         self
     }
 
     /// Set the partition columns.
     pub fn partition_by<S: Into<String>>(mut self, cols: impl IntoIterator<Item = S>) -> Self {
-        self.partition_cols = cols.into_iter().map(Into::into).collect();
+        self.spec.partition_cols = cols.into_iter().map(Into::into).collect();
         self
     }
 
@@ -324,14 +262,14 @@ impl DataFrameWriter {
         num_buckets: i32,
         cols: impl IntoIterator<Item = S>,
     ) -> Self {
-        self.num_buckets = Some(num_buckets);
-        self.bucket_cols = cols.into_iter().map(Into::into).collect();
+        self.spec.num_buckets = Some(num_buckets);
+        self.spec.bucket_cols = cols.into_iter().map(Into::into).collect();
         self
     }
 
     /// Set the sort columns.
     pub fn sort_by<S: Into<String>>(mut self, cols: impl IntoIterator<Item = S>) -> Self {
-        self.sort_cols = cols.into_iter().map(Into::into).collect();
+        self.spec.sort_cols = cols.into_iter().map(Into::into).collect();
         self
     }
 
@@ -340,30 +278,14 @@ impl DataFrameWriter {
         &self,
         save_type: Option<proto::write_operation::SaveType>,
     ) -> Result<proto::WriteOperation> {
-        let mut op = proto::WriteOperation::default();
-        op.input = Some(build_input_relation(&self.input_plan, &self.session));
-        op.source = self.format.clone();
-        op.mode = self.mode.to_proto();
-        op.sort_column_names = self.sort_cols.clone();
-        op.partitioning_columns = self.partition_cols.clone();
-        op.clustering_columns = self.cluster_cols.clone();
-        op.options = self.options.clone();
-        op.save_type = save_type;
-        if let Some(num_buckets) = self.num_buckets {
-            let mut bucket_by = proto::write_operation::BucketBy::default();
-            bucket_by.num_buckets = num_buckets;
-            bucket_by.bucket_column_names = self.bucket_cols.clone();
-            op.bucket_by = Some(bucket_by);
-        }
-        Ok(op)
+        Ok(self.spec.to_proto(
+            build_input_relation(&self.input_plan, &self.session),
+            save_type,
+        ))
     }
 
     fn save_table(self, table_name: &str, method: TableSaveMethod) -> Result<()> {
-        let mut table = proto::write_operation::SaveTable::default();
-        table.table_name = table_name.to_string();
-        table.save_method = method.to_proto();
-        let op =
-            self.build_write_operation(Some(proto::write_operation::SaveType::Table(table)))?;
+        let op = self.build_write_operation(Some(table_destination(table_name, method)))?;
         self.run(proto::command::CommandType::WriteOperation(op))
     }
 
@@ -386,37 +308,37 @@ impl DataFrameWriter {
 
     /// Write as JSON.
     pub fn json(mut self, path: &str) -> Result<()> {
-        self.format = Some("json".to_string());
+        self.spec.format = Some("json".to_string());
         self.save(Some(path))
     }
 
     /// Write as Parquet.
     pub fn parquet(mut self, path: &str) -> Result<()> {
-        self.format = Some("parquet".to_string());
+        self.spec.format = Some("parquet".to_string());
         self.save(Some(path))
     }
 
     /// Write as CSV.
     pub fn csv(mut self, path: &str) -> Result<()> {
-        self.format = Some("csv".to_string());
+        self.spec.format = Some("csv".to_string());
         self.save(Some(path))
     }
 
     /// Write as ORC.
     pub fn orc(mut self, path: &str) -> Result<()> {
-        self.format = Some("orc".to_string());
+        self.spec.format = Some("orc".to_string());
         self.save(Some(path))
     }
 
     /// Write as text.
     pub fn text(mut self, path: &str) -> Result<()> {
-        self.format = Some("text".to_string());
+        self.spec.format = Some("text".to_string());
         self.save(Some(path))
     }
 
     /// Write as XML. Mirrors `DataFrameWriter.xml`.
     pub fn xml(mut self, path: &str) -> Result<()> {
-        self.format = Some("xml".to_string());
+        self.spec.format = Some("xml".to_string());
         self.save(Some(path))
     }
 }
@@ -428,12 +350,7 @@ impl DataFrameWriter {
 pub struct DataFrameWriterV2 {
     session: SparkSession,
     input_plan: Arc<LogicalPlan>,
-    table_name: String,
-    provider: Option<String>,
-    options: HashMap<String, String>,
-    table_properties: HashMap<String, String>,
-    partition_cols: Vec<Column>,
-    cluster_cols: Vec<String>,
+    spec: WriteV2Spec,
     execution: Option<crate::dataframe::ExecutionSlot>,
 }
 
@@ -452,12 +369,7 @@ impl DataFrameWriterV2 {
         DataFrameWriterV2 {
             session,
             input_plan,
-            table_name: table_name.to_string(),
-            provider: None,
-            options: HashMap::new(),
-            table_properties: HashMap::new(),
-            partition_cols: vec![],
-            cluster_cols: vec![],
+            spec: WriteV2Spec::new(table_name),
             execution: None,
         }
     }
@@ -480,38 +392,39 @@ impl DataFrameWriterV2 {
 
     /// Cluster the output table by the given columns (liquid clustering).
     pub fn cluster_by<S: Into<String>>(mut self, cols: impl IntoIterator<Item = S>) -> Self {
-        self.cluster_cols = cols.into_iter().map(Into::into).collect();
+        self.spec.cluster_cols = cols.into_iter().map(Into::into).collect();
         self
     }
 
     /// Specify the underlying output data source provider (e.g. "parquet").
     pub fn using(mut self, provider: &str) -> Self {
-        self.provider = Some(provider.to_string());
+        self.spec.provider = Some(provider.to_string());
         self
     }
 
     /// Add a write option.
     pub fn option(mut self, key: &str, value: &str) -> Self {
-        self.options.insert(key.to_string(), value.to_string());
+        self.spec.options.insert(key.to_string(), value.to_string());
         self
     }
 
     /// Add multiple write options.
     pub fn options(mut self, options: HashMap<String, String>) -> Self {
-        self.options.extend(options);
+        self.spec.options.extend(options);
         self
     }
 
     /// Add a table property.
     pub fn table_property(mut self, property: &str, value: &str) -> Self {
-        self.table_properties
+        self.spec
+            .table_properties
             .insert(property.to_string(), value.to_string());
         self
     }
 
     /// Partition the output table by the given columns.
     pub fn partition_by<C: Into<Column>>(mut self, columns: impl IntoIterator<Item = C>) -> Self {
-        self.partition_cols = columns.into_iter().map(Into::into).collect();
+        self.spec.partition_cols = columns.into_iter().map(Into::into).collect();
         self
     }
 
@@ -521,17 +434,11 @@ impl DataFrameWriterV2 {
         mode: proto::write_operation_v2::Mode,
         overwrite_condition: Option<proto::Expression>,
     ) -> Result<proto::WriteOperationV2> {
-        let mut op = proto::WriteOperationV2::default();
-        op.input = Some(build_input_relation(&self.input_plan, &self.session));
-        op.table_name = self.table_name.clone();
-        op.provider = self.provider.clone();
-        op.partitioning_columns = self.partition_cols.iter().map(|c| c.to_proto()).collect();
-        op.clustering_columns = self.cluster_cols.clone();
-        op.options = self.options.clone();
-        op.table_properties = self.table_properties.clone();
-        op.mode = mode as i32;
-        op.overwrite_condition = overwrite_condition;
-        Ok(op)
+        Ok(self.spec.to_proto(
+            build_input_relation(&self.input_plan, &self.session),
+            mode,
+            overwrite_condition,
+        ))
     }
 
     fn execute(self, mode: proto::write_operation_v2::Mode) -> Result<()> {

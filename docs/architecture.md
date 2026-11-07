@@ -60,7 +60,7 @@ A Cargo workspace of library crates, plus a Python skin:
 | Component | Path | Responsibility |
 |---|---|---|
 | `apache-spark-connect-proto` | `crates/spark-connect-proto` | Generated `spark.connect.*` gRPC/protobuf types |
-| `apache-spark-connect-core` | `crates/spark-connect-core` | Transport: channel, retries, reattach, artifacts, errors. Plan building: types, rows, expressions, columns, functions, windows, plans. Execution requests and Arrow decoding |
+| `apache-spark-connect-core` | `crates/spark-connect-core` | Transport: channel, retries, reattach, artifacts, errors. Plan building: types, rows, expressions, columns, functions, windows, plans. The commands of writes, merges, catalog operations, streaming, ML, pipelines and WASM UDFs. Execution requests and Arrow decoding |
 | `apache-spark-connect` | `crates/spark-connect` | The DataFrame API: session, dataframe, group, catalog, readwriter, streaming; re-exports the core's types, columns, functions and plans |
 | `pyspark-rs` | `crates/pyspark-rs` | PyO3 bindings - builds the `_pyspark` extension module |
 | Python skin | `python/pyspark` | The drop-in `pyspark` package (+ vendored `pyspark.pandas`, `cloudpickle`, `pyspark.testing`) |

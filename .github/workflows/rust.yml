@@ -155,7 +155,7 @@ jobs:
         run: python -m pip install --upgrade cloudpickle pyspark wasmtime
 
       - name: Feature-gated unit tests
-        run: cargo test -p apache-spark-connect --features wasm-udf
+        run: cargo test -p apache-spark-connect -p apache-spark-connect-core --features wasm-udf
 
       - name: Build the macro/build helpers and WASM UDF crates + examples
         run: |
@@ -170,4 +170,4 @@ jobs:
         # `pyspark.sql.types._parse_datatype_json_value`, and produces a reference
         # `DataType` the executors unpickle. No separate `pyspark_wasm_udf` package
         # is needed on any path now, so just run the ignored end-to-end test.
-        run: cargo test -p apache-spark-connect --features wasm-udf -- --ignored packer_produces
+        run: cargo test -p apache-spark-connect -p apache-spark-connect-core --features wasm-udf -- --ignored packer_produces

@@ -18,16 +18,23 @@ pub mod error;
 pub mod execution;
 pub mod expression;
 pub mod functions;
+pub mod merge;
+pub mod ml;
 pub mod observation;
 pub mod origin;
+pub mod pipelines;
 pub mod plan;
 pub mod readwriter;
 pub mod reattach;
 pub mod retries;
 pub mod row;
 pub mod runtime;
+pub mod streaming;
 pub mod types;
 pub mod udf;
+/// Run Rust UDFs on Spark via WebAssembly. Requires the `wasm-udf` feature.
+#[cfg(feature = "wasm-udf")]
+pub mod wasm_udf;
 pub mod window;
 
 pub use artifact::{
