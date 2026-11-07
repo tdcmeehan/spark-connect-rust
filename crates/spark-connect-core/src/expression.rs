@@ -2,6 +2,7 @@
 //!
 //! Defines the Expression hierarchy and conversion functions to Spark Connect protobufs.
 
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -123,7 +124,7 @@ impl<T: AsSubquery + ?Sized> AsSubquery for Box<T> {
     }
 }
 
-impl<T: AsSubquery + ?Sized> AsSubquery for std::rc::Rc<T> {
+impl<T: AsSubquery + ?Sized> AsSubquery for Rc<T> {
     fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
         (**self).as_subquery(subquery_type)
     }
