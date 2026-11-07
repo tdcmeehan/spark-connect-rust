@@ -143,8 +143,8 @@ subtree `python/pyspark/sql/connect/`). Implement on **both** sides:
 
 1. **Rust core** (`crates/spark-connect-core/src/*.rs` for types, columns,
    functions, plans, the protos of writes, write streams, merge actions, ML and
-   pipelines, and WASM UDF construction; `crates/spark-connect/src/*.rs` for the
-   DataFrame API, including the catalog and streaming query commands) — the
+   pipeline commands, and WASM UDF construction; `crates/spark-connect/src/*.rs`
+   for the DataFrame API, including the catalog and streaming query commands) — the
    real behavior / plan or proto construction. Add the method if the core lacks it.
 2. **PyO3 wrapper** (`crates/pyspark-rs/src/*.rs`) — `#[pymethods]` delegating to
    core, with `#[pyo3(name = "camelCase", signature = (...))]`.

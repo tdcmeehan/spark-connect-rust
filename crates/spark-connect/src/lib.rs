@@ -24,7 +24,7 @@ pub mod table_arg;
 pub mod tvf;
 /// Run Rust UDFs on Spark via WebAssembly. Requires the `wasm-udf` feature.
 ///
-/// See `spark_connect_core::wasm_udf` for how they are built and run.
+/// See [`spark_connect_core::wasm_udf`] for how they are built and run.
 #[cfg(feature = "wasm-udf")]
 pub mod wasm_udf {
     pub use spark_connect_core::wasm_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
