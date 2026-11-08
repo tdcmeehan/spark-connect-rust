@@ -1787,19 +1787,19 @@ sql/connect/tvf.py,method,TableValuedFunction,sql_keywords,(self),97,done,
 sql/connect/tvf.py,method,TableValuedFunction,variant_explode,"(self, input)",102,done,
 sql/connect/tvf.py,method,TableValuedFunction,variant_explode_outer,"(self, input)",107,done,
 sql/connect/tvf.py,method,TableValuedFunction,python_worker_logs,(self),112,done,
-sql/connect/types.py,class,,UnparsedDataType,,58,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,__init__,"(self, data_type_string)",93,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,simpleString,(self),96,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,__repr__,(self),99,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,jsonValue,(self),102,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,needConversion,(self),108,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,toInternal,"(self, obj)",114,done,spark-connect/src/types.rs
-sql/connect/types.py,method,UnparsedDataType,fromInternal,"(self, obj)",120,done,spark-connect/src/types.rs
-sql/connect/types.py,function,,pyspark_types_to_proto_types,(data_type),127,done,spark-connect/src/types.rs
-sql/connect/types.py,function,,proto_schema_to_pyspark_data_type,(schema),218,done,spark-connect/src/types.rs
-sql/connect/types.py,function,,parse_attr_name,(name),336,done,spark-connect/src/types.rs
-sql/connect/types.py,function,,verify_col_name,"(name, schema)",380,done,spark-connect/src/types.rs
-sql/connect/types.py,function,,verify_numeric_col_name,"(name, schema)",407,done,spark-connect/src/types.rs
+sql/connect/types.py,class,,UnparsedDataType,,58,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,__init__,"(self, data_type_string)",93,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,simpleString,(self),96,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,__repr__,(self),99,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,jsonValue,(self),102,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,needConversion,(self),108,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,toInternal,"(self, obj)",114,done,spark-connect-core/src/types.rs
+sql/connect/types.py,method,UnparsedDataType,fromInternal,"(self, obj)",120,done,spark-connect-core/src/types.rs
+sql/connect/types.py,function,,pyspark_types_to_proto_types,(data_type),127,done,spark-connect-core/src/types.rs
+sql/connect/types.py,function,,proto_schema_to_pyspark_data_type,(schema),218,done,spark-connect-core/src/types.rs
+sql/connect/types.py,function,,parse_attr_name,(name),336,done,spark-connect-core/src/types.rs
+sql/connect/types.py,function,,verify_col_name,"(name, schema)",380,done,spark-connect-core/src/types.rs
+sql/connect/types.py,function,,verify_numeric_col_name,"(name, schema)",407,done,spark-connect-core/src/types.rs
 sql/connect/udf.py,class,,UserDefinedFunction,,124,done,udf.rs+pyspark-rs
 sql/connect/udf.py,method,UserDefinedFunction,__init__,"(self, func, returnType, name, evalType, deterministic)",135,done,udf.rs+pyspark-rs
 sql/connect/udf.py,method,UserDefinedFunction,returnType,(self),183,done,udf.rs+pyspark-rs
@@ -1840,177 +1840,177 @@ sql/connect/window.py,method,Window,partitionBy,(*cols),140,verified,window.rs (
 sql/connect/window.py,method,Window,orderBy,(*cols),144,verified,window.rs (15 golden)
 sql/connect/window.py,method,Window,rowsBetween,"(start, end)",148,verified,window.rs (15 golden)
 sql/connect/window.py,method,Window,rangeBetween,"(start, end)",152,verified,window.rs (15 golden)
-sql/types.py,class,,DataType,,115,done,spark-connect/src/types.rs
-sql/types.py,method,DataType,__repr__,(self),118,done,spark-connect/src/types.rs
-sql/types.py,method,DataType,__hash__,(self),121,done,spark-connect/src/types.rs
-sql/types.py,method,DataType,__eq__,"(self, other)",124,done,spark-connect/src/types.rs
+sql/types.py,class,,DataType,,115,done,spark-connect-core/src/types.rs
+sql/types.py,method,DataType,__repr__,(self),118,done,spark-connect-core/src/types.rs
+sql/types.py,method,DataType,__hash__,(self),121,done,spark-connect-core/src/types.rs
+sql/types.py,method,DataType,__eq__,"(self, other)",124,done,spark-connect-core/src/types.rs
 sql/types.py,method,DataType,__ne__,"(self, other)",127,done,
-sql/types.py,method,DataType,typeName,(cls),131,done,spark-connect/src/types.rs
-sql/types.py,method,DataType,simpleString,(self),134,done,spark-connect/src/types.rs
-sql/types.py,method,DataType,jsonValue,(self),137,done,spark-connect/src/types.rs
-sql/types.py,method,DataType,json,(self),140,done,spark-connect/src/types.rs
+sql/types.py,method,DataType,typeName,(cls),131,done,spark-connect-core/src/types.rs
+sql/types.py,method,DataType,simpleString,(self),134,done,spark-connect-core/src/types.rs
+sql/types.py,method,DataType,jsonValue,(self),137,done,spark-connect-core/src/types.rs
+sql/types.py,method,DataType,json,(self),140,done,spark-connect-core/src/types.rs
 sql/types.py,method,DataType,needConversion,(self),143,done,types.rs from_ddl
 sql/types.py,method,DataType,toInternal,"(self, obj)",151,done,types.rs from_ddl
 sql/types.py,method,DataType,fromInternal,"(self, obj)",157,done,types.rs from_ddl
 sql/types.py,method,DataType,fromDDL,"(cls, ddl)",167,done,types.rs from_ddl
-sql/types.py,class,,DataTypeSingleton,,238,done,spark-connect/src/types.rs
+sql/types.py,class,,DataTypeSingleton,,238,done,spark-connect-core/src/types.rs
 sql/types.py,method,DataTypeSingleton,__call__,(cls),243,done,
-sql/types.py,class,,NullType,,249,done,spark-connect/src/types.rs
-sql/types.py,method,NullType,typeName,(cls),256,done,spark-connect/src/types.rs
-sql/types.py,class,,AtomicType,,260,done,spark-connect/src/types.rs
-sql/types.py,class,,NumericType,,265,done,spark-connect/src/types.rs
-sql/types.py,class,,IntegralType,,269,done,spark-connect/src/types.rs
-sql/types.py,class,,FractionalType,,275,done,spark-connect/src/types.rs
-sql/types.py,class,,StringType,,279,done,spark-connect/src/types.rs
-sql/types.py,method,StringType,__init__,"(self, collation)",292,done,spark-connect/src/types.rs
+sql/types.py,class,,NullType,,249,done,spark-connect-core/src/types.rs
+sql/types.py,method,NullType,typeName,(cls),256,done,spark-connect-core/src/types.rs
+sql/types.py,class,,AtomicType,,260,done,spark-connect-core/src/types.rs
+sql/types.py,class,,NumericType,,265,done,spark-connect-core/src/types.rs
+sql/types.py,class,,IntegralType,,269,done,spark-connect-core/src/types.rs
+sql/types.py,class,,FractionalType,,275,done,spark-connect-core/src/types.rs
+sql/types.py,class,,StringType,,279,done,spark-connect-core/src/types.rs
+sql/types.py,method,StringType,__init__,"(self, collation)",292,done,spark-connect-core/src/types.rs
 sql/types.py,method,StringType,collationProvider,"(cls, collationName)",296,done,
-sql/types.py,method,StringType,simpleString,(self),302,done,spark-connect/src/types.rs
-sql/types.py,method,StringType,jsonValue,(self),308,done,spark-connect/src/types.rs
-sql/types.py,method,StringType,__repr__,(self),311,done,spark-connect/src/types.rs
+sql/types.py,method,StringType,simpleString,(self),302,done,spark-connect-core/src/types.rs
+sql/types.py,method,StringType,jsonValue,(self),308,done,spark-connect-core/src/types.rs
+sql/types.py,method,StringType,__repr__,(self),311,done,spark-connect-core/src/types.rs
 sql/types.py,method,StringType,isUTF8BinaryCollation,(self),316,done,
-sql/types.py,class,,CharType,,320,done,spark-connect/src/types.rs
-sql/types.py,method,CharType,__init__,"(self, length)",329,done,spark-connect/src/types.rs
-sql/types.py,method,CharType,simpleString,(self),332,done,spark-connect/src/types.rs
-sql/types.py,method,CharType,jsonValue,(self),335,done,spark-connect/src/types.rs
-sql/types.py,method,CharType,__repr__,(self),338,done,spark-connect/src/types.rs
-sql/types.py,class,,VarcharType,,342,done,spark-connect/src/types.rs
-sql/types.py,method,VarcharType,__init__,"(self, length)",351,done,spark-connect/src/types.rs
-sql/types.py,method,VarcharType,simpleString,(self),354,done,spark-connect/src/types.rs
-sql/types.py,method,VarcharType,jsonValue,(self),357,done,spark-connect/src/types.rs
-sql/types.py,method,VarcharType,__repr__,(self),360,done,spark-connect/src/types.rs
-sql/types.py,class,,BinaryType,,364,done,spark-connect/src/types.rs
-sql/types.py,class,,BooleanType,,370,done,spark-connect/src/types.rs
-sql/types.py,class,,DatetimeType,,376,done,spark-connect/src/types.rs
-sql/types.py,class,,DateType,,380,done,spark-connect/src/types.rs
+sql/types.py,class,,CharType,,320,done,spark-connect-core/src/types.rs
+sql/types.py,method,CharType,__init__,"(self, length)",329,done,spark-connect-core/src/types.rs
+sql/types.py,method,CharType,simpleString,(self),332,done,spark-connect-core/src/types.rs
+sql/types.py,method,CharType,jsonValue,(self),335,done,spark-connect-core/src/types.rs
+sql/types.py,method,CharType,__repr__,(self),338,done,spark-connect-core/src/types.rs
+sql/types.py,class,,VarcharType,,342,done,spark-connect-core/src/types.rs
+sql/types.py,method,VarcharType,__init__,"(self, length)",351,done,spark-connect-core/src/types.rs
+sql/types.py,method,VarcharType,simpleString,(self),354,done,spark-connect-core/src/types.rs
+sql/types.py,method,VarcharType,jsonValue,(self),357,done,spark-connect-core/src/types.rs
+sql/types.py,method,VarcharType,__repr__,(self),360,done,spark-connect-core/src/types.rs
+sql/types.py,class,,BinaryType,,364,done,spark-connect-core/src/types.rs
+sql/types.py,class,,BooleanType,,370,done,spark-connect-core/src/types.rs
+sql/types.py,class,,DatetimeType,,376,done,spark-connect-core/src/types.rs
+sql/types.py,class,,DateType,,380,done,spark-connect-core/src/types.rs
 sql/types.py,method,DateType,needConversion,(self),385,done,types.rs from_ddl
 sql/types.py,method,DateType,toInternal,"(self, d)",388,done,types.rs from_ddl
 sql/types.py,method,DateType,fromInternal,"(self, v)",392,done,types.rs from_ddl
-sql/types.py,class,,AnyTimeType,,397,done,spark-connect/src/types.rs
-sql/types.py,class,,TimeType,,403,done,spark-connect/src/types.rs
-sql/types.py,method,TimeType,__init__,"(self, precision)",410,done,spark-connect/src/types.rs
+sql/types.py,class,,AnyTimeType,,397,done,spark-connect-core/src/types.rs
+sql/types.py,class,,TimeType,,403,done,spark-connect-core/src/types.rs
+sql/types.py,method,TimeType,__init__,"(self, precision)",410,done,spark-connect-core/src/types.rs
 sql/types.py,method,TimeType,needConversion,(self),413,done,types.rs from_ddl
 sql/types.py,method,TimeType,toInternal,"(self, t)",416,done,types.rs from_ddl
 sql/types.py,method,TimeType,fromInternal,"(self, nano)",425,done,types.rs from_ddl
-sql/types.py,method,TimeType,simpleString,(self),433,done,spark-connect/src/types.rs
-sql/types.py,method,TimeType,jsonValue,(self),436,done,spark-connect/src/types.rs
-sql/types.py,method,TimeType,__repr__,(self),439,done,spark-connect/src/types.rs
-sql/types.py,class,,TimestampType,,443,done,spark-connect/src/types.rs
+sql/types.py,method,TimeType,simpleString,(self),433,done,spark-connect-core/src/types.rs
+sql/types.py,method,TimeType,jsonValue,(self),436,done,spark-connect-core/src/types.rs
+sql/types.py,method,TimeType,__repr__,(self),439,done,spark-connect-core/src/types.rs
+sql/types.py,class,,TimestampType,,443,done,spark-connect-core/src/types.rs
 sql/types.py,method,TimestampType,needConversion,(self),446,done,types.rs from_ddl
 sql/types.py,method,TimestampType,toInternal,"(self, dt)",449,done,types.rs from_ddl
 sql/types.py,method,TimestampType,fromInternal,"(self, ts)",456,done,types.rs from_ddl
-sql/types.py,class,,TimestampNTZType,,462,done,spark-connect/src/types.rs
+sql/types.py,class,,TimestampNTZType,,462,done,spark-connect-core/src/types.rs
 sql/types.py,method,TimestampNTZType,needConversion,(self),465,done,types.rs from_ddl
-sql/types.py,method,TimestampNTZType,typeName,(cls),469,done,spark-connect/src/types.rs
+sql/types.py,method,TimestampNTZType,typeName,(cls),469,done,spark-connect-core/src/types.rs
 sql/types.py,method,TimestampNTZType,toInternal,"(self, dt)",472,done,types.rs from_ddl
 sql/types.py,method,TimestampNTZType,fromInternal,"(self, ts)",477,done,types.rs from_ddl
-sql/types.py,class,,DecimalType,,485,done,spark-connect/src/types.rs
-sql/types.py,method,DecimalType,__init__,"(self, precision, scale)",505,done,spark-connect/src/types.rs
-sql/types.py,method,DecimalType,simpleString,(self),510,done,spark-connect/src/types.rs
-sql/types.py,method,DecimalType,jsonValue,(self),513,done,spark-connect/src/types.rs
-sql/types.py,method,DecimalType,__repr__,(self),516,done,spark-connect/src/types.rs
-sql/types.py,class,,DoubleType,,520,done,spark-connect/src/types.rs
-sql/types.py,class,,FloatType,,526,done,spark-connect/src/types.rs
-sql/types.py,class,,SpatialType,,532,done,spark-connect/src/types.rs
-sql/types.py,class,,GeographyType,,541,done,spark-connect/src/types.rs
-sql/types.py,method,GeographyType,__init__,"(self, srid)",557,done,spark-connect/src/types.rs
-sql/types.py,method,GeographyType,simpleString,(self),603,done,spark-connect/src/types.rs
-sql/types.py,method,GeographyType,__repr__,(self),611,done,spark-connect/src/types.rs
-sql/types.py,method,GeographyType,jsonValue,(self),619,done,spark-connect/src/types.rs
+sql/types.py,class,,DecimalType,,485,done,spark-connect-core/src/types.rs
+sql/types.py,method,DecimalType,__init__,"(self, precision, scale)",505,done,spark-connect-core/src/types.rs
+sql/types.py,method,DecimalType,simpleString,(self),510,done,spark-connect-core/src/types.rs
+sql/types.py,method,DecimalType,jsonValue,(self),513,done,spark-connect-core/src/types.rs
+sql/types.py,method,DecimalType,__repr__,(self),516,done,spark-connect-core/src/types.rs
+sql/types.py,class,,DoubleType,,520,done,spark-connect-core/src/types.rs
+sql/types.py,class,,FloatType,,526,done,spark-connect-core/src/types.rs
+sql/types.py,class,,SpatialType,,532,done,spark-connect-core/src/types.rs
+sql/types.py,class,,GeographyType,,541,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeographyType,__init__,"(self, srid)",557,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeographyType,simpleString,(self),603,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeographyType,__repr__,(self),611,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeographyType,jsonValue,(self),619,done,spark-connect-core/src/types.rs
 sql/types.py,method,GeographyType,needConversion,(self),623,done,types.rs from_ddl
 sql/types.py,method,GeographyType,fromInternal,"(self, obj)",626,done,types.rs from_ddl
 sql/types.py,method,GeographyType,toInternal,"(self, geography)",631,done,types.rs from_ddl
-sql/types.py,class,,GeometryType,,638,done,spark-connect/src/types.rs
-sql/types.py,method,GeometryType,__init__,"(self, srid)",660,done,spark-connect/src/types.rs
-sql/types.py,method,GeometryType,simpleString,(self),701,done,spark-connect/src/types.rs
-sql/types.py,method,GeometryType,__repr__,(self),709,done,spark-connect/src/types.rs
-sql/types.py,method,GeometryType,jsonValue,(self),717,done,spark-connect/src/types.rs
+sql/types.py,class,,GeometryType,,638,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeometryType,__init__,"(self, srid)",660,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeometryType,simpleString,(self),701,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeometryType,__repr__,(self),709,done,spark-connect-core/src/types.rs
+sql/types.py,method,GeometryType,jsonValue,(self),717,done,spark-connect-core/src/types.rs
 sql/types.py,method,GeometryType,needConversion,(self),721,done,types.rs from_ddl
 sql/types.py,method,GeometryType,fromInternal,"(self, obj)",724,done,types.rs from_ddl
 sql/types.py,method,GeometryType,toInternal,"(self, geometry)",729,done,types.rs from_ddl
-sql/types.py,class,,ByteType,,736,done,spark-connect/src/types.rs
-sql/types.py,method,ByteType,simpleString,(self),739,done,spark-connect/src/types.rs
-sql/types.py,class,,IntegerType,,743,done,spark-connect/src/types.rs
-sql/types.py,method,IntegerType,simpleString,(self),746,done,spark-connect/src/types.rs
-sql/types.py,class,,LongType,,750,done,spark-connect/src/types.rs
-sql/types.py,method,LongType,simpleString,(self),757,done,spark-connect/src/types.rs
-sql/types.py,class,,ShortType,,761,done,spark-connect/src/types.rs
-sql/types.py,method,ShortType,simpleString,(self),764,done,spark-connect/src/types.rs
-sql/types.py,class,,AnsiIntervalType,,768,done,spark-connect/src/types.rs
-sql/types.py,class,,DayTimeIntervalType,,774,done,spark-connect/src/types.rs
-sql/types.py,method,DayTimeIntervalType,__init__,"(self, startField, endField)",791,done,spark-connect/src/types.rs
-sql/types.py,method,DayTimeIntervalType,__repr__,(self),821,done,spark-connect/src/types.rs
+sql/types.py,class,,ByteType,,736,done,spark-connect-core/src/types.rs
+sql/types.py,method,ByteType,simpleString,(self),739,done,spark-connect-core/src/types.rs
+sql/types.py,class,,IntegerType,,743,done,spark-connect-core/src/types.rs
+sql/types.py,method,IntegerType,simpleString,(self),746,done,spark-connect-core/src/types.rs
+sql/types.py,class,,LongType,,750,done,spark-connect-core/src/types.rs
+sql/types.py,method,LongType,simpleString,(self),757,done,spark-connect-core/src/types.rs
+sql/types.py,class,,ShortType,,761,done,spark-connect-core/src/types.rs
+sql/types.py,method,ShortType,simpleString,(self),764,done,spark-connect-core/src/types.rs
+sql/types.py,class,,AnsiIntervalType,,768,done,spark-connect-core/src/types.rs
+sql/types.py,class,,DayTimeIntervalType,,774,done,spark-connect-core/src/types.rs
+sql/types.py,method,DayTimeIntervalType,__init__,"(self, startField, endField)",791,done,spark-connect-core/src/types.rs
+sql/types.py,method,DayTimeIntervalType,__repr__,(self),821,done,spark-connect-core/src/types.rs
 sql/types.py,method,DayTimeIntervalType,needConversion,(self),824,done,types.rs from_ddl
 sql/types.py,method,DayTimeIntervalType,toInternal,"(self, dt)",827,done,types.rs from_ddl
 sql/types.py,method,DayTimeIntervalType,fromInternal,"(self, micros)",831,done,types.rs from_ddl
-sql/types.py,class,,YearMonthIntervalType,,836,done,spark-connect/src/types.rs
-sql/types.py,method,YearMonthIntervalType,__init__,"(self, startField, endField)",854,done,spark-connect/src/types.rs
+sql/types.py,class,,YearMonthIntervalType,,836,done,spark-connect-core/src/types.rs
+sql/types.py,method,YearMonthIntervalType,__init__,"(self, startField, endField)",854,done,spark-connect-core/src/types.rs
 sql/types.py,method,YearMonthIntervalType,needConversion,(self),884,done,types.rs from_ddl
 sql/types.py,method,YearMonthIntervalType,toInternal,"(self, obj)",890,done,types.rs from_ddl
 sql/types.py,method,YearMonthIntervalType,fromInternal,"(self, obj)",896,done,types.rs from_ddl
-sql/types.py,method,YearMonthIntervalType,__repr__,(self),902,done,spark-connect/src/types.rs
-sql/types.py,class,,CalendarIntervalType,,906,done,spark-connect/src/types.rs
-sql/types.py,method,CalendarIntervalType,typeName,(cls),916,done,spark-connect/src/types.rs
+sql/types.py,method,YearMonthIntervalType,__repr__,(self),902,done,spark-connect-core/src/types.rs
+sql/types.py,class,,CalendarIntervalType,,906,done,spark-connect-core/src/types.rs
+sql/types.py,method,CalendarIntervalType,typeName,(cls),916,done,spark-connect-core/src/types.rs
 sql/types.py,method,CalendarIntervalType,needConversion,(self),919,done,types.rs from_ddl
 sql/types.py,method,CalendarIntervalType,toInternal,"(self, obj)",922,done,types.rs from_ddl
 sql/types.py,method,CalendarIntervalType,fromInternal,"(self, obj)",928,done,types.rs from_ddl
-sql/types.py,class,,ArrayType,,935,done,spark-connect/src/types.rs
-sql/types.py,method,ArrayType,__init__,"(self, elementType, containsNull)",961,done,spark-connect/src/types.rs
-sql/types.py,method,ArrayType,simpleString,(self),969,done,spark-connect/src/types.rs
+sql/types.py,class,,ArrayType,,935,done,spark-connect-core/src/types.rs
+sql/types.py,method,ArrayType,__init__,"(self, elementType, containsNull)",961,done,spark-connect-core/src/types.rs
+sql/types.py,method,ArrayType,simpleString,(self),969,done,spark-connect-core/src/types.rs
 sql/types.py,method,ArrayType,toNullable,(self),975,done,
-sql/types.py,method,ArrayType,__repr__,(self),1007,done,spark-connect/src/types.rs
-sql/types.py,method,ArrayType,jsonValue,(self),1010,done,spark-connect/src/types.rs
-sql/types.py,method,ArrayType,fromJson,"(cls, json, fieldPath, collationsMap)",1018,done,spark-connect/src/types.rs
+sql/types.py,method,ArrayType,__repr__,(self),1007,done,spark-connect-core/src/types.rs
+sql/types.py,method,ArrayType,jsonValue,(self),1010,done,spark-connect-core/src/types.rs
+sql/types.py,method,ArrayType,fromJson,"(cls, json, fieldPath, collationsMap)",1018,done,spark-connect-core/src/types.rs
 sql/types.py,method,ArrayType,needConversion,(self),1031,done,types.rs from_ddl
 sql/types.py,method,ArrayType,toInternal,"(self, obj)",1034,done,types.rs from_ddl
 sql/types.py,method,ArrayType,fromInternal,"(self, obj)",1039,done,types.rs from_ddl
-sql/types.py,class,,MapType,,1060,done,spark-connect/src/types.rs
-sql/types.py,method,MapType,__init__,"(self, keyType, valueType, valueContainsNull)",1094,done,spark-connect/src/types.rs
-sql/types.py,method,MapType,simpleString,(self),1107,done,spark-connect/src/types.rs
+sql/types.py,class,,MapType,,1060,done,spark-connect-core/src/types.rs
+sql/types.py,method,MapType,__init__,"(self, keyType, valueType, valueContainsNull)",1094,done,spark-connect-core/src/types.rs
+sql/types.py,method,MapType,simpleString,(self),1107,done,spark-connect-core/src/types.rs
 sql/types.py,method,MapType,toNullable,(self),1115,done,
-sql/types.py,method,MapType,__repr__,(self),1148,done,spark-connect/src/types.rs
-sql/types.py,method,MapType,jsonValue,(self),1151,done,spark-connect/src/types.rs
-sql/types.py,method,MapType,fromJson,"(cls, json, fieldPath, collationsMap)",1160,done,spark-connect/src/types.rs
+sql/types.py,method,MapType,__repr__,(self),1148,done,spark-connect-core/src/types.rs
+sql/types.py,method,MapType,jsonValue,(self),1151,done,spark-connect-core/src/types.rs
+sql/types.py,method,MapType,fromJson,"(cls, json, fieldPath, collationsMap)",1160,done,spark-connect-core/src/types.rs
 sql/types.py,method,MapType,needConversion,(self),1178,done,types.rs from_ddl
 sql/types.py,method,MapType,toInternal,"(self, obj)",1181,done,types.rs from_ddl
 sql/types.py,method,MapType,fromInternal,"(self, obj)",1188,done,types.rs from_ddl
-sql/types.py,class,,StructField,,1215,done,spark-connect/src/types.rs
-sql/types.py,method,StructField,__init__,"(self, name, dataType, nullable, metadata)",1240,done,spark-connect/src/types.rs
-sql/types.py,method,StructField,simpleString,(self),1257,done,spark-connect/src/types.rs
-sql/types.py,method,StructField,__repr__,(self),1260,done,spark-connect/src/types.rs
-sql/types.py,method,StructField,jsonValue,(self),1263,done,spark-connect/src/types.rs
-sql/types.py,method,StructField,fromJson,"(cls, json)",1307,done,spark-connect/src/types.rs
+sql/types.py,class,,StructField,,1215,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructField,__init__,"(self, name, dataType, nullable, metadata)",1240,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructField,simpleString,(self),1257,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructField,__repr__,(self),1260,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructField,jsonValue,(self),1263,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructField,fromJson,"(cls, json)",1307,done,spark-connect-core/src/types.rs
 sql/types.py,method,StructField,getCollationsMap,"(self, metadata)",1330,done,
 sql/types.py,method,StructField,getCollationMetadata,(self),1346,done,
 sql/types.py,method,StructField,schemaCollationValue,"(self, dt)",1369,done,
 sql/types.py,method,StructField,needConversion,(self),1375,done,types.rs from_ddl
 sql/types.py,method,StructField,toInternal,"(self, obj)",1378,done,types.rs from_ddl
 sql/types.py,method,StructField,fromInternal,"(self, obj)",1381,done,types.rs from_ddl
-sql/types.py,method,StructField,typeName,(self),1384,done,spark-connect/src/types.rs
-sql/types.py,class,,StructType,,1407,done,spark-connect/src/types.rs
-sql/types.py,method,StructType,__init__,"(self, fields)",1465,done,spark-connect/src/types.rs
+sql/types.py,method,StructField,typeName,(self),1384,done,spark-connect-core/src/types.rs
+sql/types.py,class,,StructType,,1407,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructType,__init__,"(self, fields)",1465,done,spark-connect-core/src/types.rs
 sql/types.py,method,StructType,add,"(self, field, data_type, nullable, metadata)",1480,done,types.rs from_ddl
 sql/types.py,method,StructType,add,"(self, field)",1489,done,types.rs from_ddl
 sql/types.py,method,StructType,add,"(self, field, data_type, nullable, metadata)",1491,done,types.rs from_ddl
 sql/types.py,method,StructType,__iter__,(self),1563,done,
 sql/types.py,method,StructType,__len__,(self),1567,done,
 sql/types.py,method,StructType,__getitem__,"(self, key)",1571,done,
-sql/types.py,method,StructType,simpleString,(self),1598,done,spark-connect/src/types.rs
+sql/types.py,method,StructType,simpleString,(self),1598,done,spark-connect-core/src/types.rs
 sql/types.py,method,StructType,toNullable,(self),1614,done,
-sql/types.py,method,StructType,__repr__,(self),1649,done,spark-connect/src/types.rs
-sql/types.py,method,StructType,jsonValue,(self),1652,done,spark-connect/src/types.rs
-sql/types.py,method,StructType,fromJson,"(cls, json)",1656,done,spark-connect/src/types.rs
+sql/types.py,method,StructType,__repr__,(self),1649,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructType,jsonValue,(self),1652,done,spark-connect-core/src/types.rs
+sql/types.py,method,StructType,fromJson,"(cls, json)",1656,done,spark-connect-core/src/types.rs
 sql/types.py,method,StructType,fieldNames,(self),1750,done,types.rs from_ddl
 sql/types.py,method,StructType,needConversion,(self),1763,done,types.rs from_ddl
 sql/types.py,method,StructType,toInternal,"(self, obj)",1767,done,types.rs from_ddl
 sql/types.py,method,StructType,fromInternal,"(self, obj)",1811,done,types.rs from_ddl
 sql/types.py,method,StructType,treeString,"(self, maxDepth)",1838,done,
 sql/types.py,method,StructType,toDDL,(self),1847,done,
-sql/types.py,class,,VariantType,,1860,done,spark-connect/src/types.rs
+sql/types.py,class,,VariantType,,1860,done,spark-connect-core/src/types.rs
 sql/types.py,method,VariantType,needConversion,(self),1867,done,types.rs from_ddl
 sql/types.py,method,VariantType,fromInternal,"(self, obj)",1870,done,types.rs from_ddl
 sql/types.py,method,VariantType,toInternal,"(self, variant)",1875,done,types.rs from_ddl
 sql/types.py,class,,UserDefinedType,,1882,n/a,"n/a: UserDefinedType base is provided by the vendored pyspark.sql.types; a full UDT requires a user-registered Python UDT class (server-side), not a client method"
-sql/types.py,method,UserDefinedType,typeName,(cls),1889,done,spark-connect/src/types.rs
+sql/types.py,method,UserDefinedType,typeName,(cls),1889,done,spark-connect-core/src/types.rs
 sql/types.py,method,UserDefinedType,sqlType,(cls),1893,done,
 sql/types.py,method,UserDefinedType,module,(cls),1903,done,
 sql/types.py,method,UserDefinedType,scalaUDT,(cls),1913,done,
@@ -2019,34 +2019,34 @@ sql/types.py,method,UserDefinedType,toInternal,"(self, obj)",1932,done,types.rs 
 sql/types.py,method,UserDefinedType,fromInternal,"(self, obj)",1936,done,types.rs from_ddl
 sql/types.py,method,UserDefinedType,serialize,"(self, obj)",1941,done,
 sql/types.py,method,UserDefinedType,deserialize,"(self, datum)",1950,done,
-sql/types.py,method,UserDefinedType,simpleString,(self),1959,done,spark-connect/src/types.rs
-sql/types.py,method,UserDefinedType,json,(self),1962,done,spark-connect/src/types.rs
-sql/types.py,method,UserDefinedType,jsonValue,(self),1965,done,spark-connect/src/types.rs
-sql/types.py,method,UserDefinedType,fromJson,"(cls, json)",1986,done,spark-connect/src/types.rs
-sql/types.py,class,,VariantVal,,2007,done,spark-connect/src/types.rs
-sql/types.py,method,VariantVal,__init__,"(self, value, metadata)",2036,done,spark-connect/src/types.rs
+sql/types.py,method,UserDefinedType,simpleString,(self),1959,done,spark-connect-core/src/types.rs
+sql/types.py,method,UserDefinedType,json,(self),1962,done,spark-connect-core/src/types.rs
+sql/types.py,method,UserDefinedType,jsonValue,(self),1965,done,spark-connect-core/src/types.rs
+sql/types.py,method,UserDefinedType,fromJson,"(cls, json)",1986,done,spark-connect-core/src/types.rs
+sql/types.py,class,,VariantVal,,2007,done,spark-connect-core/src/types.rs
+sql/types.py,method,VariantVal,__init__,"(self, value, metadata)",2036,done,spark-connect-core/src/types.rs
 sql/types.py,method,VariantVal,__str__,(self),2040,done,
-sql/types.py,method,VariantVal,__repr__,(self),2043,done,spark-connect/src/types.rs
+sql/types.py,method,VariantVal,__repr__,(self),2043,done,spark-connect-core/src/types.rs
 sql/types.py,method,VariantVal,toPython,(self),2046,done,
 sql/types.py,method,VariantVal,toJson,"(self, zone_id)",2057,done,
 sql/types.py,method,VariantVal,parseJson,"(cls, json_str)",2071,done,
-sql/types.py,class,,Geography,,2084,done,spark-connect/src/types.rs
-sql/types.py,method,Geography,__init__,"(self, wkb, srid)",2115,done,spark-connect/src/types.rs
+sql/types.py,class,,Geography,,2084,done,spark-connect-core/src/types.rs
+sql/types.py,method,Geography,__init__,"(self, wkb, srid)",2115,done,spark-connect-core/src/types.rs
 sql/types.py,method,Geography,__str__,(self),2119,done,
-sql/types.py,method,Geography,__repr__,(self),2122,done,spark-connect/src/types.rs
+sql/types.py,method,Geography,__repr__,(self),2122,done,spark-connect-core/src/types.rs
 sql/types.py,method,Geography,getSrid,(self),2125,done,
 sql/types.py,method,Geography,getBytes,(self),2131,done,
-sql/types.py,method,Geography,__eq__,"(self, other)",2137,done,spark-connect/src/types.rs
+sql/types.py,method,Geography,__eq__,"(self, other)",2137,done,spark-connect-core/src/types.rs
 sql/types.py,method,Geography,fromWKB,"(cls, wkb, srid)",2145,done,
-sql/types.py,class,,Geometry,,2153,done,spark-connect/src/types.rs
-sql/types.py,method,Geometry,__init__,"(self, wkb, srid)",2184,done,spark-connect/src/types.rs
+sql/types.py,class,,Geometry,,2153,done,spark-connect-core/src/types.rs
+sql/types.py,method,Geometry,__init__,"(self, wkb, srid)",2184,done,spark-connect-core/src/types.rs
 sql/types.py,method,Geometry,__str__,(self),2188,done,
-sql/types.py,method,Geometry,__repr__,(self),2191,done,spark-connect/src/types.rs
+sql/types.py,method,Geometry,__repr__,(self),2191,done,spark-connect-core/src/types.rs
 sql/types.py,method,Geometry,getSrid,(self),2194,done,
 sql/types.py,method,Geometry,getBytes,(self),2200,done,
-sql/types.py,method,Geometry,__eq__,"(self, other)",2206,done,spark-connect/src/types.rs
+sql/types.py,method,Geometry,__eq__,"(self, other)",2206,done,spark-connect-core/src/types.rs
 sql/types.py,method,Geometry,fromWKB,"(cls, wkb, srid)",2214,done,
-sql/types.py,class,,Row,,3490,done,spark-connect/src/types.rs
+sql/types.py,class,,Row,,3490,done,spark-connect-core/src/types.rs
 sql/types.py,method,Row,__new__,"(cls, *args)",3547,done,
 sql/types.py,method,Row,__new__,"(cls, **kwargs)",3550,done,
 sql/types.py,method,Row,__new__,"(cls, *args, **kwargs)",3552,done,
@@ -2057,26 +2057,26 @@ sql/types.py,method,Row,__getitem__,"(self, item)",3640,done,
 sql/types.py,method,Row,__getattr__,"(self, item)",3653,done,
 sql/types.py,method,Row,__setattr__,"(self, key, value)",3672,done,
 sql/types.py,method,Row,__reduce__,(self),3680,done,
-sql/types.py,method,Row,__repr__,(self),3689,done,spark-connect/src/types.rs
-sql/types.py,class,,DateConverter,,3699,done,spark-connect/src/types.rs
+sql/types.py,method,Row,__repr__,(self),3689,done,spark-connect-core/src/types.rs
+sql/types.py,class,,DateConverter,,3699,done,spark-connect-core/src/types.rs
 sql/types.py,method,DateConverter,can_convert,"(self, obj)",3700,done,
 sql/types.py,method,DateConverter,convert,"(self, obj, gateway_client)",3703,done,
-sql/types.py,class,,TimeConverter,,3710,done,spark-connect/src/types.rs
+sql/types.py,class,,TimeConverter,,3710,done,spark-connect-core/src/types.rs
 sql/types.py,method,TimeConverter,can_convert,"(self, obj)",3711,done,
 sql/types.py,method,TimeConverter,convert,"(self, obj, gateway_client)",3714,done,
-sql/types.py,class,,DatetimeConverter,,3721,done,spark-connect/src/types.rs
+sql/types.py,class,,DatetimeConverter,,3721,done,spark-connect-core/src/types.rs
 sql/types.py,method,DatetimeConverter,can_convert,"(self, obj)",3722,done,
 sql/types.py,method,DatetimeConverter,convert,"(self, obj, gateway_client)",3725,done,
-sql/types.py,class,,DatetimeNTZConverter,,3737,done,spark-connect/src/types.rs
+sql/types.py,class,,DatetimeNTZConverter,,3737,done,spark-connect-core/src/types.rs
 sql/types.py,method,DatetimeNTZConverter,can_convert,"(self, obj)",3738,done,
 sql/types.py,method,DatetimeNTZConverter,convert,"(self, obj, gateway_client)",3747,done,
-sql/types.py,class,,DayTimeIntervalTypeConverter,,3758,done,spark-connect/src/types.rs
+sql/types.py,class,,DayTimeIntervalTypeConverter,,3758,done,spark-connect-core/src/types.rs
 sql/types.py,method,DayTimeIntervalTypeConverter,can_convert,"(self, obj)",3759,done,
 sql/types.py,method,DayTimeIntervalTypeConverter,convert,"(self, obj, gateway_client)",3762,done,
-sql/types.py,class,,NumpyScalarConverter,,3774,done,spark-connect/src/types.rs
+sql/types.py,class,,NumpyScalarConverter,,3774,done,spark-connect-core/src/types.rs
 sql/types.py,method,NumpyScalarConverter,can_convert,"(self, obj)",3775,done,
 sql/types.py,method,NumpyScalarConverter,convert,"(self, obj, gateway_client)",3784,done,
-sql/types.py,class,,NumpyArrayConverter,,3788,done,spark-connect/src/types.rs
+sql/types.py,class,,NumpyArrayConverter,,3788,done,spark-connect-core/src/types.rs
 sql/types.py,method,NumpyArrayConverter,can_convert,"(self, obj)",3814,done,
 sql/types.py,method,NumpyArrayConverter,convert,"(self, obj, gateway_client)",3823,done,
 sql/column.py,class,,Column,,41,done,
