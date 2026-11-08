@@ -4,10 +4,11 @@
 
 use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::client::ReattachableResponseStream;
-use spark_connect_core::error::Result;
+use spark_connect_core::error::{Result, SparkError};
 use spark_connect_core::runtime::check_callback_depth;
 use spark_connect_proto as proto;
 
+use crate::dataframe::DataFrame;
 use crate::session::{ExecutionInfo, SparkSession};
 
 /// The progress of a stage of an execution, as PySpark's `StageInfo`.
@@ -113,6 +114,10 @@ impl Drop for ProgressTracker {
 pub(crate) struct SessionObserver {
     session: SparkSession,
     progress: Option<ProgressTracker>,
+    /// The DataFrame whose execution this is, which records it as its own too.
+    dataframe: Option<DataFrame>,
+    /// Whether an execution that fails is recorded, as the local iterator records it.
+    record_failure: bool,
 }
 
 impl SessionObserver {
@@ -123,6 +128,25 @@ impl SessionObserver {
         Ok(SessionObserver {
             session: session.clone(),
             progress: None,
+            dataframe: None,
+            record_failure: false,
+        })
+    }
+
+    /// As [`SessionObserver::start`], for an execution of `dataframe`.
+    pub(crate) fn for_dataframe(dataframe: &DataFrame) -> Result<Self> {
+        Ok(SessionObserver {
+            dataframe: Some(dataframe.clone()),
+            ..SessionObserver::start(&dataframe.session)?
+        })
+    }
+
+    /// As [`SessionObserver::start`], for an execution that the local iterator reads, which
+    /// records the execution also when it fails.
+    pub(crate) fn for_iterator(session: &SparkSession) -> Result<Self> {
+        Ok(SessionObserver {
+            record_failure: true,
+            ..SessionObserver::start(session)?
         })
     }
 }
@@ -147,7 +171,16 @@ impl ExecutionObserver for SessionObserver {
     }
 
     fn on_complete(&mut self, info: &ExecutionInfo) {
-        self.session.record_execution(info.clone());
+        match &self.dataframe {
+            Some(dataframe) => dataframe.record_execution(info.clone()),
+            None => self.session.record_execution(info.clone()),
+        }
+    }
+
+    fn on_failure(&mut self, info: &ExecutionInfo, _error: &SparkError) {
+        if self.record_failure {
+            self.session.record_execution(info.clone());
+        }
     }
 }
 

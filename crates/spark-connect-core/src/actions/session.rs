@@ -4,29 +4,12 @@ use std::sync::Arc;
 
 use spark_connect_proto as proto;
 
-use super::{execute_command, ExecutionObserver};
+use super::{analyze, execute_command, ExecutionObserver};
 use crate::client::SparkConnectClient;
 use crate::error::{Result, SparkError};
 use crate::execution;
 use crate::plan::PlanIds;
 use crate::types::DataType;
-
-/// Asks the server for `analyze`, and returns what `take` reads from the result, or else an
-/// error that the response did not contain `what`.
-async fn analyze<T>(
-    client: &SparkConnectClient,
-    analyze: proto::analyze_plan_request::Analyze,
-    what: &str,
-    take: impl FnOnce(proto::analyze_plan_response::Result) -> Option<Result<T>>,
-) -> Result<T> {
-    let request = execution::analyze_plan_request(client.session_id(), analyze);
-    let result = client.analyze_plan(request).await?.result;
-    result.and_then(take).unwrap_or_else(|| {
-        Err(SparkError::connect_msg(format!(
-            "AnalyzePlan response did not contain {what}"
-        )))
-    })
-}
 
 /// The Spark version of the server.
 pub async fn spark_version(client: Arc<SparkConnectClient>) -> Result<String> {

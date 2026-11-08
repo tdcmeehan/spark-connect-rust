@@ -386,7 +386,7 @@ impl SparkSession {
     }
 
     /// The stable plan IDs of the plan nodes this session serializes.
-    pub(crate) fn plan_ids(&self) -> &PlanIds {
+    pub(crate) fn plan_ids(&self) -> &Arc<PlanIds> {
         &self.plan_ids
     }
 

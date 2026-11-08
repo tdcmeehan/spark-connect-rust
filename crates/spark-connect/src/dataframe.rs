@@ -5,14 +5,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use spark_connect_core::actions::{self, dataframe::PrefetchedRows, Execution};
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::runtime::{block_on, get_runtime};
 use spark_connect_proto as proto;
 
+use crate::blocking::block_on;
 use crate::column::Column;
 use crate::expression::{Expression, ExpressionNode};
 use crate::plan::{AggregateGroupType, JoinType, LogicalPlan, SetOpType};
-use crate::progress::ExecutionStream;
+use crate::progress::SessionObserver;
 #[cfg(test)]
 use crate::row::StructValue;
 use crate::row::{Row, Value};
@@ -20,9 +21,10 @@ use crate::session::{ExecutionInfo, SparkSession};
 use crate::types::DataType;
 use crate::udf::CommonInlineUserDefinedFunctionExpression;
 pub(crate) use spark_connect_core::decode::decode_arrow_batch;
-use spark_connect_core::decode::{decode_arrow_batch_of, decode_arrow_record_batches};
 #[cfg(test)]
-use spark_connect_core::decode::{i128_to_decimal_string, ArrowValueLayout};
+use spark_connect_core::decode::{
+    decode_arrow_batch_of, decode_arrow_record_batches, i128_to_decimal_string, ArrowValueLayout,
+};
 use spark_connect_core::execution;
 
 /// A Spark DataFrame, lazily evaluated.
@@ -60,66 +62,33 @@ pub struct LocalRowIterator {
     done: bool,
     /// The schema of the result that the server sends before the rows
     /// (`ExecutePlanResponse.schema`), once received.
-    schema: SchemaSlot,
-}
-
-/// The schema of a result as the server sends it, shared with a prefetch task.
-type SchemaSlot = Arc<Mutex<Option<DataType>>>;
-
-/// Keeps the schema of `resp`, if it has one, in `slot`.
-fn keep_schema(resp: &mut proto::ExecutePlanResponse, slot: &SchemaSlot) -> Result<()> {
-    if let Some(data_type) = resp.schema.take() {
-        let schema = DataType::from_proto(&data_type)?;
-        *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(schema);
-    }
-    Ok(())
+    schema: Option<DataType>,
 }
 
 /// The source of successive Arrow batches for a [`LocalRowIterator`].
 enum RowSource {
     /// Each batch is pulled from the response stream only when the previous
     /// one is exhausted (`prefetchPartitions=False`).
-    OnDemand {
-        session: SparkSession,
-        // Boxed: the stream, with the progress of its execution, is much larger than a
-        // receiver.
-        stream: Box<ExecutionStream>,
-        execution_info: ExecutionInfo,
-        execution_recorded: bool,
-    },
+    OnDemand(Box<Execution<SessionObserver>>),
     /// Batches are fetched by a background task that keeps one batch buffered
     /// ahead, so the next server fetch overlaps with the caller consuming the
     /// current batch's rows (`prefetchPartitions=True`).
-    Prefetch {
-        rx: tokio::sync::mpsc::Receiver<Result<Vec<Row>>>,
-    },
+    Prefetch(PrefetchedRows),
 }
 
 impl LocalRowIterator {
-    /// Create a new `LocalRowIterator` over an already-issued ExecutePlan stream.
-    pub(crate) fn new(
-        session: SparkSession,
-        stream: ExecutionStream,
-        prefetch_partitions: bool,
-    ) -> Self {
-        let schema = SchemaSlot::default();
+    /// Create a new `LocalRowIterator` over an already-issued execution.
+    pub(crate) fn new(execution: Execution<SessionObserver>, prefetch_partitions: bool) -> Self {
         let source = if prefetch_partitions {
-            RowSource::Prefetch {
-                rx: spawn_prefetch(session, stream, Arc::clone(&schema)),
-            }
+            RowSource::Prefetch(execution.prefetch(crate::blocking::shared().handle()))
         } else {
-            RowSource::OnDemand {
-                session,
-                stream: Box::new(stream),
-                execution_info: ExecutionInfo::default(),
-                execution_recorded: false,
-            }
+            RowSource::OnDemand(Box::new(execution))
         };
         LocalRowIterator {
             current_rows: vec![].into_iter(),
             source,
             done: false,
-            schema,
+            schema: None,
         }
     }
 
@@ -127,10 +96,7 @@ impl LocalRowIterator {
     /// after the first row. Unlike the Arrow schema of the rows, it has the user-defined
     /// types of the columns.
     pub fn schema(&self) -> Option<DataType> {
-        self.schema
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        self.schema.clone()
     }
 
     /// Fetch the next batch of rows, or `None` once the source is exhausted.
@@ -138,45 +104,24 @@ impl LocalRowIterator {
     /// A batch may legitimately decode to zero rows (e.g. a metrics-only
     /// response was skipped); the caller loops until it gets a row or `None`.
     fn fetch_next_batch(&mut self) -> Option<Result<Vec<Row>>> {
-        match &mut self.source {
-            RowSource::OnDemand {
-                session,
-                stream,
-                execution_info,
-                execution_recorded,
-            } => loop {
-                match block_on(stream.message()) {
-                    Ok(Some(mut resp)) => {
-                        capture_execution(&mut resp, execution_info, session);
-                        if let Err(e) = keep_schema(&mut resp, &self.schema) {
-                            return Some(Err(e));
-                        }
-                        if let Some(proto::execute_plan_response::ResponseType::ArrowBatch(batch)) =
-                            resp.response_type
-                        {
-                            let schema = self.schema.lock().unwrap_or_else(|p| p.into_inner());
-                            return Some(decode_arrow_batch_of(&batch, schema.as_ref()));
-                        }
-                        // Metrics/progress response: keep pulling for a batch.
-                    }
-                    Ok(None) => {
-                        if !*execution_recorded {
-                            session.record_execution(execution_info.clone());
-                            *execution_recorded = true;
-                        }
-                        return None;
-                    }
-                    Err(e) => {
-                        if !*execution_recorded {
-                            session.record_execution(execution_info.clone());
-                            *execution_recorded = true;
-                        }
-                        return Some(Err(e));
-                    }
-                }
+        let (schema, rows) = match &mut self.source {
+            RowSource::OnDemand(execution) => {
+                let rows = block_on(execution.next_rows());
+                let schema = match self.schema {
+                    None => execution.schema().cloned(),
+                    Some(_) => None,
+                };
+                (schema, rows.transpose()?)
+            }
+            RowSource::Prefetch(prefetched) => match block_on(prefetched.next())? {
+                Ok((schema, rows)) => (schema, Ok(rows)),
+                Err(error) => (None, Err(error)),
             },
-            RowSource::Prefetch { rx } => block_on(rx.recv()),
+        };
+        if schema.is_some() {
+            self.schema = schema;
         }
+        Some(rows)
     }
 }
 
@@ -204,60 +149,6 @@ impl Iterator for LocalRowIterator {
             }
         }
     }
-}
-
-/// Spawn a background task that drains the response stream and forwards decoded
-/// batches over a bounded (capacity-1) channel, keeping one batch buffered ahead
-/// of the consumer. Execution metrics are recorded on the session once the
-/// stream ends. Backs `to_local_iterator(prefetch_partitions = true)`.
-fn spawn_prefetch(
-    session: SparkSession,
-    mut stream: ExecutionStream,
-    schema: SchemaSlot,
-) -> tokio::sync::mpsc::Receiver<Result<Vec<Row>>> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<Row>>>(1);
-    get_runtime().spawn(async move {
-        let mut execution_info = ExecutionInfo::default();
-        loop {
-            match stream.message().await {
-                Ok(Some(mut resp)) => {
-                    capture_execution(&mut resp, &mut execution_info, &session);
-                    if let Err(e) = keep_schema(&mut resp, &schema) {
-                        let _ = tx.send(Err(e)).await;
-                        break;
-                    }
-                    if let Some(proto::execute_plan_response::ResponseType::ArrowBatch(batch)) =
-                        resp.response_type
-                    {
-                        let decoded = {
-                            let schema = schema.lock().unwrap_or_else(|p| p.into_inner());
-                            decode_arrow_batch_of(&batch, schema.as_ref())
-                        };
-                        match decoded {
-                            Ok(rows) => {
-                                // A send error means the consumer dropped the
-                                // iterator; stop fetching.
-                                if tx.send(Ok(rows)).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Err(e)).await;
-                                break;
-                            }
-                        }
-                    }
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                    break;
-                }
-            }
-        }
-        session.record_execution(execution_info);
-    });
-    rx
 }
 
 impl DataFrame {
@@ -810,30 +701,12 @@ impl DataFrame {
     /// Unlike the Arrow schema of the rows, it has the user-defined types of the columns.
     pub fn collect_with_schema(&self) -> Result<(Vec<Row>, Option<DataType>)> {
         let request = self.build_execute_request();
-        let mut stream = self.session.execute_plan(request)?;
-
-        let mut rows = vec![];
-        let mut schema = None;
-        let mut info = ExecutionInfo::default();
-        loop {
-            let resp = block_on(stream.message())?;
-            let Some(mut resp) = resp else {
-                break;
-            };
-            capture_execution(&mut resp, &mut info, &self.session);
-            if let Some(data_type) = resp.schema.take() {
-                schema = Some(DataType::from_proto(&data_type)?);
-            }
-            if let Some(proto::execute_plan_response::ResponseType::ArrowBatch(batch)) =
-                resp.response_type
-            {
-                let batch_rows = decode_arrow_batch_of(&batch, schema.as_ref())?;
-                rows.extend(batch_rows);
-            }
-        }
-        self.record_execution(info);
-
-        Ok((rows, schema))
+        block_on(actions::dataframe::collect_rows(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            request,
+            SessionObserver::for_dataframe(self)?,
+        ))
     }
 
     /// Return an iterator that lazily streams rows from the server.
@@ -849,12 +722,13 @@ impl DataFrame {
     ///   fetched on demand only once the previous batch is exhausted.
     pub fn to_local_iterator(&self, prefetch_partitions: bool) -> Result<LocalRowIterator> {
         let request = self.build_execute_request();
-        let stream = self.session.execute_plan(request)?;
-        Ok(LocalRowIterator::new(
-            self.session.clone(),
-            stream,
-            prefetch_partitions,
-        ))
+        let execution = block_on(actions::Execution::start(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            request,
+            SessionObserver::for_iterator(&self.session)?,
+        ))?;
+        Ok(LocalRowIterator::new(execution, prefetch_partitions))
     }
 
     /// The information of the last execution of this DataFrame. Mirrors
@@ -886,30 +760,12 @@ impl DataFrame {
         &self,
     ) -> Result<(Vec<arrow::record_batch::RecordBatch>, Option<DataType>)> {
         let request = self.build_execute_request();
-        let mut stream = self.session.execute_plan(request)?;
-
-        let mut batches = vec![];
-        let mut schema = None;
-        let mut info = ExecutionInfo::default();
-        loop {
-            let resp = block_on(stream.message())?;
-            let Some(mut resp) = resp else {
-                break;
-            };
-            capture_execution(&mut resp, &mut info, &self.session);
-            if let Some(data_type) = resp.schema.take() {
-                schema = Some(DataType::from_proto(&data_type)?);
-            }
-            if let Some(proto::execute_plan_response::ResponseType::ArrowBatch(batch)) =
-                resp.response_type
-            {
-                let record_batches = decode_arrow_record_batches(&batch)?;
-                batches.extend(record_batches);
-            }
-        }
-        self.record_execution(info);
-
-        Ok((batches, schema))
+        block_on(actions::dataframe::collect_record_batches(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            request,
+            SessionObserver::for_dataframe(self)?,
+        ))
     }
 
     /// Get the count of rows.
@@ -1061,31 +917,13 @@ impl DataFrame {
             drop(cached);
             return Ok(schema.as_ref().clone());
         }
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::Schema(
-            proto::analyze_plan_request::Schema {
-                plan: Some(execution::root(self.relation())),
-            },
-        ));
-        let response = block_on(self.session.client().analyze_plan(request))?;
-
-        if let Some(proto::analyze_plan_response::Result::Schema(schema)) = response.result {
-            let schema = DataType::from_proto(
-                &schema
-                    .schema
-                    .ok_or_else(|| SparkError::connect_msg("Schema is missing"))?,
-            )?;
-            if !matches!(&schema, DataType::Struct { .. }) {
-                return Err(SparkError::connect_msg("Schema is not a struct type"));
-            }
-            let schema = Arc::new(schema);
-            *cached = Some(Arc::clone(&schema));
-            drop(cached);
-            Ok(schema.as_ref().clone())
-        } else {
-            Err(SparkError::connect_msg(
-                "Schema analyze failed: no schema in response",
-            ))
-        }
+        let schema = Arc::new(block_on(actions::dataframe::schema(
+            Arc::clone(self.session.client()),
+            self.relation(),
+        ))?);
+        *cached = Some(Arc::clone(&schema));
+        drop(cached);
+        Ok(schema.as_ref().clone())
     }
 
     /// Get the first row.
@@ -1197,13 +1035,6 @@ impl DataFrame {
         }
     }
 
-    fn analyze_request(
-        &self,
-        analyze: proto::analyze_plan_request::Analyze,
-    ) -> proto::AnalyzePlanRequest {
-        execution::analyze_plan_request(self.session.client().session_id(), analyze)
-    }
-
     /// Cache this DataFrame with the default `MEMORY_AND_DISK_DESER` storage level.
     ///
     /// Mirrors `pyspark.sql.DataFrame.cache()`.
@@ -1215,24 +1046,21 @@ impl DataFrame {
     ///
     /// Mirrors `pyspark.sql.DataFrame.persist(storageLevel)`.
     pub fn persist(&self, storage_level: proto::StorageLevel) -> Result<DataFrame> {
-        let persist = proto::analyze_plan_request::Persist {
-            relation: Some(self.relation()),
-            storage_level: Some(storage_level),
-        };
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::Persist(persist));
-        block_on(self.session.client().analyze_plan(request))?;
+        block_on(actions::dataframe::persist(
+            Arc::clone(self.session.client()),
+            self.relation(),
+            storage_level,
+        ))?;
         Ok(self.clone())
     }
 
     /// Remove this DataFrame from cache. Mirrors `DataFrame.unpersist(blocking)`.
     pub fn unpersist(&self, blocking: bool) -> Result<DataFrame> {
-        let unpersist = proto::analyze_plan_request::Unpersist {
-            relation: Some(self.relation()),
-            blocking: Some(blocking),
-        };
-        let request =
-            self.analyze_request(proto::analyze_plan_request::Analyze::Unpersist(unpersist));
-        block_on(self.session.client().analyze_plan(request))?;
+        block_on(actions::dataframe::unpersist(
+            Arc::clone(self.session.client()),
+            self.relation(),
+            blocking,
+        ))?;
         Ok(self.clone())
     }
 
@@ -1374,19 +1202,11 @@ impl DataFrame {
                 ))
             }
         };
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::Explain(
-            proto::analyze_plan_request::Explain {
-                plan: Some(execution::root(self.relation())),
-                explain_mode: explain_mode as i32,
-            },
-        ));
-        let response = block_on(self.session.client().analyze_plan(request))?;
-        match response.result {
-            Some(proto::analyze_plan_response::Result::Explain(e)) => Ok(e.explain_string),
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain an explain result",
-            )),
-        }
+        block_on(actions::dataframe::explain(
+            Arc::clone(self.session.client()),
+            self.relation(),
+            explain_mode,
+        ))
     }
 
     /// Add a watermark to this DataFrame for event-time based windows.
@@ -1465,16 +1285,10 @@ impl DataFrame {
 
     /// Get the input files for this DataFrame. Mirrors `pyspark.sql.DataFrame.inputFiles`.
     pub fn input_files(&self) -> Result<Vec<String>> {
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::InputFiles(
-            proto::analyze_plan_request::InputFiles {
-                plan: Some(execution::root(self.relation())),
-            },
-        ));
-        let response = block_on(self.session.client().analyze_plan(request))?;
-        match response.result {
-            Some(proto::analyze_plan_response::Result::InputFiles(f)) => Ok(f.files),
-            _ => Ok(vec![]),
-        }
+        block_on(actions::dataframe::input_files(
+            Arc::clone(self.session.client()),
+            self.relation(),
+        ))
     }
 
     /// Observe metrics on this DataFrame.
@@ -1840,18 +1654,10 @@ impl DataFrame {
 
     /// Get the storage level of this DataFrame. Mirrors `DataFrame.storageLevel`.
     pub fn storage_level(&self) -> Result<proto::StorageLevel> {
-        let get = proto::analyze_plan_request::GetStorageLevel {
-            relation: Some(self.relation()),
-        };
-        let request =
-            self.analyze_request(proto::analyze_plan_request::Analyze::GetStorageLevel(get));
-        let response = block_on(self.session.client().analyze_plan(request))?;
-        match response.result {
-            Some(proto::analyze_plan_response::Result::GetStorageLevel(g)) => {
-                Ok(g.storage_level.unwrap_or_default())
-            }
-            _ => Ok(proto::StorageLevel::default()),
-        }
+        block_on(actions::dataframe::storage_level(
+            Arc::clone(self.session.client()),
+            self.relation(),
+        ))
     }
 
     /// Check if this DataFrame is cached. Mirrors `DataFrame.is_cached`.
@@ -1877,36 +1683,20 @@ impl DataFrame {
     /// Compute the server-side semantic hash of this DataFrame's logical plan,
     /// mirroring `DataFrame.semanticHash()` (an AnalyzePlan request).
     pub fn semantic_hash(&self) -> Result<i32> {
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::SemanticHash(
-            proto::analyze_plan_request::SemanticHash {
-                plan: Some(execution::root(self.relation())),
-            },
-        ));
-        let resp = block_on(self.session.client().analyze_plan(request))?;
-        match resp.result {
-            Some(proto::analyze_plan_response::Result::SemanticHash(h)) => Ok(h.result),
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain a semantic hash",
-            )),
-        }
+        block_on(actions::dataframe::semantic_hash(
+            Arc::clone(self.session.client()),
+            self.relation(),
+        ))
     }
 
     /// Whether two DataFrames have the same semantics, mirroring
     /// `DataFrame.sameSemantics(other)` (a server-side AnalyzePlan comparison).
     pub fn same_semantics(&self, other: &DataFrame) -> Result<bool> {
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::SameSemantics(
-            proto::analyze_plan_request::SameSemantics {
-                target_plan: Some(execution::root(self.relation())),
-                other_plan: Some(execution::root(other.relation())),
-            },
-        ));
-        let resp = block_on(self.session.client().analyze_plan(request))?;
-        match resp.result {
-            Some(proto::analyze_plan_response::Result::SameSemantics(r)) => Ok(r.result),
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain a sameSemantics result",
-            )),
-        }
+        block_on(actions::dataframe::same_semantics(
+            Arc::clone(self.session.client()),
+            self.relation(),
+            other.relation(),
+        ))
     }
 
     /// Each row as a JSON object string, in a column `value`, mirroring
@@ -2042,18 +1832,10 @@ impl DataFrame {
     /// Whether this DataFrame is streaming, mirroring `pyspark.sql.DataFrame.isStreaming`,
     /// which asks the server: whether a source of its plan continuously returns data.
     pub fn is_streaming(&self) -> Result<bool> {
-        let request = self.analyze_request(proto::analyze_plan_request::Analyze::IsStreaming(
-            proto::analyze_plan_request::IsStreaming {
-                plan: Some(execution::root(self.relation())),
-            },
-        ));
-        let response = block_on(self.session.client().analyze_plan(request))?;
-        match response.result {
-            Some(proto::analyze_plan_response::Result::IsStreaming(r)) => Ok(r.is_streaming),
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain an isStreaming result",
-            )),
-        }
+        block_on(actions::dataframe::is_streaming(
+            Arc::clone(self.session.client()),
+            self.relation(),
+        ))
     }
 
     /// Collect the DataFrame and serialize it to Arrow IPC (file format) bytes.
@@ -2253,19 +2035,21 @@ pub(crate) fn execute_command_with_info(
     session.execute_command(command_type)
 }
 
-/// Pull execution metrics/observed-metrics off a response; the `ExecutionStream` of the
-/// response updates the progress of the execution. `metrics`/`observed_metrics` are top-level
-/// fields (not part of the `response_type` oneof), so this must run before `response_type` is
-/// consumed.
+/// For the tests of the capture of a response: what an action of the core does with each one, as
+/// it captures what the execution reports and hands the observed metrics to the session's
+/// observer.
+#[cfg(test)]
 fn capture_execution(
     resp: &mut proto::ExecutePlanResponse,
     info: &mut ExecutionInfo,
     session: &SparkSession,
 ) {
+    use spark_connect_core::actions::ExecutionObserver;
     let observed = info.capture(resp, session.plan_ids());
     if !observed.is_empty() {
-        // The updates of the Python accumulators, such as the results of the UDF profilers.
-        session.python_accumulators().accumulate(observed);
+        SessionObserver::start(session)
+            .unwrap()
+            .on_observed_metrics(observed);
     }
 }
 
@@ -3214,43 +2998,44 @@ mod cache_tests {
     }
 
     #[test]
-    fn schema_cache_recovers_after_analysis_panics() {
+    fn schema_runs_inside_both_runtime_flavors_and_keeps_its_cache_usable() {
         let spark = SparkSession::builder()
             .remote("sc://localhost:15002")
             .get_or_create()
             .unwrap();
         let df = spark.range(3).unwrap();
         let cloned = df.clone();
-        // A current-thread runtime: the synchronous API cannot block in place in it.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        // Calling the synchronous API inside a runtime panics during analysis.
-        // A clone must still attempt analysis afterward, rather than returning
-        // a permanent cache-poisoning error.
-        for frame in [&df, &cloned] {
-            let result = runtime.block_on(async {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| frame.schema()))
-            });
-            assert!(result.is_err());
-            // Poisoning proves the lock spans the analysis boundary without
-            // relying on thread scheduling to produce contended cache misses.
-            assert!(
-                frame.schema_cache.is_poisoned(),
-                "schema analysis must hold the shared cache lock"
-            );
+        let runtimes = || {
+            [
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap(),
+                tokio::runtime::Builder::new_multi_thread().build().unwrap(),
+            ]
+        };
+        // The synchronous API blocks on its own runtime, so it returns inside a runtime of
+        // either flavor: with the schema, or with the error of a missing server. A clone
+        // shares the cache, which is never poisoned.
+        for runtime in runtimes() {
+            for frame in [&df, &cloned] {
+                let result = runtime.block_on(async {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| frame.schema()))
+                });
+                let analyzed = result
+                    .expect("schema() must not panic inside a runtime")
+                    .ok();
+                assert!(!frame.schema_cache.is_poisoned());
+                let cached = frame.schema_cache.lock().unwrap().as_deref().cloned();
+                assert_eq!(cached, analyzed);
+            }
         }
-        let mut cached = df.schema_cache.lock().unwrap_err().into_inner();
-        assert!(cached.is_none());
         let schema = DataType::Struct { fields: vec![] };
-        *cached = Some(Arc::new(schema.clone()));
-        drop(cached);
-        assert!(df.schema_cache.is_poisoned());
-        assert_eq!(df.schema().unwrap(), schema);
-        assert!(!df.schema_cache.is_poisoned());
-        assert_eq!(cloned.schema().unwrap(), schema);
+        *df.schema_cache.lock().unwrap() = Some(Arc::new(schema.clone()));
+        for runtime in runtimes() {
+            for frame in [&df, &cloned] {
+                assert_eq!(runtime.block_on(async { frame.schema() }).unwrap(), schema);
+            }
+        }
     }
 
     #[test]
