@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use spark_connect_core::error::{Result, SparkError};
+use spark_connect_core::execution;
 use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
@@ -1058,7 +1059,7 @@ impl Catalog {
     }
 
     fn execute_catalog(&self, catalog: &proto::Catalog) -> Result<Vec<Row>> {
-        let request = self.build_execute_catalog_request(catalog)?;
+        let request = self.build_execute_catalog_request(catalog);
         // On the reattachable path, as PySpark's client runs a catalog operation, so that an
         // error carries the operation id of the request.
         let mut stream = self.session.execute_plan(request)?;
@@ -1096,22 +1097,15 @@ impl Catalog {
     }
 
     /// Build an ExecutePlanRequest for a catalog operation.
-    fn build_execute_catalog_request(
-        &self,
-        catalog: &proto::Catalog,
-    ) -> Result<proto::ExecutePlanRequest> {
+    fn build_execute_catalog_request(&self, catalog: &proto::Catalog) -> proto::ExecutePlanRequest {
         let mut relation = proto::Relation::default();
         relation.common = Some(proto::RelationCommon::default());
         relation.rel_type = Some(proto::relation::RelType::Catalog(catalog.clone()));
 
-        let mut plan = proto::Plan::default();
-        plan.op_type = Some(proto::plan::OpType::Root(relation));
-
-        let mut request = proto::ExecutePlanRequest::default();
-        request.session_id = self.session.client().session_id().to_string();
-        request.user_context = Some(proto::UserContext::default());
-        request.plan = Some(plan);
-
-        Ok(request)
+        execution::execute_plan_request(
+            self.session.client().session_id(),
+            Vec::new(),
+            execution::root(relation),
+        )
     }
 }
