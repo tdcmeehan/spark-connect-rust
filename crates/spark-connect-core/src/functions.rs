@@ -9,7 +9,6 @@
 #![allow(non_snake_case)]
 
 use crate::column::Column;
-use crate::dataframe::DataFrame;
 use crate::expression::{
     CallFunctionWrapper, Expression, ExpressionNode, LiteralExpression, UnresolvedFunction,
 };
@@ -201,12 +200,6 @@ pub fn window_with_slide_and_start(
             lit_str(start_time),
         ],
     )
-}
-
-/// Mirrors `pyspark.sql.functions.broadcast`.
-/// Marks a DataFrame as eligible for broadcast join (smaller table in a join).
-pub fn broadcast(df: DataFrame) -> DataFrame {
-    df.broadcast()
 }
 
 // ============================================================================
