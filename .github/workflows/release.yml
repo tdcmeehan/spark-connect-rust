@@ -335,6 +335,7 @@ jobs:
           cargo publish --dry-run \
             -p apache-spark-connect-proto \
             -p apache-spark-connect-core \
+            -p apache-spark-connect-blocking \
             -p apache-spark-connect
 
   # ---- Cut an RC: tag + GitHub pre-release with the artifacts (no crates.io/PyPI) ----
@@ -490,7 +491,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          CRATES=(apache-spark-connect-proto apache-spark-connect-core apache-spark-connect)
+          CRATES=(apache-spark-connect-proto apache-spark-connect-core apache-spark-connect-blocking apache-spark-connect)
           VER="${{ needs.resolve.outputs.version }}"
           # Skip any crate already on crates.io at this version so a re-run is idempotent.
           pkgs=()
