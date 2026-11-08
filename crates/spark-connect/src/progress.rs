@@ -3,7 +3,6 @@
 //! each progress of the server that has tasks, and once more, as done, when the execution ends.
 
 use spark_connect_core::actions::ExecutionObserver;
-use spark_connect_core::client::ReattachableResponseStream;
 use spark_connect_core::error::{Result, SparkError};
 use spark_connect_core::runtime::check_callback_depth;
 use spark_connect_proto as proto;
@@ -195,28 +194,6 @@ impl ExecutionObserver for SessionObserver {
         if matches!(self.record, Record::SessionEvenOnFailure) {
             self.session.record_execution(info.clone());
         }
-    }
-}
-
-/// The responses of an execution, with its progress for the handlers of the session: each
-/// `ExecutionProgress` updates it, and it ends when the stream is dropped.
-pub(crate) struct ExecutionStream {
-    stream: ReattachableResponseStream,
-    progress: ProgressTracker,
-}
-
-impl ExecutionStream {
-    pub(crate) fn new(stream: ReattachableResponseStream, progress: ProgressTracker) -> Self {
-        ExecutionStream { stream, progress }
-    }
-
-    /// The next response of the execution, as `ReattachableResponseStream::message`.
-    pub(crate) async fn message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = self.stream.message().await?;
-        if let Some(response) = &response {
-            self.progress.observe(response);
-        }
-        Ok(response)
     }
 }
 

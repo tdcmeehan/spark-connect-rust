@@ -27,11 +27,19 @@ mod server;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
+use prost::Message;
+use spark_connect::ml::{Estimator, Evaluator, LogisticRegression, RegressionEvaluator};
+use spark_connect::pipelines;
 use spark_connect::session::SparkSession;
 use spark_connect::ExecutePlanHook;
+use spark_connect_proto as proto;
 
 fn session() -> SparkSession {
-    let address = server::start(Arc::new(server::Recorder::default()));
+    session_recording(Arc::new(server::Recorder::default()))
+}
+
+fn session_recording(recorder: Arc<server::Recorder>) -> SparkSession {
+    let address = server::start(recorder);
     SparkSession::builder()
         .remote(&format!(
             "sc://{address}/;session_id=00000000-0000-4000-8000-00000000005e"
@@ -74,7 +82,7 @@ fn a_command_runs_inside_runtimes_of_either_flavor() {
 }
 
 #[test]
-fn the_hook_of_a_command_runs_on_the_calling_thread() {
+fn the_hook_of_a_command_or_a_pipeline_run_runs_on_the_calling_thread() {
     let spark = session();
     let threads = Arc::new(Mutex::new(Vec::new()));
     spark.set_execute_plan_hook(Some(thread_hook(&threads)));
@@ -84,8 +92,16 @@ fn the_hook_of_a_command_runs_on_the_calling_thread() {
         .build()
         .unwrap();
     runtime.block_on(async { spark.sql("SELECT 2") }).unwrap();
+    run_pipeline(&spark);
     let caller = thread::current().id();
-    assert_eq!(*threads.lock().unwrap(), vec![caller, caller]);
+    assert_eq!(*threads.lock().unwrap(), vec![caller; 3]);
+}
+
+/// Starts a run of a pipeline and reads its responses to the end.
+fn run_pipeline(spark: &SparkSession) {
+    let mut run =
+        pipelines::start_run(spark, "graph-id", vec![], true, vec![], false, None).unwrap();
+    while run.next_response().unwrap().is_some() {}
 }
 
 #[test]
@@ -195,4 +211,46 @@ fn streaming_runs_inside_runtimes_of_either_flavor() {
             spark.streams().remove_listener(&id).unwrap();
         });
     }
+}
+
+#[test]
+fn ml_and_pipelines_run_inside_runtimes_of_either_flavor() {
+    let spark = session();
+    let df = spark.range(3).unwrap();
+    for runtime in runtimes() {
+        runtime.block_on(async {
+            LogisticRegression::default().fit(&df).unwrap();
+            RegressionEvaluator::new().evaluate(&df).unwrap();
+            pipelines::create_dataflow_graph(&spark, None, None, Default::default()).unwrap();
+            run_pipeline(&spark);
+        });
+    }
+}
+
+fn is_ml_delete(entry: &server::Entry) -> bool {
+    use proto::command::CommandType;
+    let Ok(request) = proto::ExecutePlanRequest::decode(&entry.bytes[..]) else {
+        return false;
+    };
+    matches!(
+        request.plan.and_then(|plan| plan.op_type),
+        Some(proto::plan::OpType::Command(proto::Command {
+            command_type: Some(CommandType::MlCommand(proto::MlCommand {
+                command: Some(proto::ml_command::Command::Delete(_)),
+            })),
+        }))
+    )
+}
+
+#[test]
+fn a_model_dropped_inside_a_current_thread_runtime_is_deleted_on_the_server() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.range(3).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async { drop(LogisticRegression::default().fit(&df).unwrap()) });
+    drop(runtime);
+    assert!(recorder.wait_for(std::time::Duration::from_secs(10), is_ml_delete));
 }

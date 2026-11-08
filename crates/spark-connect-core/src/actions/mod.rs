@@ -6,6 +6,8 @@
 
 pub mod catalog;
 pub mod dataframe;
+pub mod ml;
+pub mod pipelines;
 pub mod session;
 pub mod streaming;
 
@@ -49,11 +51,39 @@ pub fn operation_id(request: &mut proto::ExecutePlanRequest) -> String {
         .clone()
 }
 
+/// The responses of an execution of a plan, as the server sends them. Its observer hears of the
+/// start and of each response only, and the observations of the plan get no metrics.
+pub struct Responses<O> {
+    stream: ReattachableResponseStream,
+    observer: O,
+}
+
+impl<O: ExecutionObserver> Responses<O> {
+    /// Sends `request`, after its operation id is chosen.
+    pub async fn start(
+        client: Arc<SparkConnectClient>,
+        mut request: proto::ExecutePlanRequest,
+        mut observer: O,
+    ) -> Result<Self> {
+        observer.on_start(&operation_id(&mut request));
+        let stream = client.execute_plan_reattachable(request).await?;
+        Ok(Responses { stream, observer })
+    }
+
+    /// The next response, or `None` at the end of the execution.
+    pub async fn next(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
+        let response = self.stream.message().await?;
+        if let Some(response) = &response {
+            self.observer.on_response(response);
+        }
+        Ok(response)
+    }
+}
+
 /// An execution of a plan, whose responses are read as they arrive.
 pub struct Execution<O> {
-    stream: ReattachableResponseStream,
+    responses: Responses<O>,
     plan_ids: Arc<PlanIds>,
-    observer: O,
     info: ExecutionInfo,
     schema: Option<DataType>,
 }
@@ -63,15 +93,12 @@ impl<O: ExecutionObserver> Execution<O> {
     pub async fn start(
         client: Arc<SparkConnectClient>,
         plan_ids: Arc<PlanIds>,
-        mut request: proto::ExecutePlanRequest,
-        mut observer: O,
+        request: proto::ExecutePlanRequest,
+        observer: O,
     ) -> Result<Self> {
-        observer.on_start(&operation_id(&mut request));
-        let stream = client.execute_plan_reattachable(request).await?;
         Ok(Execution {
-            stream,
+            responses: Responses::start(client, request, observer).await?,
             plan_ids,
-            observer,
             info: ExecutionInfo::default(),
             schema: None,
         })
@@ -85,23 +112,27 @@ impl<O: ExecutionObserver> Execution<O> {
     /// The next response, once the observer and the observations of the plan have what it
     /// reports, or `None` at the end of the execution.
     async fn next_response(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = self.stream.message().await;
+        let response = self.responses.next().await;
         let Some(mut response) = self.failed(response)? else {
-            self.observer.on_complete(&self.info);
+            self.complete();
             return Ok(None);
         };
-        self.observer.on_response(&response);
         let observed = self.info.capture(&mut response, &self.plan_ids);
         if !observed.is_empty() {
-            self.observer.on_observed_metrics(observed);
+            self.responses.observer.on_observed_metrics(observed);
         }
         Ok(Some(response))
+    }
+
+    /// Tells the observer that the execution has ended without an error.
+    fn complete(&mut self) {
+        self.responses.observer.on_complete(&self.info);
     }
 
     /// `result`, which the observer hears of if it is an error.
     fn failed<T>(&mut self, result: Result<T>) -> Result<T> {
         if let Err(error) = &result {
-            self.observer.on_failure(&self.info, error);
+            self.responses.observer.on_failure(&self.info, error);
         }
         result
     }

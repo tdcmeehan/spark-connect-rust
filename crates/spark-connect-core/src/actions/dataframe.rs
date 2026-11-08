@@ -87,7 +87,7 @@ impl<O: ExecutionObserver + 'static> Execution<O> {
                     Ok(Some(batch)) => {
                         if sender.send(Ok(batch)).await.is_err() {
                             // The caller has gone: the execution ends here for it.
-                            self.observer.on_complete(&self.info);
+                            self.complete();
                             break;
                         }
                     }

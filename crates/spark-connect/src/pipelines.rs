@@ -7,14 +7,16 @@
 //! of assembling protos itself.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::execution;
+use spark_connect_core::actions::{self, Responses};
+use spark_connect_core::error::Result;
 pub use spark_connect_core::pipelines::{OutputSpec, SinkDetailsSpec, TableDetailsSpec};
-use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
+use crate::blocking::block_on;
 use crate::dataframe::{execute_command_collect, DataFrame};
+use crate::progress::SessionObserver;
 use crate::session::SparkSession;
 
 use proto::pipeline_command::define_flow;
@@ -26,27 +28,14 @@ pub fn create_dataflow_graph(
     default_database: Option<String>,
     sql_conf: HashMap<String, String>,
 ) -> Result<String> {
-    let command = spark_connect_core::pipelines::create_dataflow_graph(
+    block_on(actions::pipelines::create_dataflow_graph(
+        Arc::clone(session.client()),
+        Arc::clone(session.plan_ids()),
+        session.tags(),
         default_catalog,
         default_database,
         sql_conf,
-    );
-    let responses = execute_command_collect(session, command)?;
-    for resp in responses {
-        if let Some(proto::execute_plan_response::ResponseType::PipelineCommandResult(r)) =
-            resp.response_type
-        {
-            if let Some(proto::pipeline_command_result::ResultType::CreateDataflowGraphResult(g)) =
-                r.result_type
-            {
-                if let Some(id) = g.dataflow_graph_id {
-                    return Ok(id);
-                }
-            }
-        }
-    }
-    Err(SparkError::connect_msg(
-        "CreateDataflowGraph did not return a dataflow_graph_id",
+        SessionObserver::start(session)?,
     ))
 }
 
@@ -132,22 +121,27 @@ pub fn define_sql_graph_elements(
 /// `execute_command_as_iterator` is a generator that starts the RPC lazily.
 pub struct PipelineRunStream {
     session: SparkSession,
-    request: Option<proto::ExecutePlanRequest>,
-    stream: Option<crate::progress::ExecutionStream>,
+    /// The command of the run and its operation tags, until the run starts.
+    command: Option<(proto::command::CommandType, Vec<String>)>,
+    responses: Option<Responses<SessionObserver>>,
 }
 
 impl PipelineRunStream {
     /// The next response, or `None` when the run's stream completes. A server-side
     /// failure surfaces here as the mapped `SparkError`.
     pub fn next_response(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        if self.stream.is_none() {
-            let request = self
-                .request
-                .take()
-                .expect("pipeline run stream already exhausted its request");
-            self.stream = Some(self.session.execute_plan(request)?);
-        }
-        block_on(self.stream.as_mut().unwrap().message())
+        block_on(async {
+            if let Some((command, tags)) = self.command.take() {
+                let observer = SessionObserver::unrecorded(&self.session)?;
+                let client = Arc::clone(self.session.client());
+                let run = actions::pipelines::start_run(client, tags, command, observer);
+                self.responses = Some(run.await?);
+            }
+            match &mut self.responses {
+                Some(responses) => responses.next().await,
+                None => panic!("pipeline run stream already exhausted its request"),
+            }
+        })
     }
 }
 
@@ -171,14 +165,9 @@ pub fn start_run(
         dry,
         storage,
     );
-    let request = execution::execute_plan_request(
-        session.client().session_id(),
-        session.tags(),
-        execution::command(command),
-    );
     Ok(PipelineRunStream {
         session: session.clone(),
-        request: Some(request),
-        stream: None,
+        command: Some((command, session.tags())),
+        responses: None,
     })
 }

@@ -9,8 +9,7 @@ use spark_connect_core::actions;
 use spark_connect_core::channel::ChannelBuilder;
 use spark_connect_core::client::{ExecutePlanHook, SparkConnectClient};
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::execution;
-use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
+use spark_connect_core::runtime::CallbackGuard;
 use spark_connect_core::thread_entries::forget_when_thread_ends;
 use spark_connect_proto as proto;
 
@@ -18,7 +17,7 @@ use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::plan::{LogicalPlan, PlanIds};
 use crate::profiler::PythonAccumulators;
-use crate::progress::{ExecutionStream, ProgressTracker, ProgressUpdate, SessionObserver};
+use crate::progress::{ProgressUpdate, SessionObserver};
 use crate::row::{Row, Value};
 use crate::types::DataType;
 pub use spark_connect_core::execution::ExecutionInfo;
@@ -279,21 +278,6 @@ impl SparkSession {
         for h in handlers {
             h(&update);
         }
-    }
-
-    /// Execute `request` on the server, with the progress of the execution for the progress
-    /// handlers. Its operation ID is that of the request, or a new one, which the client
-    /// assigns before it sends the request, as PySpark's `Progress` of the request has it.
-    pub(crate) fn execute_plan(
-        &self,
-        mut request: proto::ExecutePlanRequest,
-    ) -> Result<ExecutionStream> {
-        let operation_id = actions::operation_id(&mut request);
-        // Before the request: an execution that fails to start ends, as done, too.
-        check_callback_depth()?;
-        let progress = ProgressTracker::new(self, Some(operation_id));
-        let stream = block_on(self.client().execute_plan_reattachable(request))?;
-        Ok(ExecutionStream::new(stream, progress))
     }
 
     /// Execute the command `command_type` to completion, with the progress of the execution for
@@ -777,24 +761,9 @@ impl SparkSession {
     /// runs on the shared runtime, and its errors (a stopped session, a closed channel) are
     /// ignored. Safe to call from `Drop`.
     pub(crate) fn release_ml_objects(&self, refs: Vec<proto::ObjectRef>) {
-        let delete = proto::ml_command::Delete {
-            obj_refs: refs,
-            evict_only: None,
-        };
-        let mut request = execution::execute_plan_request(
-            self.client.session_id(),
-            Vec::new(),
-            execution::command(proto::command::CommandType::MlCommand(proto::MlCommand {
-                command: Some(proto::ml_command::Command::Delete(delete)),
-            })),
-        );
-        request.operation_id = Some(uuid::Uuid::new_v4().to_string());
-        let client = Arc::clone(&self.client);
-        spark_connect_core::runtime::get_runtime().spawn(async move {
-            if let Ok(mut stream) = client.execute_plan_reattachable(request).await {
-                while let Ok(Some(_)) = stream.message().await {}
-            }
-        });
+        crate::blocking::shared()
+            .handle()
+            .spawn(actions::ml::delete(Arc::clone(&self.client), refs));
     }
 
     /// Get the runtime configuration for this session.

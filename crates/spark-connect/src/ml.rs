@@ -6,13 +6,16 @@
 //! - Base traits: `Estimator`, `Transformer`, `Model`, `Evaluator`
 //! - Concrete example: `StandardScaler` estimator + `StandardScalerModel`
 
+use spark_connect_core::actions;
 use spark_connect_core::ml;
 pub use spark_connect_core::ml::{MlOperator, OperatorType, Params};
 use spark_connect_proto as proto;
 use std::sync::Arc;
 
+use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::plan::{LogicalPlan, RelationOwner};
+use crate::progress::SessionObserver;
 use crate::session::SparkSession;
 
 /// Base trait for ML Estimators that fit to data and produce Models.
@@ -126,23 +129,13 @@ fn evaluate_via_command(
     params: &Params,
     df: &DataFrame,
 ) -> spark_connect_core::error::Result<f64> {
-    let responses = crate::dataframe::execute_command_collect(
-        &df.session,
+    let session = &df.session;
+    block_on(actions::ml::evaluate(
+        Arc::clone(session.client()),
+        Arc::clone(session.plan_ids()),
+        session.tags(),
         ml::evaluate(operator, params, df.relation()),
-    )?;
-    for resp in responses {
-        if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
-            resp.response_type
-        {
-            if let Some(proto::ml_command_result::ResultType::Param(lit)) = result.result_type {
-                if let Some(proto::expression::literal::LiteralType::Double(v)) = lit.literal_type {
-                    return Ok(v);
-                }
-            }
-        }
-    }
-    Err(spark_connect_core::error::SparkError::connect_msg(
-        "evaluate: server returned no metric",
+        SessionObserver::start(session)?,
     ))
 }
 
@@ -627,25 +620,15 @@ fn fit_via_command(
     params: &Params,
     df: &DataFrame,
 ) -> spark_connect_core::error::Result<proto::ml_command_result::MlOperatorInfo> {
-    let responses = crate::dataframe::execute_command_collect(
-        &df.session,
+    let session = &df.session;
+    block_on(actions::ml::fit(
+        Arc::clone(session.client()),
+        Arc::clone(session.plan_ids()),
+        session.tags(),
         ml::fit(operator, params, df.relation()),
-    )?;
-    for response in responses {
-        if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
-            response.response_type
-        {
-            if let Some(proto::ml_command_result::ResultType::OperatorInfo(info)) =
-                result.result_type
-            {
-                return Ok(info);
-            }
-        }
-    }
-    Err(spark_connect_core::error::SparkError::connect_msg(format!(
-        "{}.fit: server returned no fitted model",
-        operator.name
-    )))
+        operator.name.clone(),
+        SessionObserver::start(session)?,
+    ))
 }
 
 /// The server's cached model, shared by a model, its clones and every DataFrame that it
