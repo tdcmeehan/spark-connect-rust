@@ -29,12 +29,18 @@ regex = "1"
 prost-types.workspace = true
 crc32fast = "1"
 sha2 = "0.10"
+# Optional: only pulled in by the `wasm-udf` feature.
+base64 = { version = "0.21", optional = true }
 # Local time for the reprs of timestamp literals, as Python's `datetime.fromtimestamp`.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
 # sha2 0.10 requires this feature for ARM hardware acceleration; sha2-asm excludes Windows.
 sha2 = { version = "0.10", features = ["asm"] }
+
+[features]
+# Build Rust UDFs that run on Spark via WebAssembly (the `wasm_udf` module).
+wasm-udf = ["dep:base64"]
 
 [dev-dependencies]
 tempfile = "3"
