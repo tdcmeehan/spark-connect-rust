@@ -114,39 +114,50 @@ impl Drop for ProgressTracker {
 pub(crate) struct SessionObserver {
     session: SparkSession,
     progress: Option<ProgressTracker>,
-    /// The DataFrame whose execution this is, which records it as its own too.
-    dataframe: Option<DataFrame>,
-    /// Whether an execution that fails is recorded, as the local iterator records it.
-    record_failure: bool,
+    record: Record,
+}
+
+/// What an execution records as the last execution, when it ends.
+enum Record {
+    /// The session's, when it ends without an error.
+    Session,
+    /// The DataFrame's and the session's, when it ends without an error.
+    DataFrame(DataFrame),
+    /// The session's, also when it fails, as the local iterator records it.
+    SessionEvenOnFailure,
+    /// Nothing, as for a catalog operation.
+    Nothing,
 }
 
 impl SessionObserver {
     /// The observer of an execution about to start, which fails with a `RecursionError` when
     /// the callbacks that run queries are nested too deep on this thread.
     pub(crate) fn start(session: &SparkSession) -> Result<Self> {
-        check_callback_depth()?;
-        Ok(SessionObserver {
-            session: session.clone(),
-            progress: None,
-            dataframe: None,
-            record_failure: false,
-        })
+        Self::recording(session, Record::Session)
     }
 
     /// As [`SessionObserver::start`], for an execution of `dataframe`.
     pub(crate) fn for_dataframe(dataframe: &DataFrame) -> Result<Self> {
-        Ok(SessionObserver {
-            dataframe: Some(dataframe.clone()),
-            ..SessionObserver::start(&dataframe.session)?
-        })
+        Self::recording(&dataframe.session, Record::DataFrame(dataframe.clone()))
     }
 
     /// As [`SessionObserver::start`], for an execution that the local iterator reads, which
     /// records the execution also when it fails.
     pub(crate) fn for_iterator(session: &SparkSession) -> Result<Self> {
+        Self::recording(session, Record::SessionEvenOnFailure)
+    }
+
+    /// As [`SessionObserver::start`], for an execution that records nothing.
+    pub(crate) fn unrecorded(session: &SparkSession) -> Result<Self> {
+        Self::recording(session, Record::Nothing)
+    }
+
+    fn recording(session: &SparkSession, record: Record) -> Result<Self> {
+        check_callback_depth()?;
         Ok(SessionObserver {
-            record_failure: true,
-            ..SessionObserver::start(session)?
+            session: session.clone(),
+            progress: None,
+            record,
         })
     }
 }
@@ -171,14 +182,17 @@ impl ExecutionObserver for SessionObserver {
     }
 
     fn on_complete(&mut self, info: &ExecutionInfo) {
-        match &self.dataframe {
-            Some(dataframe) => dataframe.record_execution(info.clone()),
-            None => self.session.record_execution(info.clone()),
+        match &self.record {
+            Record::Session | Record::SessionEvenOnFailure => {
+                self.session.record_execution(info.clone())
+            }
+            Record::DataFrame(dataframe) => dataframe.record_execution(info.clone()),
+            Record::Nothing => {}
         }
     }
 
     fn on_failure(&mut self, info: &ExecutionInfo, _error: &SparkError) {
-        if self.record_failure {
+        if matches!(self.record, Record::SessionEvenOnFailure) {
             self.session.record_execution(info.clone());
         }
     }

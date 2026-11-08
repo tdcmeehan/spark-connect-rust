@@ -26,7 +26,9 @@ impl<O: ExecutionObserver> Execution<O> {
     }
 
     /// The next Arrow batch of the result, or `None` at its end.
-    async fn next_batch(&mut self) -> Result<Option<proto::execute_plan_response::ArrowBatch>> {
+    pub(super) async fn next_batch(
+        &mut self,
+    ) -> Result<Option<proto::execute_plan_response::ArrowBatch>> {
         while let Some(mut response) = self.next_response().await? {
             if let Some(data_type) = response.schema.take() {
                 let schema = DataType::from_proto(&data_type);
