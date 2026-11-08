@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
+use spark_connect::blocking::block_on;
 use spark_connect_core::channel::ChannelBuilder;
 use spark_connect_core::client::SparkConnectClient;
 use spark_connect_core::retries::RetryPolicy;
-use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
 use crate::errors::ResultExt;

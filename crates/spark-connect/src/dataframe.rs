@@ -3183,8 +3183,8 @@ mod conversion_tests {
     #[cfg(feature = "datafusion")]
     #[test]
     fn to_datafusion_preserves_rows_and_columns() {
+        use crate::blocking::block_on;
         use datafusion::prelude::SessionContext;
-        use spark_connect_core::runtime::block_on;
 
         let ctx = SessionContext::new();
         let df = record_batches_to_datafusion(&ctx, vec![sample_batch()]).expect("to datafusion");

@@ -8,6 +8,7 @@
 use spark_connect_core::arrow_input;
 #[doc(hidden)]
 pub mod blocking;
+mod callbacks;
 pub mod catalog;
 pub mod conf;
 pub mod dataframe;

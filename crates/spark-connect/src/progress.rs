@@ -4,9 +4,9 @@
 
 use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::runtime::check_callback_depth;
 use spark_connect_proto as proto;
 
+use crate::callbacks::check_callback_depth;
 use crate::dataframe::DataFrame;
 use crate::session::{ExecutionInfo, SparkSession};
 

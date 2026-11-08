@@ -422,10 +422,7 @@ impl SparkConnectClient {
         let Some(hook) = hook else {
             return Ok(request);
         };
-        crate::runtime::check_callback_depth()?;
         let operation_id = request.operation_id.clone();
-        // The hook may run a query of its own, which runs the hooks too.
-        let _callback = crate::runtime::CallbackGuard::enter();
         let mut request = hook(request)?;
         request.operation_id = operation_id;
         Ok(request)
@@ -776,7 +773,7 @@ impl SparkConnectClient {
                 // As the reference iterator releases an execution that fails at once, such
                 // as for an analysis error, so the server does not keep it until its
                 // detached timeout.
-                self.spawn_release(self.execution_metadata(), iter.release_all_request());
+                self.spawn_release(self.execution_metadata(), iter.release_all_request(), None);
                 return Err(error.with_operation_id(iter.operation_id()));
             }
         };
@@ -790,6 +787,7 @@ impl SparkConnectClient {
             execute_again: false,
             done: false,
             released: false,
+            runtime: tokio::runtime::Handle::try_current().ok(),
         })
     }
 
@@ -1535,6 +1533,9 @@ pub struct ReattachableResponseStream {
     done: bool,
     /// Whether `ReleaseAll` was sent, after which nothing else is released.
     released: bool,
+    /// The runtime that started the execution, which sends its releases when the stream is
+    /// dropped outside of any runtime.
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 /// The user ID of a connection string that does not set one: `SPARK_USER`, else `USER`, as
@@ -1577,8 +1578,14 @@ impl SparkConnectClient {
     /// Sends `request` in the background, so that reading is not delayed, retrying under the
     /// client's retry policy. Like the reference client, a failure is only logged: the server
     /// removes an execution that is never released once it has been detached for
-    /// `spark.connect.execute.manager.detachedTimeout`.
-    fn spawn_release(&self, metadata: MetadataMap, request: ReleaseExecuteRequest) {
+    /// `spark.connect.execute.manager.detachedTimeout`. It runs on the runtime of the caller's
+    /// context, else on `runtime`, if that one still runs; otherwise it is not sent.
+    fn spawn_release(
+        &self,
+        metadata: MetadataMap,
+        request: ReleaseExecuteRequest,
+        runtime: Option<&tokio::runtime::Handle>,
+    ) {
         let mut stub = self.stub.clone();
         let policy = self.retry_policy.clone();
         let release = async move {
@@ -1606,10 +1613,11 @@ impl SparkConnectClient {
             }
         };
         // A stream is read inside a runtime, but it can be dropped outside of any, for
-        // example after the `block_on` that read it.
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => drop(handle.spawn(release)),
-            Err(_) => drop(crate::runtime::get_runtime().spawn(release)),
+        // example after the blocking call that read it.
+        let current = tokio::runtime::Handle::try_current().ok();
+        match current.as_ref().or(runtime) {
+            Some(handle) => drop(handle.spawn(release)),
+            None => tracing::warn!("ReleaseExecute not sent: there is no runtime to send it"),
         }
     }
 }
@@ -1835,8 +1843,11 @@ impl ReattachableResponseStream {
 
     /// Sends `request` in the background, as [`SparkConnectClient::spawn_release`] does.
     fn spawn_release(&self, request: ReleaseExecuteRequest) {
-        self.client
-            .spawn_release(self.client.execution_metadata(), request);
+        self.client.spawn_release(
+            self.client.execution_metadata(),
+            request,
+            self.runtime.as_ref(),
+        );
     }
 }
 

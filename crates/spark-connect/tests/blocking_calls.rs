@@ -122,6 +122,24 @@ fn a_hook_can_run_a_blocking_call_of_its_own() {
 }
 
 #[test]
+fn a_hook_that_runs_queries_without_end_fails_with_a_recursion_error() {
+    let spark = session();
+    let other = spark.clone();
+    let hook: ExecutePlanHook = Arc::new(move |request| {
+        other.sql("SELECT 1")?;
+        Ok(request)
+    });
+    spark.set_execute_plan_hook(Some(hook));
+    let Err(error) = spark.sql("SELECT 1") else {
+        panic!("the hooks ran without end");
+    };
+    assert_eq!(error.kind, spark_connect::SparkErrorKind::RecursionError);
+    // Once the hooks have returned, queries run again.
+    spark.set_execute_plan_hook(None);
+    spark.sql("SELECT 2").unwrap();
+}
+
+#[test]
 fn the_actions_of_a_dataframe_run_inside_runtimes_of_either_flavor() {
     let spark = session();
     let df = spark.range(3).unwrap();
