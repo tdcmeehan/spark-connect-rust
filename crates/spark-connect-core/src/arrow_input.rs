@@ -3,16 +3,17 @@
 use arrow::datatypes::SchemaRef;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
-use spark_connect_core::client::SparkConnectClient;
-use spark_connect_core::error::{Result, SparkError, SparkErrorKind};
-use spark_connect_core::runtime::block_on;
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use crate::client::SparkConnectClient;
+use crate::error::{Result, SparkError, SparkErrorKind};
 use crate::plan::LogicalPlan;
 use crate::types::DataType;
 
 /// Internal settings snapshot shared with the Python Arrow importer; not a stable API.
 #[doc(hidden)]
+#[derive(Clone)]
 pub struct ArrowInputOptions {
     timestamp_type: String,
     timezone: String,
@@ -32,8 +33,8 @@ impl ArrowInputOptions {
         "spark.sql.session.localRelationChunkSizeBytes",
         "spark.sql.session.localRelationBatchOfChunksSizeBytes",
     ];
-    pub(crate) fn from_client(client: &SparkConnectClient) -> Result<Self> {
-        let values = block_on(client.get_configs(&Self::KEYS))?;
+    pub async fn from_client(client: &SparkConnectClient) -> Result<Self> {
+        let values = client.get_configs(&Self::KEYS).await?;
         let values = Self::KEYS
             .into_iter()
             .zip(values)
@@ -100,6 +101,7 @@ impl ArrowInputOptions {
     }
 }
 
+#[derive(Clone)]
 struct Options {
     size_limit: usize,
     chunk_rows: usize,
@@ -120,7 +122,8 @@ fn validate(batches: &[RecordBatch]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn batch_data_size(batch: &RecordBatch) -> usize {
+/// The size of the data of `batch`, of its logical slices rather than their backing buffers.
+pub fn batch_data_size(batch: &RecordBatch) -> usize {
     batch
         .columns()
         .iter()
@@ -133,10 +136,8 @@ pub(crate) fn batch_data_size(batch: &RecordBatch) -> usize {
         .sum()
 }
 
-pub(crate) fn inline_relation(
-    batches: &[RecordBatch],
-    schema: Option<DataType>,
-) -> Result<LogicalPlan> {
+/// A local relation of `batches`, sent inline in the plan.
+pub fn inline_relation(batches: &[RecordBatch], schema: Option<DataType>) -> Result<LogicalPlan> {
     validate(batches)?;
     let data = if let Some(first) = batches.first() {
         let mut writer = StreamWriter::try_new(Vec::new(), &first.schema()).map_err(arrow_error)?;
@@ -150,63 +151,75 @@ pub(crate) fn inline_relation(
     Ok(LogicalPlan::LocalRelation { schema, data })
 }
 
-pub(crate) fn create_relation(
-    client: &SparkConnectClient,
+/// A local relation of `batches`: inline when it is small, as PySpark sends it, or else uploaded
+/// to the session's artifact cache in chunks and referred to by their hashes. `options` are
+/// the session's settings, fetched when not given.
+pub async fn create_relation(
+    client: Arc<SparkConnectClient>,
     batches: Vec<RecordBatch>,
     schema: Option<DataType>,
-    options: Option<&ArrowInputOptions>,
+    options: Option<ArrowInputOptions>,
 ) -> Result<LogicalPlan> {
     // Validate before any RPC, and preserve the offline empty-input path.
     validate(&batches)?;
     if batches.iter().all(|batch| batch.num_rows() == 0) {
         return inline_relation(&batches, schema);
     }
-    let fetched;
     let options = match options {
         Some(options) => options,
-        None => {
-            fetched = ArrowInputOptions::from_client(client)?;
-            &fetched
-        }
+        None => ArrowInputOptions::from_client(&client).await?,
     };
-    // Count the logical slices rather than their potentially much larger backing buffers.
     let bytes: usize = batches.iter().map(batch_data_size).sum();
     if bytes < options.cache_threshold {
         return inline_relation(&batches, schema);
     }
-    let options = &options.upload;
+    let options = options.upload;
+
+    // Serialize on a blocking thread and upload each batch of chunks as it fills, so that no
+    // more than a batch waits in memory.
+    let (sender, mut chunks) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    let schema_json = schema.as_ref().map(|schema| schema.json().into_bytes());
+    let upload_batch_bytes = options.upload_batch_bytes;
+    let serializer = tokio::task::spawn_blocking(move || {
+        let mut total_size = 0;
+        let mut enqueue = |chunk: Vec<u8>| -> Result<()> {
+            total_size += chunk.len();
+            if total_size > options.size_limit {
+                return Err(SparkError::classed(
+                    SparkErrorKind::Analysis,
+                    "LOCAL_RELATION_SIZE_LIMIT_EXCEEDED",
+                    &[
+                        ("actualSize", &total_size.to_string()),
+                        ("sizeLimit", &options.size_limit.to_string()),
+                    ],
+                ));
+            }
+            // A closed receiver means the upload failed, whose error is returned instead: stop.
+            sender
+                .blocking_send(chunk)
+                .map_err(|_| SparkError::connect_msg("the upload of the local relation stopped"))
+        };
+        if let Some(schema_json) = schema_json {
+            enqueue(schema_json)?;
+        }
+        serialize_chunks(&batches, &options, &mut enqueue)
+    });
 
     let mut pending = Vec::new();
     let mut pending_size = 0;
-    let mut total_size = 0;
     let mut hashes = Vec::new();
-    let mut enqueue = |chunk: Vec<u8>| -> Result<()> {
-        total_size += chunk.len();
-        if total_size > options.size_limit {
-            return Err(SparkError::classed(
-                SparkErrorKind::Analysis,
-                "LOCAL_RELATION_SIZE_LIMIT_EXCEEDED",
-                &[
-                    ("actualSize", &total_size.to_string()),
-                    ("sizeLimit", &options.size_limit.to_string()),
-                ],
-            ));
-        }
-        if !pending.is_empty() && pending_size + chunk.len() > options.upload_batch_bytes {
-            hashes.extend(block_on(
-                client.cache_artifacts(std::mem::take(&mut pending)),
-            )?);
+    while let Some(chunk) = chunks.recv().await {
+        if !pending.is_empty() && pending_size + chunk.len() > upload_batch_bytes {
+            hashes.extend(client.cache_artifacts(std::mem::take(&mut pending)).await?);
             pending_size = 0;
         }
         pending_size += chunk.len();
         pending.push(chunk);
-        Ok(())
-    };
-    if let Some(schema) = &schema {
-        enqueue(schema.json().into_bytes())?;
     }
-    serialize_chunks(&batches, options, &mut enqueue)?;
-    hashes.extend(block_on(client.cache_artifacts(pending))?);
+    serializer
+        .await
+        .map_err(|error| SparkError::connect_msg(error.to_string()))??;
+    hashes.extend(client.cache_artifacts(pending).await?);
     let schema_hash = schema.map(|_| hashes.remove(0));
     Ok(LogicalPlan::ChunkedCachedLocalRelation {
         data_hashes: hashes,

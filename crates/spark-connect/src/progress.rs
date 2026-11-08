@@ -2,11 +2,13 @@
 //! `pyspark.sql.connect.shell.progress`: the progress handlers of the session are called with
 //! each progress of the server that has tasks, and once more, as done, when the execution ends.
 
+use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::client::ReattachableResponseStream;
 use spark_connect_core::error::Result;
+use spark_connect_core::runtime::check_callback_depth;
 use spark_connect_proto as proto;
 
-use crate::session::SparkSession;
+use crate::session::{ExecutionInfo, SparkSession};
 
 /// The progress of a stage of an execution, as PySpark's `StageInfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +81,15 @@ impl ProgressTracker {
         }
     }
 
+    /// The progress of `response`, if it is one.
+    fn observe(&mut self, response: &proto::ExecutePlanResponse) {
+        if let Some(proto::execute_plan_response::ResponseType::ExecutionProgress(progress)) =
+            &response.response_type
+        {
+            self.update(progress, &response.operation_id);
+        }
+    }
+
     fn notify(&self, done: bool) {
         self.session.notify_progress(|| ProgressUpdate {
             stages: self.stages.clone(),
@@ -93,6 +104,50 @@ impl Drop for ProgressTracker {
     /// As PySpark's `Progress.finish` when its execution ends, also of an error.
     fn drop(&mut self) {
         self.notify(true);
+    }
+}
+
+/// The observer of an execution of a session that the core runs: the progress of the execution
+/// for the handlers of the session, the updates of its Python accumulators, and the record of the
+/// execution as the session's most recent one.
+pub(crate) struct SessionObserver {
+    session: SparkSession,
+    progress: Option<ProgressTracker>,
+}
+
+impl SessionObserver {
+    /// The observer of an execution about to start, which fails with a `RecursionError` when
+    /// the callbacks that run queries are nested too deep on this thread.
+    pub(crate) fn start(session: &SparkSession) -> Result<Self> {
+        check_callback_depth()?;
+        Ok(SessionObserver {
+            session: session.clone(),
+            progress: None,
+        })
+    }
+}
+
+impl ExecutionObserver for SessionObserver {
+    fn on_start(&mut self, operation_id: &str) {
+        self.progress = Some(ProgressTracker::new(
+            &self.session,
+            Some(operation_id.to_string()),
+        ));
+    }
+
+    fn on_response(&mut self, response: &proto::ExecutePlanResponse) {
+        if let Some(progress) = &mut self.progress {
+            progress.observe(response);
+        }
+    }
+
+    fn on_observed_metrics(&mut self, metrics: &[proto::execute_plan_response::ObservedMetrics]) {
+        // The updates of the Python accumulators, such as the results of the UDF profilers.
+        self.session.python_accumulators().accumulate(metrics);
+    }
+
+    fn on_complete(&mut self, info: &ExecutionInfo) {
+        self.session.record_execution(info.clone());
     }
 }
 
@@ -112,11 +167,7 @@ impl ExecutionStream {
     pub(crate) async fn message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
         let response = self.stream.message().await?;
         if let Some(response) = &response {
-            if let Some(proto::execute_plan_response::ResponseType::ExecutionProgress(progress)) =
-                &response.response_type
-            {
-                self.progress.update(progress, &response.operation_id);
-            }
+            self.progress.observe(response);
         }
         Ok(response)
     }
