@@ -151,6 +151,13 @@ mod wasm {
     pub fn cases() -> Vec<Case> {
         cases![
             "wasm_udf::udf" => |c| record(c, &add_one()),
+            "UserDefinedFunction::with_batch_entrypoint" => |c| {
+                let f = udf("plus", vec![0u8, 97, 115, 109], "plus", vec![AbiType::I64, AbiType::I64], AbiType::I64)
+                    .with_packer(echo_packer())
+                    .with_python_ver("3.11")
+                    .with_batch_entrypoint("plus_batch");
+                record(c, &f)
+            },
             "UserDefinedFunction::as_nondeterministic" => |c| record(c, &add_one().as_nondeterministic()),
             "UserDefinedFunction::with_eval_type" => {
                 |c| record(c, &add_one().with_eval_type(spark_connect::udf::eval_type::SQL_SCALAR_ARROW_UDF))

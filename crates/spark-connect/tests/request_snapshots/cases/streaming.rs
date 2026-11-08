@@ -159,5 +159,8 @@ pub fn cases() -> Vec<Case> {
             c.message("Text", &format!("{}", streams.listeners().len()));
             streams.remove_listener(&id)
         },
+        "DataStreamReader::clear_format" => {
+            |c| c.df(&c.spark.read_stream().format("rate").clear_format().load(Some("/in")))
+        },
     ]
 }

@@ -123,5 +123,16 @@ pub fn cases() -> Vec<Case> {
                 .merge()
         },
         "DataFrameWriter::clear_format" => |c| range(c).write().format("csv").clear_format().save(Some("/p")),
+        "DataFrameReader::clear_format" => |c| c.df(&c.spark.read().format("csv").clear_format().load(Some("/p"))),
+        "DataFrameReader::load_paths" => {
+            |c| c.df(&c.spark.read().format("json").load_paths(vec!["/a".to_string(), "/b".to_string()]))
+        },
+        "DataFrameReader::parse" => |c| {
+            let input = range(c);
+            c.df(&c.spark.read().option("sep", ";").parse(spark_connect::plan::ParseFormat::Csv, &input)?)
+        },
+        "DataFrameWriterV2::unset_table_property" => {
+            |c| range(c).write_to("db.t").table_property("p", "q").table_property("r", "s").unset_table_property("p").create()
+        },
     ]
 }

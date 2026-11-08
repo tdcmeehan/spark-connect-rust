@@ -45,6 +45,7 @@ pub const FEATURE_GATED: &[&str] = &[
     "wasm_udf::udf",
     "UserDefinedFunction::as_nondeterministic",
     "UserDefinedFunction::with_eval_type",
+    "UserDefinedFunction::with_batch_entrypoint",
     "AbiType::descriptor",
     "UdfRegistration::register",
 ];
