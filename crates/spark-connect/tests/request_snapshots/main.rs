@@ -190,11 +190,13 @@ fn run(
         .unwrap();
     // A relation the session sent raises the counter past its plan id. It stays alive during the
     // case, so no node of the case can take its place in the session's plan ids.
-    let mut relation = proto::Relation::default();
-    relation.common = Some(proto::RelationCommon {
-        plan_id: Some(first_plan_id - 1),
+    let relation = proto::Relation {
+        common: Some(proto::RelationCommon {
+            plan_id: Some(first_plan_id - 1),
+            ..Default::default()
+        }),
         ..Default::default()
-    });
+    };
     let _plan_ids_start = DataFrame::from_sent_relation(spark.clone(), relation);
     recorder.take();
     let ctx = Ctx {
