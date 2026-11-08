@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use spark_connect_proto as proto;
 
-use super::{analyze, execute_command, ExecutionObserver};
+use super::{analyze, command_result, ExecutionObserver};
 use crate::client::SparkConnectClient;
 use crate::error::{Result, SparkError};
-use crate::execution;
 use crate::plan::PlanIds;
 use crate::types::DataType;
+
+use proto::execute_plan_response::ResponseType;
 
 /// The Spark version of the server.
 pub async fn spark_version(client: Arc<SparkConnectClient>) -> Result<String> {
@@ -64,21 +65,23 @@ pub async fn sql(
     tags: Vec<String>,
     input: proto::Relation,
     observer: impl ExecutionObserver,
-) -> Result<(Option<proto::Relation>, execution::ExecutionInfo)> {
+) -> Result<Option<proto::Relation>> {
     let command = proto::command::CommandType::SqlCommand(proto::SqlCommand {
         input: Some(input),
         ..Default::default()
     });
-    let (responses, info) = execute_command(client, plan_ids, tags, command, observer).await?;
-    let relation = responses
-        .into_iter()
-        .find_map(|response| match response.response_type {
-            Some(proto::execute_plan_response::ResponseType::SqlCommandResult(result)) => {
-                result.relation
-            }
+    command_result(
+        client,
+        plan_ids,
+        tags,
+        command,
+        observer,
+        |result| match result {
+            ResponseType::SqlCommandResult(result) => result.relation,
             _ => None,
-        });
-    Ok((relation, info))
+        },
+    )
+    .await
 }
 
 /// The function that registers the Java UDF of the class `class_name` as `name`: of
@@ -118,20 +121,21 @@ pub async fn create_resource_profile(
             profile: Some(profile),
         },
     );
-    let (responses, _) = execute_command(client, plan_ids, tags, command, observer).await?;
-    responses
-        .into_iter()
-        .find_map(|response| match response.response_type {
-            Some(
-                proto::execute_plan_response::ResponseType::CreateResourceProfileCommandResult(
-                    result,
-                ),
-            ) => Some(result.profile_id),
+    command_result(
+        client,
+        plan_ids,
+        tags,
+        command,
+        observer,
+        |result| match result {
+            ResponseType::CreateResourceProfileCommandResult(result) => Some(result.profile_id),
             _ => None,
-        })
-        .ok_or_else(|| {
-            SparkError::connect_msg(
-                "build_resource_profile: server returned no CreateResourceProfileCommandResult",
-            )
-        })
+        },
+    )
+    .await?
+    .ok_or_else(|| {
+        SparkError::connect_msg(
+            "build_resource_profile: server returned no CreateResourceProfileCommandResult",
+        )
+    })
 }

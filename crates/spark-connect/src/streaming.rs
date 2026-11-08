@@ -7,15 +7,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid;
 
+use spark_connect_core::actions;
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::execution;
-use spark_connect_core::runtime::block_on;
 pub use spark_connect_core::streaming::Trigger;
 use spark_connect_core::streaming::WriteStreamSpec;
 use spark_connect_proto as proto;
 
+use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::plan::LogicalPlan;
+use crate::progress::SessionObserver;
 use crate::readwriter::ReadType;
 use crate::session::SparkSession;
 use crate::udf::PythonUDFPayload;
@@ -370,7 +371,7 @@ impl DataStreamWriter {
 
     /// Internal method to build and execute the write stream command.
     fn _start_internal(self) -> Result<StreamingQuery> {
-        let mut name = self.query_name.clone();
+        let name = self.query_name.clone();
         let write_op = WriteStreamSpec {
             format: self.format,
             output_mode: self.output_mode,
@@ -393,37 +394,17 @@ impl DataStreamWriter {
         // reattachable path with the session's tags, so that an error carries the operation
         // id of the request, as in PySpark. Its WriteStreamOperationStartResult carries the
         // server-assigned query id / run id / name.
-        let responses = crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::WriteStreamOperationStart(write_op),
-        )?;
-        let mut query_id = String::new();
-        let mut run_id = String::new();
-        let mut started_event = None;
-        for resp in responses {
-            if let Some(
-                proto::execute_plan_response::ResponseType::WriteStreamOperationStartResult(res),
-            ) = resp.response_type
-            {
-                if let Some(qid) = res.query_id {
-                    query_id = qid.id;
-                    run_id = qid.run_id;
-                }
-                if !res.name.is_empty() {
-                    name = Some(res.name);
-                }
-                started_event = res.query_started_event_json;
-            }
-        }
-        if query_id.is_empty() {
-            return Err(SparkError::connect_msg(
-                "writeStream.start: server returned no WriteStreamOperationStartResult",
-            ));
-        }
+        let started = block_on(actions::streaming::start(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            self.session.tags(),
+            write_op,
+            SessionObserver::start(&self.session)?,
+        ))?;
         // As PySpark Connect's DataStreamWriter: the server sends the started event of the query
         // with the result of its start, as the session has client-side listeners, and the client
         // posts it to them before it gives back the query.
-        if let Some(event_json) = started_event {
+        if let Some(event_json) = started.started_event_json {
             self.session
                 .streams()
                 .post_to_all(&StreamingQueryListenerEvent {
@@ -434,9 +415,9 @@ impl DataStreamWriter {
 
         Ok(StreamingQuery {
             session: self.session,
-            query_id,
-            run_id,
-            name,
+            query_id: started.query_id,
+            run_id: started.run_id,
+            name: started.name.or(name),
         })
     }
 }
@@ -647,21 +628,13 @@ impl StreamingQuery {
         query_id.run_id = self.run_id.clone();
         cmd.query_id = Some(query_id);
 
-        let responses = crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::StreamingQueryCommand(cmd),
-        )?;
-
-        for resp in responses {
-            if let Some(proto::execute_plan_response::ResponseType::StreamingQueryCommandResult(
-                result,
-            )) = resp.response_type
-            {
-                return Ok(result);
-            }
-        }
-
-        Ok(proto::StreamingQueryCommandResult::default())
+        block_on(actions::streaming::query_command(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            self.session.tags(),
+            cmd,
+            SessionObserver::start(&self.session)?,
+        ))
     }
 }
 
@@ -686,9 +659,7 @@ pub struct StreamingQueryException {
 /// An iterator over streaming query listener events from the server.
 /// Yields events incrementally as they arrive, without buffering the entire stream.
 pub struct ListenerEventStream {
-    stream: crate::progress::ExecutionStream,
-    buffered_events: std::vec::IntoIter<(i32, String)>,
-    done: bool,
+    events: actions::streaming::ListenerEvents<SessionObserver>,
 }
 
 impl ListenerEventStream {
@@ -696,38 +667,7 @@ impl ListenerEventStream {
     /// the session (`listener_bus_listener_added`), keeping the events of them, which the
     /// iterator gives first, as PySpark Connect's `_register_server_side_listener` waits for it.
     fn wait_until_listener_added(&mut self) -> Result<()> {
-        loop {
-            match block_on(self.stream.message()) {
-                Ok(Some(resp)) => {
-                    if let Some(
-                        proto::execute_plan_response::ResponseType::StreamingQueryListenerEventsResult(res),
-                    ) = resp.response_type
-                    {
-                        if !res.events.is_empty() {
-                            let mut events: Vec<(i32, String)> =
-                                std::mem::take(&mut self.buffered_events).collect();
-                            events.extend(
-                                res.events
-                                    .into_iter()
-                                    .map(|event| (event.event_type, event.event_json)),
-                            );
-                            self.buffered_events = events.into_iter();
-                        }
-                        if res.listener_bus_listener_added.is_some() {
-                            return Ok(());
-                        }
-                    }
-                }
-                Ok(None) => {
-                    self.done = true;
-                    return Ok(());
-                }
-                Err(e) => {
-                    self.done = true;
-                    return Err(e);
-                }
-            }
-        }
+        block_on(self.events.wait_until_listener_added())
     }
 }
 
@@ -735,46 +675,7 @@ impl Iterator for ListenerEventStream {
     type Item = Result<(i32, String)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // First, yield any buffered events from the last response
-        if let Some(event) = self.buffered_events.next() {
-            return Some(Ok(event));
-        }
-
-        if self.done {
-            return None;
-        }
-
-        loop {
-            match block_on(self.stream.message()) {
-                Ok(Some(resp)) => {
-                    if let Some(
-                        proto::execute_plan_response::ResponseType::StreamingQueryListenerEventsResult(res),
-                    ) = resp.response_type
-                    {
-                        if !res.events.is_empty() {
-                            let mut events = vec![];
-                            for event in res.events {
-                                events.push((event.event_type, event.event_json));
-                            }
-                            self.buffered_events = events.into_iter();
-                            // Yield the first buffered event
-                            if let Some(event) = self.buffered_events.next() {
-                                return Some(Ok(event));
-                            }
-                        }
-                    }
-                    // Keep pulling for events if this response had none
-                }
-                Ok(None) => {
-                    self.done = true;
-                    return None;
-                }
-                Err(e) => {
-                    self.done = true;
-                    return Some(Err(e));
-                }
-            }
-        }
+        block_on(self.events.next())
     }
 }
 
@@ -989,15 +890,12 @@ impl StreamingQueryManager {
 
     /// Ask the server to remove the listener of the session, which ends its stream of events.
     fn remove_server_listener(&self) -> Result<()> {
-        let mut lb = proto::StreamingQueryListenerBusCommand::default();
-        lb.command = Some(
-            proto::streaming_query_listener_bus_command::Command::RemoveListenerBusListener(true),
-        );
-        crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::StreamingQueryListenerBusCommand(lb),
-        )
-        .map(|_| ())
+        block_on(actions::streaming::unsubscribe(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            self.session.tags(),
+            SessionObserver::start(&self.session)?,
+        ))
     }
 
     /// Wait for the dispatch thread to post the events left of its ended stream, unless this is
@@ -1171,27 +1069,12 @@ impl StreamingQueryManager {
     /// Stream listener events from the server incrementally (live).
     /// Returns a ListenerEventStream that yields events as they arrive.
     pub fn listener_event_stream(&self) -> Result<ListenerEventStream> {
-        let mut listener_bus_cmd = proto::StreamingQueryListenerBusCommand::default();
-        // Subscribe to receive events via the oneof command field
-        listener_bus_cmd.command = Some(
-            proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
-        );
-
-        let request = execution::execute_plan_request(
-            self.session.client().session_id(),
-            Vec::new(),
-            execution::command(
-                proto::command::CommandType::StreamingQueryListenerBusCommand(listener_bus_cmd),
-            ),
-        );
-
-        let response_stream = self.session.execute_plan(request)?;
-
-        Ok(ListenerEventStream {
-            stream: response_stream,
-            buffered_events: vec![].into_iter(),
-            done: false,
-        })
+        let events = block_on(actions::streaming::ListenerEvents::subscribe(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            SessionObserver::unrecorded(&self.session)?,
+        ))?;
+        Ok(ListenerEventStream { events })
     }
 
     /// Execute a streaming query manager command and return the parsed result.
@@ -1204,23 +1087,13 @@ impl StreamingQueryManager {
         &self,
         cmd: proto::StreamingQueryManagerCommand,
     ) -> Result<proto::StreamingQueryManagerCommandResult> {
-        let responses = crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::StreamingQueryManagerCommand(cmd),
-        )?;
-
-        for resp in responses {
-            if let Some(
-                proto::execute_plan_response::ResponseType::StreamingQueryManagerCommandResult(
-                    result,
-                ),
-            ) = resp.response_type
-            {
-                return Ok(result);
-            }
-        }
-
-        Ok(proto::StreamingQueryManagerCommandResult::default())
+        block_on(actions::streaming::manager_command(
+            Arc::clone(self.session.client()),
+            Arc::clone(self.session.plan_ids()),
+            self.session.tags(),
+            cmd,
+            SessionObserver::start(&self.session)?,
+        ))
     }
 }
 

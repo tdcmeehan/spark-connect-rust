@@ -483,7 +483,7 @@ impl SparkSession {
         // As pyspark, run the statement as a command now. The server executes a command and
         // returns a relation of its result; for a query it returns the query's relation, which
         // then runs at an action.
-        let (returned, _) = block_on(actions::session::sql(
+        let returned = block_on(actions::session::sql(
             Arc::clone(&self.client),
             Arc::clone(&self.plan_ids),
             self.tags(),

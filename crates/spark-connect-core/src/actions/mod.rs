@@ -7,6 +7,7 @@
 pub mod catalog;
 pub mod dataframe;
 pub mod session;
+pub mod streaming;
 
 use std::sync::Arc;
 
@@ -123,6 +124,22 @@ pub async fn execute_command(
         responses.push(response);
     }
     Ok((responses, execution.info))
+}
+
+/// Executes `command` to completion and returns the first of its responses that `pick` takes.
+pub(crate) async fn command_result<T>(
+    client: Arc<SparkConnectClient>,
+    plan_ids: Arc<PlanIds>,
+    tags: Vec<String>,
+    command: proto::command::CommandType,
+    observer: impl ExecutionObserver,
+    pick: impl FnMut(proto::execute_plan_response::ResponseType) -> Option<T>,
+) -> Result<Option<T>> {
+    let (responses, _) = execute_command(client, plan_ids, tags, command, observer).await?;
+    Ok(responses
+        .into_iter()
+        .filter_map(|response| response.response_type)
+        .find_map(pick))
 }
 
 /// The result of asking the server for `analyze`.
