@@ -3000,10 +3000,7 @@ mod cache_tests {
 
     #[test]
     fn schema_runs_inside_both_runtime_flavors_and_keeps_its_cache_usable() {
-        let spark = SparkSession::builder()
-            .remote("sc://localhost:15002")
-            .get_or_create()
-            .unwrap();
+        let spark = SparkSession::without_retries("sc://localhost:15002");
         let df = spark.range(3).unwrap();
         let cloned = df.clone();
         let runtimes = || {
