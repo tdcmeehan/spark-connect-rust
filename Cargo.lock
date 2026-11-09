@@ -74,6 +74,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "apache-spark-connect-blocking"
+version = "4.3.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "apache-spark-connect-build"
 version = "4.3.0"
 

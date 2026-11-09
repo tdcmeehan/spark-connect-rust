@@ -1,0 +1,19 @@
+[package]
+name = "apache-spark-connect-blocking"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Runs the async actions of the Spark Connect client to completion from synchronous code"
+
+[lib]
+name = "spark_connect_blocking"
+
+[dependencies]
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
