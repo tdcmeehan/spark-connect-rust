@@ -259,6 +259,24 @@ fn a_prefetching_iterator_can_be_dropped_before_its_end() {
 }
 
 #[test]
+fn an_iterator_dropped_in_a_current_thread_runtime_that_then_ends_is_released() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.sql(server::THREE_BATCHES).unwrap();
+    // That of the SQL command.
+    assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 0), 1);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut iterator = df.to_local_iterator(false).unwrap();
+        iterator.next().unwrap().unwrap();
+    });
+    drop(runtime);
+    assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 1), 2);
+}
+
+#[test]
 fn a_catalog_operation_and_a_write_run_inside_runtimes_of_either_flavor() {
     let spark = session();
     let df = spark.range(3).unwrap();

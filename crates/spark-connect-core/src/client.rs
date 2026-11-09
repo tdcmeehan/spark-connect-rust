@@ -1533,8 +1533,8 @@ pub struct ReattachableResponseStream {
     done: bool,
     /// Whether `ReleaseAll` was sent, after which nothing else is released.
     released: bool,
-    /// The runtime that started the execution, which sends its releases when the stream is
-    /// dropped outside of any runtime.
+    /// The runtime current when the stream was created, which sends its releases, also when
+    /// the stream is dropped outside of any runtime or in one that is not driven again.
     runtime: Option<tokio::runtime::Handle>,
 }
 
@@ -1578,8 +1578,9 @@ impl SparkConnectClient {
     /// Sends `request` in the background, so that reading is not delayed, retrying under the
     /// client's retry policy. Like the reference client, a failure is only logged: the server
     /// removes an execution that is never released once it has been detached for
-    /// `spark.connect.execute.manager.detachedTimeout`. It runs on the runtime of the caller's
-    /// context, else on `runtime`, if that one still runs; otherwise it is not sent.
+    /// `spark.connect.execute.manager.detachedTimeout`. It runs on `runtime` if given, else on the
+    /// runtime of the caller's context; it is not sent when there is neither, or when that
+    /// runtime has shut down.
     fn spawn_release(
         &self,
         metadata: MetadataMap,
@@ -1612,10 +1613,9 @@ impl SparkConnectClient {
                 }
             }
         };
-        // A stream is read inside a runtime, but it can be dropped outside of any, for
-        // example after the blocking call that read it.
         let current = tokio::runtime::Handle::try_current().ok();
-        match current.as_ref().or(runtime) {
+        // No runtime is given for an ExecutePlan that failed at once.
+        match runtime.or(current.as_ref()) {
             Some(handle) => drop(handle.spawn(release)),
             None => tracing::warn!("ReleaseExecute not sent: there is no runtime to send it"),
         }
