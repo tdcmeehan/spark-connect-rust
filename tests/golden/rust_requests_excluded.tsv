@@ -1,0 +1,144 @@
+# Public functions of the Rust API without a request-snapshot case of their name, and why.
+# `case: <name>` means the named case exercises the item; any other reason means it builds no request.
+*::<Debug>::fmt	formatting for debugging
+*::<Display>::fmt	formatting for display
+*::<Clone>::clone	handle copy
+*::<Hash>::hash	hashing
+*::<PartialEq>::eq	comparison
+*::<Default>::default	same as the type's new, whose case exercises it
+Column::<Add>::add	case: Column::<operators>
+Column::<Sub>::sub	case: Column::<operators>
+Column::<Mul>::mul	case: Column::<operators>
+Column::<Div>::div	case: Column::<operators>
+Column::<Rem>::rem	case: Column::<operators>
+Column::<BitAnd>::bitand	case: Column::<operators>
+Column::<BitOr>::bitor	case: Column::<operators>
+Column::<Not>::not	case: Column::<operators>
+Column::<From>::from	case: Column::<From>
+ArrowInputOptions::*	case: SparkSession::create_dataframe_from_arrow_with_options
+LocalRowIterator::*	case: DataFrame::to_local_iterator
+PythonDataSourcePayload::new	case: PythonDataSourcePayload::to_proto
+CommonInlineUserDefinedDataSourceExpression::*	case: PythonDataSourcePayload::to_proto
+PythonUDFPayload::new	case: PythonUDFPayload::to_proto
+CommonInlineUserDefinedFunctionExpression::new	case: CommonInlineUserDefinedFunctionExpression::to_proto
+Alias::*	case: ExpressionNode::Alias
+CallFunctionWrapper::*	case: ExpressionNode::CallFunction
+CaseWhen::*	case: ExpressionNode::CaseWhen
+Cast::*	case: ExpressionNode::Cast
+ColumnReference::*	case: ExpressionNode::ColumnReference
+Expression::new	case: Expression::node
+Expression::origin	case: Expression::node
+Expression::to_proto	case: Expression::function
+Expression::<From>::from	case: Expression::<From>
+ExpressionNode::<From>::from	case: Expression::<From>
+ExtractValue::*	case: ExpressionNode::UnresolvedExtractValue
+FrameBoundary::value	case: ExpressionNode::WindowExpression
+LambdaFunction::*	case: ExpressionNode::LambdaFunction
+UnresolvedNamedLambdaVariable::*	case: ExpressionNode::LambdaFunction
+LiteralExpression::*	case: Expression::literal
+NamedArgument::new	case: ExpressionNode::NamedArgument
+SortOrder::*	case: ExpressionNode::SortOrder
+UnresolvedFunction::*	case: ExpressionNode::UnresolvedFunction
+UpdateFieldsExpr::*	case: ExpressionNode::UpdateFields
+WindowExpressionWrapper::*	case: ExpressionNode::WindowExpression
+expression::window_spec_repr	case: ExpressionNode::WindowExpression
+expression::next_lambda_var_index	case: functions::higher_order/nested
+CoGroupedData::apply_in_pandas	case: GroupedData::cogroup
+MergeIntoWriter::when_*	case: MergeIntoWriter::merge
+MergeIntoWriter::with_schema_evolution	case: MergeIntoWriter::merge
+WhenMatched::*	case: MergeIntoWriter::merge
+WhenNotMatched::*	case: MergeIntoWriter::merge
+WhenNotMatchedBySource::*	case: MergeIntoWriter::merge
+BinaryClassificationEvaluator::*	case: BinaryClassificationEvaluator::evaluate
+CrossValidator::*	case: CrossValidator::fit
+CrossValidatorModel::*	case: CrossValidator::fit
+LogisticRegression::*	case: LogisticRegression::fit
+LinearSVC::*	case: LinearSVC::fit
+LinearSVCModel::*	case: LinearSVC::fit
+LinearRegression::*	case: LinearRegression::fit
+LinearRegressionModel::*	case: LinearRegression::fit
+LogisticRegressionModel::*	case: LogisticRegression::fit
+MaxAbsScaler::*	case: MaxAbsScaler::fit
+MaxAbsScalerModel::*	case: MaxAbsScaler::fit
+MlOperator::*	case: MlOperator::to_proto
+MulticlassClassificationEvaluator::*	case: MulticlassClassificationEvaluator::evaluate
+OperatorType::*	case: MlOperator::to_proto
+Params::*	case: Params::to_proto
+Pipeline::*	case: Pipeline::fit
+PipelineModel::*	case: Pipeline::fit
+RegressionEvaluator::*	case: RegressionEvaluator::evaluate
+StandardScaler::*	case: StandardScaler::fit
+StandardScalerModel::*	case: StandardScaler::fit
+StringIndexer::*	case: StringIndexer::fit
+StringIndexerModel::*	case: StringIndexer::fit
+VectorAssembler::*	case: VectorAssembler::transform
+*Model::<Model>::clone_box	boxed copy of a model
+Observation::*	case: Observation::get
+OriginGuard::<Drop>::drop	case: origin::set_current
+PipelineRunStream::next_response	case: pipelines::start_run
+DataFrameReader::*	case: DataFrameReader::format
+DataFrameWriter::bucket_by	case: DataFrameWriter::partition_by
+DataFrameWriter::sort_by	case: DataFrameWriter::partition_by
+DataFrameWriter::format	case: DataFrameWriter::save/path
+DataFrameWriter::option*	case: DataFrameWriter::save/path
+DataFrameWriterV2::*	case: DataFrameWriterV2::create
+SaveMode::from_str	case: SaveMode::to_proto
+ExecutorResourceRequests::*	case: SparkSession::build_resource_profile
+ResourceProfileBuilder::*	case: SparkSession::build_resource_profile
+TaskResourceRequests::*	case: SparkSession::build_resource_profile
+ResourceProfile::id	the id the server assigned, read from the profile
+Row::new	case: SparkSession::create_dataframe
+Row::*	accessors of a collected row
+StructValue::*	accessors of a collected struct value
+Value::*	accessors of a collected value
+Row::<From>::from	conversion between collected rows and struct values
+StructValue::<From>::from	conversion between collected rows and struct values
+SparkSession::builder	case: SparkSession::range
+SparkSession::copy_threadlocal_user_context_extensions	case: SparkSession::share_threadlocal_user_context_extensions
+SparkSession::host	the display host of the endpoint; sends nothing
+SparkSession::is_same_session	compares two sessions; sends nothing
+SparkSession::server_session_id	the observed server-side session id; sends nothing
+session::rows_to_arrow_batch	encodes rows into an Arrow batch locally; sends nothing
+AsOfJoinOptions::new	case: DataFrame::as_of_join
+SparkSessionBuilder::*	every case connects a session with them
+SparkSession::catalog	case: Catalog::list_tables
+SparkSession::conf	case: RuntimeConf::set
+SparkSession::read	case: DataFrameReader::load
+SparkSession::read_stream	case: DataStreamReader::load
+SparkSession::streams	case: StreamingQueryManager::active
+SparkSession::tvf	case: TableValuedFunction::range
+SparkSession::udf	case: UdfRegistration::register
+SparkSession::register_progress_handler	case: SparkSession::progress_handlers
+SparkSession::remove_progress_handler	case: SparkSession::progress_handlers
+SparkSession::clear_progress_handlers	case: SparkSession::progress_handlers
+SparkSession::get_tags	returns the tags held by the session
+SparkSession::is_stopped	returns whether stop was called
+SparkSession::last_execution_info	returns the metrics of the last execution
+SparkSession::profile	returns the observed metrics of the profiler
+SparkSession::session_id	case: SparkSession::new_session
+SparkSession::set_python_accumulator_handler	registers a local handler of the accumulator updates of responses; sends nothing
+session::decimal_str_to_unscaled	parses a decimal string into an integer
+DataStreamReader::*	case: DataStreamReader::load
+DataStreamWriter::*	case: DataStreamWriter::start
+ListenerEventStream::<Iterator>::next	case: StreamingQueryManager::listener_event_stream
+StreamingQuery::name	case: StreamingQuery::id
+StreamingQuery::run_id	case: StreamingQuery::id
+StreamingQueryManager::close	case: StreamingQueryManager::add_listener
+StreamingQueryManager::remove_listener	case: StreamingQueryManager::add_listener
+TableArg::<From>::from	case: TableArg::to_column
+TableArg::new	case: TableArg::to_column
+TableArg::order_by	case: TableArg::partition_by
+DataType::field_names	case: DataType::to_ddl
+DataType::names	case: DataType::to_ddl
+DataType::tree_string*	case: DataType::to_ddl
+DataType::from_json_str	case: DataType::from_json
+DataType::json_value	case: DataType::json
+DataType::need_conversion	case: DataType::simple_string
+DataType::type_name	case: DataType::simple_string
+StructField::*	case: StructField::simple_string
+AbiType::to_data_type	case: AbiType::descriptor
+PythonPacker::<Default>::default	runs the Python interpreter of the environment
+UserDefinedFunction::*	case: wasm_udf::udf
+Window::current_row	case: Window::rows_between
+Window::unbounded_*	case: Window::rows_between
+WindowSpec::<Default>::default	case: WindowSpec::new
