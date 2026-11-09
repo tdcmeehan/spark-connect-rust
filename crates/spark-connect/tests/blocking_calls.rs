@@ -176,8 +176,7 @@ fn last_operation_id(recorder: &server::Recorder) -> Option<String> {
     let entries = recorder.take();
     let last = entries
         .iter()
-        .filter(|entry| entry.kind == "ExecutePlanRequest")
-        .last()?;
+        .rfind(|entry| entry.kind == "ExecutePlanRequest")?;
     proto::ExecutePlanRequest::decode(&last.bytes[..])
         .unwrap()
         .operation_id
