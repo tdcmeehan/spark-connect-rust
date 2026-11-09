@@ -12,6 +12,7 @@ use crate::column::Column;
 use crate::dataframe::{build_input_relation, DataFrame};
 use crate::plan::LogicalPlan;
 use crate::session::SparkSession;
+pub use spark_connect_core::readwriter::ReadType;
 
 /// DataFrameReader for reading data from various sources.
 ///
@@ -211,25 +212,6 @@ impl DataFrameReader {
         };
         DataFrame::new(self.session, plan)
     }
-}
-
-/// ReadType variant for Read relation.
-#[derive(Debug, Clone)]
-pub enum ReadType {
-    /// DataSource read (file-based or other formats).
-    DataSource {
-        format: Option<String>,
-        schema: Option<String>,
-        options: HashMap<String, String>,
-        paths: Vec<String>,
-        predicates: Vec<String>,
-        source_name: Option<String>,
-    },
-    /// Named table read.
-    NamedTable {
-        table_name: String,
-        options: HashMap<String, String>,
-    },
 }
 
 /// SaveMode for write operations.

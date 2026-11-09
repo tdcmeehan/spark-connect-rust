@@ -29,6 +29,8 @@ regex = "1"
 prost-types.workspace = true
 crc32fast = "1"
 sha2 = "0.10"
+# Local time for the reprs of timestamp literals, as Python's `datetime.fromtimestamp`.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
 # sha2 0.10 requires this feature for ARM hardware acceleration; sha2-asm excludes Windows.

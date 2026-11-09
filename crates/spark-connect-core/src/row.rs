@@ -377,7 +377,8 @@ impl Row {
     }
 
     /// Create a Row with immutable field names shared by rows from the same batch.
-    pub(crate) fn with_shared_fields(fields: Arc<[String]>, values: Vec<Value>) -> Self {
+    #[doc(hidden)]
+    pub fn with_shared_fields(fields: Arc<[String]>, values: Vec<Value>) -> Self {
         assert_eq!(
             fields.len(),
             values.len(),

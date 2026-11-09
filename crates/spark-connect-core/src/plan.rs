@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
-use spark_connect_core::error::{Result, SparkError};
+use crate::error::{Result, SparkError};
 
 use crate::column::Column;
 use crate::expression::{Expression, ExpressionNode, LiteralExpression};
@@ -528,7 +528,8 @@ static NEXT_PLAN_ID: AtomicI64 = AtomicI64::new(1);
 /// which keeps the allocation, and so the key, from being reused while the entry exists.
 /// Entries of dropped nodes are pruned as the map grows.
 #[derive(Debug)]
-pub(crate) struct PlanIds {
+#[doc(hidden)]
+pub struct PlanIds {
     nodes: Mutex<PlanIdNodes>,
 }
 
@@ -542,7 +543,8 @@ struct PlanIdNodes {
 impl PlanIds {
     const MIN_PRUNE_AT: usize = 1024;
 
-    pub(crate) fn new() -> Self {
+    #[doc(hidden)]
+    pub fn new() -> Self {
         PlanIds {
             nodes: Mutex::new(PlanIdNodes {
                 ids: HashMap::new(),
@@ -552,7 +554,8 @@ impl PlanIds {
     }
 
     /// The plan ID of `node`, assigned the first time it is serialized.
-    pub(crate) fn id_of(&self, node: &Arc<LogicalPlan>) -> i64 {
+    #[doc(hidden)]
+    pub fn id_of(&self, node: &Arc<LogicalPlan>) -> i64 {
         self.id_of_key(node, Arc::as_ptr(node) as usize)
     }
 
@@ -582,7 +585,8 @@ impl PlanIds {
 
     /// Give `node` the plan ID `id`, of a relation that this session sent: so a DataFrame of the
     /// relation, such as one that was pickled, keeps the plan ID of the DataFrame it was of.
-    pub(crate) fn assign(&self, node: &Arc<LogicalPlan>, id: i64) {
+    #[doc(hidden)]
+    pub fn assign(&self, node: &Arc<LogicalPlan>, id: i64) {
         NEXT_PLAN_ID.fetch_max(id.saturating_add(1), Ordering::Relaxed);
         let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
         nodes
@@ -591,7 +595,8 @@ impl PlanIds {
     }
 
     /// The live node of the plan ID `id`, as the server reports a relation by its plan ID.
-    pub(crate) fn node_of(&self, id: i64) -> Option<Arc<LogicalPlan>> {
+    #[doc(hidden)]
+    pub fn node_of(&self, id: i64) -> Option<Arc<LogicalPlan>> {
         let nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
         nodes
             .ids
@@ -600,8 +605,9 @@ impl PlanIds {
             .and_then(|(node, _)| node.upgrade())
     }
 
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    #[doc(hidden)]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
         self.nodes.lock().unwrap().ids.len()
     }
 }
@@ -673,7 +679,8 @@ fn placeholder_target(marker: i64) -> Option<(Arc<LogicalPlan>, Arc<PlanIds>)> {
 
 /// The placeholder of the relation of `node`, a DataFrame of the session of `ids`, as the
 /// relation that the Python client sends in its place.
-pub(crate) fn placeholder_relation(node: &Arc<LogicalPlan>, ids: &Arc<PlanIds>) -> proto::Relation {
+#[doc(hidden)]
+pub fn placeholder_relation(node: &Arc<LogicalPlan>, ids: &Arc<PlanIds>) -> proto::Relation {
     let marker = placeholder_marker(node, ids);
     proto::Relation {
         common: None,
@@ -688,7 +695,8 @@ pub(crate) fn placeholder_relation(node: &Arc<LogicalPlan>, ids: &Arc<PlanIds>) 
 /// relations that the plans of `pyspark.ml` take as input (their `ml_relation`, `with_relations`
 /// and fetched arguments). Each replacement is the relation of a DataFrame of the core, which has
 /// no placeholder.
-pub(crate) fn resolve_relation(relation: &mut proto::Relation) -> Result<()> {
+#[doc(hidden)]
+pub fn resolve_relation(relation: &mut proto::Relation) -> Result<()> {
     if let Some(proto::relation::RelType::Extension(any)) = &relation.rel_type {
         if any.type_url == PLACEHOLDER_TYPE_URL {
             let marker = i64::from_le_bytes(
@@ -733,7 +741,8 @@ pub(crate) fn resolve_relation(relation: &mut proto::Relation) -> Result<()> {
 }
 
 /// Replace the placeholders of the relations of the ML command `command`, as `resolve_relation`.
-pub(crate) fn resolve_command(command: &mut proto::Command) -> Result<()> {
+#[doc(hidden)]
+pub fn resolve_command(command: &mut proto::Command) -> Result<()> {
     let Some(proto::command::CommandType::MlCommand(ml)) = command.command_type.as_mut() else {
         return Ok(());
     };
@@ -777,7 +786,8 @@ pub fn resolve_request(request: &mut proto::ExecutePlanRequest) -> Result<()> {
 
 /// Serialize a shared plan node for a request: the node and every node below it carry
 /// their stable plan IDs.
-pub(crate) fn relation_with_ids(node: &Arc<LogicalPlan>, ids: &PlanIds) -> proto::Relation {
+#[doc(hidden)]
+pub fn relation_with_ids(node: &Arc<LogicalPlan>, ids: &PlanIds) -> proto::Relation {
     relation_of(node, Some(ids))
 }
 
@@ -1899,7 +1909,8 @@ impl LogicalPlan {
 /// The `CommonInlineUserDefinedTableFunction` of a Python UDTF: of a call with `arguments`,
 /// or of its registration without any. Mirrors PySpark's `CommonInlineUserDefinedTableFunction`
 /// of a `PythonUDTF`.
-pub(crate) fn common_inline_udtf(
+#[doc(hidden)]
+pub fn common_inline_udtf(
     function_name: &str,
     deterministic: bool,
     arguments: &[Expression],
@@ -2246,7 +2257,8 @@ pub fn hint(
 
 /// The literal of a hint parameter given as a string: an Integer for an integer-looking one,
 /// otherwise the String.
-pub(crate) fn hint_parameter(parameter: &str) -> Expression {
+#[doc(hidden)]
+pub fn hint_parameter(parameter: &str) -> Expression {
     Expression::literal(match parameter.parse::<i32>() {
         Ok(n) => LiteralExpression::int(n),
         Err(_) => LiteralExpression::string(parameter),
@@ -2325,7 +2337,8 @@ fn value_to_proto_literal(v: &crate::row::Value) -> proto::expression::Literal {
 
 /// The literal of a replacement given as a string: a double for a numeric-looking string,
 /// otherwise the string (used by the NAReplace of strings).
-pub(crate) fn numeric_or_string_literal(s: &str) -> LiteralExpression {
+#[doc(hidden)]
+pub fn numeric_or_string_literal(s: &str) -> LiteralExpression {
     match s.parse::<f64>() {
         Ok(v) => LiteralExpression::double(v),
         Err(_) => LiteralExpression::string(s),

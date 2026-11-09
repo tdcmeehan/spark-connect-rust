@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generator for dispatch and Python wrappers for all 440 Spark SQL functions.
-Parses crates/spark-connect/src/functions.rs and generates optimized code.
+Parses crates/spark-connect-core/src/functions.rs and generates optimized code.
 """
 
 import argparse
@@ -45,7 +45,7 @@ if _args.pyspark_src:
     import pyspark.sql.functions as _ref_functions  # noqa: E402
 
 # Read the spark-connect functions file
-functions_rs = Path("crates/spark-connect/src/functions.rs").read_text()
+functions_rs = Path("crates/spark-connect-core/src/functions.rs").read_text()
 
 # Extract all function definitions with their full signatures
 # Pattern: pub fn name(params) -> Column {
@@ -110,10 +110,10 @@ skip_functions = {
     "cast",
     "column",
     # Non-standard signatures:
-    #   broadcast(DataFrame) -> DataFrame  (a join hint, not a column function)
     #   variant_delete(Column, Vec<Column>) -> Column  (variadic paths)
-    "broadcast",
     "variant_delete",
+    # cume_dist() -> Column: called through pyfunc_invoke_function, not the dispatch.
+    "cume_dist",
     # variant_strip_nulls(Column, bool) -> Column: bool arg, dedicated pyfunc binding
     # (the generic Vec<Column> dispatch would drop the trailing scalar).
     "variant_strip_nulls",

@@ -17,35 +17,42 @@
 
 mod arrow_input;
 pub mod catalog;
-pub mod column;
 pub mod conf;
 pub mod dataframe;
 pub mod datasource;
-pub mod expression;
-pub mod functions;
 pub mod group;
 pub mod merge;
 pub mod ml;
-pub mod observation;
-pub mod origin;
 pub mod pipelines;
-pub mod plan;
 pub mod profiler;
 pub mod progress;
 pub mod readwriter;
 pub mod resource;
-pub mod row;
 pub mod session;
 pub mod storage;
 pub mod streaming;
 pub mod table_arg;
 pub mod tvf;
-pub mod types;
-pub mod udf;
 /// Run Rust UDFs on Spark via WebAssembly. Requires the `wasm-udf` feature.
 #[cfg(feature = "wasm-udf")]
 pub mod wasm_udf;
-pub mod window;
+
+pub use spark_connect_core::{
+    column, expression, observation, origin, plan, row, types, udf, window,
+};
+
+/// SQL functions that build [`Column`]s.
+pub mod functions {
+    pub use spark_connect_core::functions::*;
+
+    use crate::dataframe::DataFrame;
+
+    /// Mirrors `pyspark.sql.functions.broadcast`.
+    /// Marks a DataFrame as eligible for broadcast join (smaller table in a join).
+    pub fn broadcast(df: DataFrame) -> DataFrame {
+        df.broadcast()
+    }
+}
 
 // Re-export commonly used types
 #[doc(hidden)]

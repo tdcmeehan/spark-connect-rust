@@ -3159,6 +3159,15 @@ impl<'a> ArrowValueLayout<'a> {
     }
 }
 
+impl crate::expression::AsSubquery for DataFrame {
+    fn as_subquery(
+        &self,
+        subquery_type: crate::expression::SubqueryType,
+    ) -> crate::expression::SubqueryExpression {
+        self.subquery(subquery_type)
+    }
+}
+
 #[cfg(test)]
 fn arrow_value_at(array: &dyn arrow::array::Array, index: usize) -> Result<Value> {
     ArrowValueLayout::new(array).value_at(index)
@@ -5769,6 +5778,27 @@ mod subquery_tests {
 
     fn plan_id(relation: &proto::Relation) -> Option<i64> {
         relation.common.as_ref().and_then(|common| common.plan_id)
+    }
+
+    #[test]
+    fn isin_subquery_takes_a_dataframe_behind_references_and_pointers() {
+        let df = session().range(3).unwrap();
+        let expected = col("id").isin_subquery(&df).to_proto();
+        assert_eq!(col("id").isin_subquery(&&df).to_proto(), expected);
+        assert_eq!(
+            col("id").isin_subquery(&Box::new(df.clone())).to_proto(),
+            expected
+        );
+        assert_eq!(
+            col("id")
+                .isin_subquery(&std::rc::Rc::new(df.clone()))
+                .to_proto(),
+            expected
+        );
+        assert_eq!(
+            col("id").isin_subquery(&Arc::new(df.clone())).to_proto(),
+            expected
+        );
     }
 
     /// The root and the references of a `WithRelations`.
