@@ -104,3 +104,48 @@ fn a_hook_can_run_a_blocking_call_of_its_own() {
     spark.sql("SELECT 1").unwrap();
     assert_eq!(*nested.lock().unwrap(), vec![Ok(None)]);
 }
+
+#[test]
+fn the_actions_of_a_dataframe_run_inside_runtimes_of_either_flavor() {
+    let spark = session();
+    let df = spark.range(3).unwrap();
+    for runtime in runtimes() {
+        runtime.block_on(async {
+            df.collect().unwrap();
+            df.schema().unwrap();
+            for prefetch in [false, true] {
+                for row in df.to_local_iterator(prefetch).unwrap() {
+                    row.unwrap();
+                }
+            }
+        });
+    }
+}
+
+#[test]
+fn the_hook_of_a_dataframe_action_runs_on_the_calling_thread() {
+    let spark = session();
+    let threads = Arc::new(Mutex::new(Vec::new()));
+    spark.set_execute_plan_hook(Some(thread_hook(&threads)));
+    let df = spark.range(3).unwrap();
+    df.collect().unwrap();
+    for row in df.to_local_iterator(false).unwrap() {
+        row.unwrap();
+    }
+    let caller = thread::current().id();
+    assert_eq!(*threads.lock().unwrap(), vec![caller, caller]);
+}
+
+#[test]
+fn a_prefetching_iterator_can_be_dropped_before_its_end() {
+    let spark = session();
+    let df = spark.range(3).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let iterator = df.to_local_iterator(true).unwrap();
+        drop(iterator);
+        df.collect().unwrap();
+    });
+}

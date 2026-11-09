@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::client::ReattachableResponseStream;
-use spark_connect_core::error::Result;
+use spark_connect_core::error::{Result, SparkError};
 use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
 use spark_connect_proto as proto;
 
-use crate::dataframe::ExecutionSlot;
+use crate::dataframe::{DataFrame, ExecutionSlot};
 use crate::profiler::PythonAccumulators;
 use crate::session::{ExecutionInfo, ProgressHandler, ProgressHandlers, SparkSession};
 
@@ -143,6 +143,10 @@ pub(crate) struct SessionObserver {
     accumulators: PythonAccumulators,
     last_execution: ExecutionSlot,
     progress: Option<ProgressTracker>,
+    /// The slot of the DataFrame whose execution this is, which records it as its own too.
+    dataframe_execution: Option<ExecutionSlot>,
+    /// Whether an execution that fails is recorded, as the local iterator records it.
+    record_failure: bool,
 }
 
 impl SessionObserver {
@@ -155,6 +159,25 @@ impl SessionObserver {
             accumulators: session.python_accumulators().clone(),
             last_execution: session.last_execution_slot(),
             progress: None,
+            dataframe_execution: None,
+            record_failure: false,
+        })
+    }
+
+    /// As [`SessionObserver::start`], for an execution of `dataframe`.
+    pub(crate) fn for_dataframe(dataframe: &DataFrame) -> Result<Self> {
+        Ok(SessionObserver {
+            dataframe_execution: Some(dataframe.execution_slot()),
+            ..SessionObserver::start(&dataframe.session)?
+        })
+    }
+
+    /// As [`SessionObserver::start`], for an execution that the local iterator reads, which
+    /// records the execution also when it fails.
+    pub(crate) fn for_iterator(session: &SparkSession) -> Result<Self> {
+        Ok(SessionObserver {
+            record_failure: true,
+            ..SessionObserver::start(session)?
         })
     }
 }
@@ -179,7 +202,16 @@ impl ExecutionObserver for SessionObserver {
     }
 
     fn on_complete(&mut self, info: &ExecutionInfo) {
+        if let Some(dataframe_execution) = &self.dataframe_execution {
+            *dataframe_execution.lock().unwrap() = Some(info.clone());
+        }
         *self.last_execution.lock().unwrap() = Some(info.clone());
+    }
+
+    fn on_failure(&mut self, info: &ExecutionInfo, _error: &SparkError) {
+        if self.record_failure {
+            *self.last_execution.lock().unwrap() = Some(info.clone());
+        }
     }
 }
 
