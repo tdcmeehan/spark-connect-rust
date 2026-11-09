@@ -73,7 +73,9 @@ chooses the operation id of an execution before it sends it. The synchronous API
 `spark-connect-blocking`, whose `Blocking` polls the future on the calling thread
 with a process-wide multi-thread runtime entered: the callbacks of an execution
 (progress handlers, hooks, nested queries) run on the caller's thread, also when
-it is inside a runtime of either flavor. `pyspark-rs` blocks through the same
+it is inside a runtime of either flavor, except those of the prefetching
+iterator's read and of the delete of a dropped ML model, which run on a thread of
+that runtime. `pyspark-rs` blocks through the same
 instance at the FFI boundary, releasing the GIL around each call (`py.detach`).
 Server-streaming RPCs (`ExecutePlan`) are consumed into Arrow record batches.
 
