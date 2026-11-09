@@ -196,3 +196,109 @@ pub(crate) async fn analyze<T>(
         )))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_static<T: Send + 'static>(_: T) {}
+
+    #[test]
+    fn the_futures_of_the_actions_are_send_and_static() {
+        // Type-checked, never called: it would need a connected client.
+        let _ = |client: Arc<SparkConnectClient>, plan_ids: Arc<PlanIds>| {
+            let client = || Arc::clone(&client);
+            let plan_ids = || Arc::clone(&plan_ids);
+            let command = || proto::command::CommandType::SqlCommand(Default::default());
+            let relation = proto::Relation::default;
+            assert_send_static(Responses::start(client(), Default::default(), ()));
+            assert_send_static(Execution::start(
+                client(),
+                plan_ids(),
+                Default::default(),
+                (),
+            ));
+            assert_send_static(execute_command(client(), plan_ids(), vec![], command(), ()));
+            assert_send_static(session::spark_version(client()));
+            assert_send_static(session::parse_ddl(client(), String::new()));
+            assert_send_static(session::json_to_ddl(client(), String::new()));
+            assert_send_static(session::sql(client(), plan_ids(), vec![], relation(), ()));
+            assert_send_static(session::create_resource_profile(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(dataframe::collect_rows(
+                client(),
+                plan_ids(),
+                Default::default(),
+                (),
+            ));
+            assert_send_static(dataframe::collect_record_batches(
+                client(),
+                plan_ids(),
+                Default::default(),
+                (),
+            ));
+            assert_send_static(dataframe::schema(client(), relation()));
+            assert_send_static(dataframe::explain(client(), relation(), Default::default()));
+            assert_send_static(dataframe::input_files(client(), relation()));
+            assert_send_static(dataframe::storage_level(client(), relation()));
+            assert_send_static(dataframe::semantic_hash(client(), relation()));
+            assert_send_static(dataframe::same_semantics(client(), relation(), relation()));
+            assert_send_static(dataframe::is_streaming(client(), relation()));
+            assert_send_static(dataframe::persist(client(), relation(), Default::default()));
+            assert_send_static(dataframe::unpersist(client(), relation(), false));
+            assert_send_static(catalog::rows(client(), plan_ids(), Default::default(), ()));
+            assert_send_static(streaming::start(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(streaming::query_command(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(streaming::manager_command(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(streaming::unsubscribe(client(), plan_ids(), vec![], ()));
+            assert_send_static(streaming::ListenerEvents::subscribe(
+                client(),
+                plan_ids(),
+                (),
+            ));
+            assert_send_static(ml::fit(
+                client(),
+                plan_ids(),
+                vec![],
+                command(),
+                String::new(),
+                (),
+            ));
+            assert_send_static(ml::evaluate(client(), plan_ids(), vec![], command(), ()));
+            assert_send_static(ml::delete(client(), vec![]));
+            assert_send_static(pipelines::create_dataflow_graph(
+                client(),
+                plan_ids(),
+                vec![],
+                None,
+                None,
+                Default::default(),
+                (),
+            ));
+            assert_send_static(pipelines::start_run(client(), vec![], command(), ()));
+        };
+    }
+}
