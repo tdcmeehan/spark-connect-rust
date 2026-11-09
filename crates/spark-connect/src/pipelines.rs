@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use spark_connect_core::error::{Result, SparkError};
+use spark_connect_core::execution;
 use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
@@ -266,15 +267,11 @@ pub fn start_run(
         dry: Some(dry),
         storage,
     };
-    let mut command = proto::Command::default();
-    command.command_type = Some(wrap(pipeline_command::CommandType::StartRun(inner)));
-    let mut plan = proto::Plan::default();
-    plan.op_type = Some(proto::plan::OpType::Command(command));
-    let mut request = proto::ExecutePlanRequest::default();
-    request.session_id = session.client().session_id().to_string();
-    request.user_context = Some(proto::UserContext::default());
-    request.tags = session.tags();
-    request.plan = Some(plan);
+    let request = execution::execute_plan_request(
+        session.client().session_id(),
+        session.tags(),
+        execution::command(wrap(pipeline_command::CommandType::StartRun(inner))),
+    );
     Ok(PipelineRunStream {
         session: session.clone(),
         request: Some(request),
