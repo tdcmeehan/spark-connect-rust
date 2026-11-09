@@ -4,7 +4,9 @@
 //! of the futures it runs. [`Blocking::block_on`] polls the future on the calling thread, inside
 //! the runtime's context, and parks the thread between polls:
 //!
-//! - it never panics, outside any runtime or inside one of either flavor;
+//! - it never panics, outside any runtime or inside one of either flavor, except on a
+//!   current-thread runtime's thread that has entered a multi-thread runtime's handle, which
+//!   tokio cannot tell apart from a thread of that runtime;
 //! - the code a future runs, callbacks included, runs on the calling thread, so it sees that
 //!   thread's thread-locals, and may call `block_on` again; the tasks spawned on
 //!   [`Blocking::handle`] run on the runtime's threads, and may call it there too;
@@ -212,6 +214,18 @@ mod tests {
         // Also when the caller is the thread of a current-thread runtime.
         let runtime = Builder::new_current_thread().build().unwrap();
         assert_eq!(runtime.block_on(async { run() }), 3);
+    }
+
+    #[test]
+    fn the_outermost_call_resets_the_nesting_flag_also_when_its_future_panics() {
+        let blocking = Blocking::new().unwrap();
+        blocking.block_on(after_a_timer(()));
+        assert!(!POLLING.with(Cell::get));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            blocking.block_on(async { panic!("the future panics") })
+        }));
+        assert!(panicked.is_err());
+        assert!(!POLLING.with(Cell::get));
     }
 
     #[test]
