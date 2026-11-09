@@ -26,6 +26,7 @@ mod server;
 
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
+use std::time::Duration;
 
 use prost::Message;
 use spark_connect::ml::{Estimator, Evaluator, LogisticRegression, RegressionEvaluator};
@@ -170,16 +171,90 @@ fn the_hook_of_a_dataframe_action_runs_on_the_calling_thread() {
     assert_eq!(*threads.lock().unwrap(), vec![caller, caller]);
 }
 
+/// The operation id of the last execution of a plan that the server received.
+fn last_operation_id(recorder: &server::Recorder) -> Option<String> {
+    let entries = recorder.take();
+    let last = entries
+        .iter()
+        .filter(|entry| entry.kind == "ExecutePlanRequest")
+        .last()?;
+    proto::ExecutePlanRequest::decode(&last.bytes[..])
+        .unwrap()
+        .operation_id
+}
+
+#[test]
+fn a_prefetching_iterator_returns_the_failure_of_its_execution_and_records_it() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.sql(server::A_BATCH_THEN_A_FAILURE).unwrap();
+    let rows: Vec<_> = df.to_local_iterator(true).unwrap().collect();
+    assert!(matches!(rows.as_slice(), [Ok(_), Err(_)]), "{rows:?}");
+    let info = spark.last_execution_info().unwrap();
+    assert_eq!(info.operation_id, last_operation_id(&recorder));
+}
+
+#[test]
+fn prefetched_rows_carry_the_schema_with_their_first_batch_only() {
+    use spark_connect::blocking::{block_on, shared};
+    use spark_connect_core::actions::Execution;
+    use spark_connect_core::channel::ChannelBuilder;
+    use spark_connect_core::client::SparkConnectClient;
+    use spark_connect_core::plan::PlanIds;
+
+    let address = server::start(Arc::new(server::Recorder::default()));
+    let builder = ChannelBuilder::parse(&format!("sc://{address}")).unwrap();
+    let client = Arc::new(block_on(SparkConnectClient::connect(&builder)).unwrap());
+    let query = proto::Relation {
+        rel_type: Some(proto::relation::RelType::Sql(proto::Sql {
+            query: server::THREE_BATCHES.to_string(),
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let request = proto::ExecutePlanRequest {
+        session_id: client.session_id().to_string(),
+        plan: Some(proto::Plan {
+            op_type: Some(proto::plan::OpType::Root(query)),
+        }),
+        ..Default::default()
+    };
+    let execution = block_on(Execution::start(
+        client,
+        Arc::new(PlanIds::new()),
+        request,
+        (),
+    ));
+    let mut rows = execution.unwrap().prefetch(shared().handle());
+    let with_schema = block_on(async {
+        let mut with_schema = Vec::new();
+        while let Some(batch) = rows.next().await {
+            with_schema.push(batch.unwrap().0.is_some());
+        }
+        with_schema
+    });
+    assert_eq!(with_schema, [true, false, false]);
+}
+
 #[test]
 fn a_prefetching_iterator_can_be_dropped_before_its_end() {
-    let spark = session();
-    let df = spark.range(3).unwrap();
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.sql(server::THREE_BATCHES).unwrap();
+    // That of the SQL command.
+    assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 0), 1);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     runtime.block_on(async {
-        let iterator = df.to_local_iterator(true).unwrap();
+        let mut iterator = df.to_local_iterator(true).unwrap();
+        iterator.next().unwrap().unwrap();
         drop(iterator);
+        // The read ends with the release of the execution, once it has recorded it.
+        assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 1), 2);
+        let info = spark.last_execution_info().unwrap();
+        assert_eq!(info.operation_id, last_operation_id(&recorder));
+        assert_eq!(recorder.wait_for_releases(Duration::from_millis(200), 2), 2);
         df.collect().unwrap();
     });
 }

@@ -47,6 +47,8 @@ pub struct Entry {
 pub struct Recorder {
     entries: Mutex<Vec<Entry>>,
     pushed: Condvar,
+    /// The `ReleaseAll` requests, which are not entries: they are sent in the background.
+    released_all: Mutex<usize>,
 }
 
 impl Recorder {
@@ -71,7 +73,29 @@ impl Recorder {
     pub fn take(&self) -> Vec<Entry> {
         std::mem::take(&mut self.entries.lock().unwrap())
     }
+
+    /// Waits up to `timeout` for more than `count` `ReleaseAll` requests, and returns how many
+    /// came.
+    #[allow(dead_code)]
+    pub fn wait_for_releases(&self, timeout: std::time::Duration, count: usize) -> usize {
+        let released = self.released_all.lock().unwrap();
+        let (released, _) = self
+            .pushed
+            .wait_timeout_while(released, timeout, |released| *released <= count)
+            .unwrap();
+        *released
+    }
+
+    fn release_all(&self) {
+        *self.released_all.lock().unwrap() += 1;
+        self.pushed.notify_all();
+    }
 }
+
+/// A query whose result the server sends in three Arrow batches, after the schema.
+pub const THREE_BATCHES: &str = "SELECT id FROM three_batches";
+/// A query whose execution fails after the schema and one Arrow batch.
+pub const A_BATCH_THEN_A_FAILURE: &str = "SELECT id FROM a_batch_then_a_failure";
 
 /// Starts the server on its own runtime thread, as the client under test blocks on the
 /// shared runtime of the crate, and returns its address.
@@ -192,6 +216,11 @@ impl UnaryService<Vec<u8>> for Rpc {
             "ReleaseExecute" => {
                 self.record("ReleaseExecuteRequest", &bytes);
                 let request = proto::ReleaseExecuteRequest::decode(&bytes[..]).unwrap();
+                if let Some(proto::release_execute_request::Release::ReleaseAll(_)) =
+                    request.release
+                {
+                    self.recorder.release_all();
+                }
                 Ok(proto::ReleaseExecuteResponse {
                     session_id: request.session_id,
                     operation_id: Some(request.operation_id),
@@ -244,13 +273,17 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
             self.record("ReattachExecuteRequest", &bytes);
             let request = proto::ReattachExecuteRequest::decode(&bytes[..]).unwrap();
             complete(&request.session_id, &request.operation_id, Vec::new())
+                .into_iter()
+                .map(Ok)
+                .collect()
         } else {
             self.record("ExecutePlanRequest", &bytes);
             execute(proto::ExecutePlanRequest::decode(&bytes[..]).unwrap())
         };
-        let stream: ByteStream = Box::pin(stream::iter(
-            responses.into_iter().map(|r| Ok(r.encode_to_vec())),
-        ));
+        let stream: ByteStream =
+            Box::pin(stream::iter(responses.into_iter().map(|response| {
+                response.map(|response| response.encode_to_vec())
+            })));
         Box::pin(async move { Ok(Response::new(stream)) })
     }
 }
@@ -439,15 +472,72 @@ fn complete(
         .collect()
 }
 
-fn execute(request: proto::ExecutePlanRequest) -> Vec<proto::ExecutePlanResponse> {
+fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
     use proto::plan::OpType;
     let operation_id = request.operation_id.clone().unwrap_or_default();
     let results = match request.plan.and_then(|plan| plan.op_type) {
-        Some(OpType::Root(relation)) => relation_results(&relation),
+        Some(OpType::Root(relation)) => match sql_query(&relation) {
+            Some(THREE_BATCHES) => return batches(&request.session_id, &operation_id, 3, None),
+            Some(A_BATCH_THEN_A_FAILURE) => {
+                let failure = Status::invalid_argument("the execution failed");
+                return batches(&request.session_id, &operation_id, 1, Some(failure));
+            }
+            _ => relation_results(&relation),
+        },
         Some(OpType::Command(command)) => command_results(command),
         _ => Vec::new(),
     };
     complete(&request.session_id, &operation_id, results)
+        .into_iter()
+        .map(Ok)
+        .collect()
+}
+
+fn sql_query(relation: &proto::Relation) -> Option<&str> {
+    match &relation.rel_type {
+        Some(proto::relation::RelType::Sql(sql)) => Some(&sql.query),
+        _ => None,
+    }
+}
+
+/// `count` batches of one `id` each, the first with the schema, then `failure` or the end of
+/// the result.
+fn batches(
+    session_id: &str,
+    operation_id: &str,
+    count: i64,
+    failure: Option<Status>,
+) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
+    let mut responses = complete(
+        session_id,
+        operation_id,
+        (0..count)
+            .map(|id| arrow_batch(long_batch("id", id)))
+            .collect(),
+    );
+    use proto::data_type::{Kind, Struct, StructField};
+    let id = StructField {
+        name: "id".to_string(),
+        data_type: Some(proto::DataType {
+            kind: Some(Kind::Long(Default::default())),
+        }),
+        nullable: true,
+        metadata: None,
+    };
+    responses[0].schema = Some(proto::DataType {
+        kind: Some(Kind::Struct(Struct {
+            fields: vec![id],
+            type_variation_reference: 0,
+        })),
+    });
+    if failure.is_some() {
+        responses.pop();
+    }
+    responses
+        .into_iter()
+        .map(Ok)
+        .chain(failure.map(Err))
+        .collect()
 }
 
 fn relation_results(relation: &proto::Relation) -> Vec<proto::execute_plan_response::ResponseType> {
