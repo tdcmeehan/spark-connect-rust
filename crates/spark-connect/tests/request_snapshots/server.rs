@@ -49,6 +49,7 @@ pub struct Recorder {
     pushed: Condvar,
     /// The `ReleaseAll` requests, which are not entries: they are sent in the background.
     released_all: Mutex<usize>,
+    released: Condvar,
 }
 
 impl Recorder {
@@ -80,7 +81,7 @@ impl Recorder {
     pub fn wait_for_releases(&self, timeout: std::time::Duration, count: usize) -> usize {
         let released = self.released_all.lock().unwrap();
         let (released, _) = self
-            .pushed
+            .released
             .wait_timeout_while(released, timeout, |released| *released <= count)
             .unwrap();
         *released
@@ -88,7 +89,7 @@ impl Recorder {
 
     fn release_all(&self) {
         *self.released_all.lock().unwrap() += 1;
-        self.pushed.notify_all();
+        self.released.notify_all();
     }
 }
 
