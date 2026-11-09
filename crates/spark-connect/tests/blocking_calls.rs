@@ -26,12 +26,21 @@ mod server;
 
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
+use std::time::Duration;
 
+use prost::Message;
+use spark_connect::ml::{Estimator, Evaluator, LogisticRegression, RegressionEvaluator};
+use spark_connect::pipelines;
 use spark_connect::session::SparkSession;
 use spark_connect::ExecutePlanHook;
+use spark_connect_proto as proto;
 
 fn session() -> SparkSession {
-    let address = server::start(Arc::new(server::Recorder::default()));
+    session_recording(Arc::new(server::Recorder::default()))
+}
+
+fn session_recording(recorder: Arc<server::Recorder>) -> SparkSession {
+    let address = server::start(recorder);
     SparkSession::builder()
         .remote(&format!(
             "sc://{address}/;session_id=00000000-0000-4000-8000-00000000005e"
@@ -74,7 +83,7 @@ fn a_command_runs_inside_runtimes_of_either_flavor() {
 }
 
 #[test]
-fn the_hook_of_a_command_runs_on_the_calling_thread() {
+fn the_hook_of_a_command_or_a_pipeline_run_runs_on_the_calling_thread() {
     let spark = session();
     let threads = Arc::new(Mutex::new(Vec::new()));
     spark.set_execute_plan_hook(Some(thread_hook(&threads)));
@@ -84,8 +93,16 @@ fn the_hook_of_a_command_runs_on_the_calling_thread() {
         .build()
         .unwrap();
     runtime.block_on(async { spark.sql("SELECT 2") }).unwrap();
+    run_pipeline(&spark);
     let caller = thread::current().id();
-    assert_eq!(*threads.lock().unwrap(), vec![caller, caller]);
+    assert_eq!(*threads.lock().unwrap(), vec![caller; 3]);
+}
+
+/// Starts a run of a pipeline and reads its responses to the end.
+fn run_pipeline(spark: &SparkSession) {
+    let mut run =
+        pipelines::start_run(spark, "graph-id", vec![], true, vec![], false, None).unwrap();
+    while run.next_response().unwrap().is_some() {}
 }
 
 #[test]
@@ -136,16 +153,89 @@ fn the_hook_of_a_dataframe_action_runs_on_the_calling_thread() {
     assert_eq!(*threads.lock().unwrap(), vec![caller, caller]);
 }
 
+/// The operation id of the last execution of a plan that the server received.
+fn last_operation_id(recorder: &server::Recorder) -> Option<String> {
+    let entries = recorder.take();
+    let last = entries
+        .iter()
+        .rfind(|entry| entry.kind == "ExecutePlanRequest")?;
+    proto::ExecutePlanRequest::decode(&last.bytes[..])
+        .unwrap()
+        .operation_id
+}
+
+#[test]
+fn a_prefetching_iterator_returns_the_failure_of_its_execution_and_records_it() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.sql(server::A_BATCH_THEN_A_FAILURE).unwrap();
+    let rows: Vec<_> = df.to_local_iterator(true).unwrap().collect();
+    assert!(matches!(rows.as_slice(), [Ok(_), Err(_)]), "{rows:?}");
+    let info = spark.last_execution_info().unwrap();
+    assert_eq!(info.operation_id, last_operation_id(&recorder));
+}
+
+#[test]
+fn prefetched_rows_carry_the_schema_with_their_first_batch_only() {
+    use spark_connect::blocking::{block_on, shared};
+    use spark_connect_core::actions::Execution;
+    use spark_connect_core::channel::ChannelBuilder;
+    use spark_connect_core::client::SparkConnectClient;
+    use spark_connect_core::plan::PlanIds;
+
+    let address = server::start(Arc::new(server::Recorder::default()));
+    let builder = ChannelBuilder::parse(&format!("sc://{address}")).unwrap();
+    let client = Arc::new(block_on(SparkConnectClient::connect(&builder)).unwrap());
+    let query = proto::Relation {
+        rel_type: Some(proto::relation::RelType::Sql(proto::Sql {
+            query: server::THREE_BATCHES.to_string(),
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let request = proto::ExecutePlanRequest {
+        session_id: client.session_id().to_string(),
+        plan: Some(proto::Plan {
+            op_type: Some(proto::plan::OpType::Root(query)),
+        }),
+        ..Default::default()
+    };
+    let execution = block_on(Execution::start(
+        client,
+        Arc::new(PlanIds::new()),
+        request,
+        (),
+    ));
+    let mut rows = execution.unwrap().prefetch(shared().handle());
+    let with_schema = block_on(async {
+        let mut with_schema = Vec::new();
+        while let Some(batch) = rows.next().await {
+            with_schema.push(batch.unwrap().0.is_some());
+        }
+        with_schema
+    });
+    assert_eq!(with_schema, [true, false, false]);
+}
+
 #[test]
 fn a_prefetching_iterator_can_be_dropped_before_its_end() {
-    let spark = session();
-    let df = spark.range(3).unwrap();
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.sql(server::THREE_BATCHES).unwrap();
+    // That of the SQL command.
+    assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 0), 1);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     runtime.block_on(async {
-        let iterator = df.to_local_iterator(true).unwrap();
+        let mut iterator = df.to_local_iterator(true).unwrap();
+        iterator.next().unwrap().unwrap();
         drop(iterator);
+        // The read ends with the release of the execution, once it has recorded it.
+        assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 1), 2);
+        let info = spark.last_execution_info().unwrap();
+        assert_eq!(info.operation_id, last_operation_id(&recorder));
+        assert_eq!(recorder.wait_for_releases(Duration::from_millis(200), 2), 2);
         df.collect().unwrap();
     });
 }
@@ -195,4 +285,46 @@ fn streaming_runs_inside_runtimes_of_either_flavor() {
             spark.streams().remove_listener(&id).unwrap();
         });
     }
+}
+
+#[test]
+fn ml_and_pipelines_run_inside_runtimes_of_either_flavor() {
+    let spark = session();
+    let df = spark.range(3).unwrap();
+    for runtime in runtimes() {
+        runtime.block_on(async {
+            LogisticRegression::default().fit(&df).unwrap();
+            RegressionEvaluator::new().evaluate(&df).unwrap();
+            pipelines::create_dataflow_graph(&spark, None, None, Default::default()).unwrap();
+            run_pipeline(&spark);
+        });
+    }
+}
+
+fn is_ml_delete(entry: &server::Entry) -> bool {
+    use proto::command::CommandType;
+    let Ok(request) = proto::ExecutePlanRequest::decode(&entry.bytes[..]) else {
+        return false;
+    };
+    matches!(
+        request.plan.and_then(|plan| plan.op_type),
+        Some(proto::plan::OpType::Command(proto::Command {
+            command_type: Some(CommandType::MlCommand(proto::MlCommand {
+                command: Some(proto::ml_command::Command::Delete(_)),
+            })),
+        }))
+    )
+}
+
+#[test]
+fn a_model_dropped_inside_a_current_thread_runtime_is_deleted_on_the_server() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.range(3).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async { drop(LogisticRegression::default().fit(&df).unwrap()) });
+    drop(runtime);
+    assert!(recorder.wait_for(std::time::Duration::from_secs(10), is_ml_delete));
 }

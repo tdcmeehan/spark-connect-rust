@@ -1,5 +1,5 @@
 //! The operators of the ML API, and the commands and relations that fit, evaluate and
-//! apply them.
+//! apply them, and delete the models that the server caches.
 
 use std::collections::HashMap;
 
@@ -226,6 +226,18 @@ pub fn evaluate(
                 evaluator: Some(evaluator.to_proto()),
                 params: Some(params.to_proto()),
                 dataset: Some(dataset),
+            },
+        )),
+    })
+}
+
+/// The command that deletes the objects of `refs` that the server caches.
+pub fn delete(refs: Vec<proto::ObjectRef>) -> proto::command::CommandType {
+    proto::command::CommandType::MlCommand(proto::MlCommand {
+        command: Some(proto::ml_command::Command::Delete(
+            proto::ml_command::Delete {
+                obj_refs: refs,
+                evict_only: None,
             },
         )),
     })

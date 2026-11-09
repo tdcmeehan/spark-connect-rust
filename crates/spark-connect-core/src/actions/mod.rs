@@ -6,6 +6,8 @@
 
 pub mod catalog;
 pub mod dataframe;
+pub mod ml;
+pub mod pipelines;
 pub mod session;
 pub mod streaming;
 
@@ -48,11 +50,39 @@ pub fn operation_id(request: &mut proto::ExecutePlanRequest) -> String {
         .clone()
 }
 
+/// The responses of an execution of a plan, as the server sends them. Its observer hears of the
+/// start and of each response only, and the observations of the plan get no metrics.
+pub struct Responses<O> {
+    stream: ReattachableResponseStream,
+    observer: O,
+}
+
+impl<O: ExecutionObserver> Responses<O> {
+    /// Sends `request`, after its operation id is chosen.
+    pub async fn start(
+        client: Arc<SparkConnectClient>,
+        mut request: proto::ExecutePlanRequest,
+        mut observer: O,
+    ) -> Result<Self> {
+        observer.on_start(&operation_id(&mut request));
+        let stream = client.execute_plan_reattachable(request).await?;
+        Ok(Responses { stream, observer })
+    }
+
+    /// The next response, or `None` at the end of the execution.
+    pub async fn next(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
+        let response = self.stream.message().await?;
+        if let Some(response) = &response {
+            self.observer.on_response(response);
+        }
+        Ok(response)
+    }
+}
+
 /// An execution of a plan, whose responses are read as they arrive.
 pub struct Execution<O> {
-    stream: ReattachableResponseStream,
+    responses: Responses<O>,
     plan_ids: Arc<PlanIds>,
-    observer: O,
     info: ExecutionInfo,
     schema: Option<DataType>,
 }
@@ -62,15 +92,12 @@ impl<O: ExecutionObserver> Execution<O> {
     pub async fn start(
         client: Arc<SparkConnectClient>,
         plan_ids: Arc<PlanIds>,
-        mut request: proto::ExecutePlanRequest,
-        mut observer: O,
+        request: proto::ExecutePlanRequest,
+        observer: O,
     ) -> Result<Self> {
-        observer.on_start(&operation_id(&mut request));
-        let stream = client.execute_plan_reattachable(request).await?;
         Ok(Execution {
-            stream,
+            responses: Responses::start(client, request, observer).await?,
             plan_ids,
-            observer,
             info: ExecutionInfo::default(),
             schema: None,
         })
@@ -84,23 +111,27 @@ impl<O: ExecutionObserver> Execution<O> {
     /// The next response, once the observer and the observations of the plan have what it
     /// reports, or `None` at the end of the execution.
     async fn next_response(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = self.stream.message().await;
+        let response = self.responses.next().await;
         let Some(mut response) = self.failed(response)? else {
-            self.observer.on_complete(&self.info);
+            self.complete();
             return Ok(None);
         };
-        self.observer.on_response(&response);
         let observed = self.info.capture(&mut response, &self.plan_ids);
         if !observed.is_empty() {
-            self.observer.on_observed_metrics(observed);
+            self.responses.observer.on_observed_metrics(observed);
         }
         Ok(Some(response))
+    }
+
+    /// Tells the observer that the execution has ended without an error.
+    fn complete(&mut self) {
+        self.responses.observer.on_complete(&self.info);
     }
 
     /// `result`, which the observer hears of if it is an error.
     fn failed<T>(&mut self, result: Result<T>) -> Result<T> {
         if let Err(error) = &result {
-            self.observer.on_failure(&self.info, error);
+            self.responses.observer.on_failure(&self.info, error);
         }
         result
     }
@@ -141,6 +172,17 @@ pub(crate) async fn command_result<T>(
         .find_map(pick))
 }
 
+/// Executes `command` to completion and ignores its responses and its errors, such as those of a
+/// stopped session: for a command that the caller does not wait for, as PySpark sends the
+/// releases of what the server caches.
+pub async fn execute_command_ignoring_errors(
+    client: Arc<SparkConnectClient>,
+    command: proto::command::CommandType,
+) {
+    let plan_ids = Arc::new(PlanIds::new());
+    let _ = execute_command(client, plan_ids, Vec::new(), command, ()).await;
+}
+
 /// The result of asking the server for `analyze`.
 pub(crate) async fn analyze_result(
     client: &SparkConnectClient,
@@ -164,4 +206,110 @@ pub(crate) async fn analyze<T>(
             "AnalyzePlan response did not contain {what}"
         )))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_static<T: Send + 'static>(_: T) {}
+
+    #[test]
+    fn the_futures_of_the_actions_are_send_and_static() {
+        // Type-checked, never called: it would need a connected client.
+        let _ = |client: Arc<SparkConnectClient>, plan_ids: Arc<PlanIds>| {
+            let client = || Arc::clone(&client);
+            let plan_ids = || Arc::clone(&plan_ids);
+            let command = || proto::command::CommandType::SqlCommand(Default::default());
+            let relation = proto::Relation::default;
+            assert_send_static(Responses::start(client(), Default::default(), ()));
+            assert_send_static(Execution::start(
+                client(),
+                plan_ids(),
+                Default::default(),
+                (),
+            ));
+            assert_send_static(execute_command(client(), plan_ids(), vec![], command(), ()));
+            assert_send_static(session::spark_version(client()));
+            assert_send_static(session::parse_ddl(client(), String::new()));
+            assert_send_static(session::json_to_ddl(client(), String::new()));
+            assert_send_static(session::sql(client(), plan_ids(), vec![], relation(), ()));
+            assert_send_static(session::create_resource_profile(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(dataframe::collect_rows(
+                client(),
+                plan_ids(),
+                Default::default(),
+                (),
+            ));
+            assert_send_static(dataframe::collect_record_batches(
+                client(),
+                plan_ids(),
+                Default::default(),
+                (),
+            ));
+            assert_send_static(dataframe::schema(client(), relation()));
+            assert_send_static(dataframe::explain(client(), relation(), Default::default()));
+            assert_send_static(dataframe::input_files(client(), relation()));
+            assert_send_static(dataframe::storage_level(client(), relation()));
+            assert_send_static(dataframe::semantic_hash(client(), relation()));
+            assert_send_static(dataframe::same_semantics(client(), relation(), relation()));
+            assert_send_static(dataframe::is_streaming(client(), relation()));
+            assert_send_static(dataframe::persist(client(), relation(), Default::default()));
+            assert_send_static(dataframe::unpersist(client(), relation(), false));
+            assert_send_static(catalog::rows(client(), plan_ids(), Default::default(), ()));
+            assert_send_static(streaming::start(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(streaming::query_command(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(streaming::manager_command(
+                client(),
+                plan_ids(),
+                vec![],
+                Default::default(),
+                (),
+            ));
+            assert_send_static(streaming::unsubscribe(client(), plan_ids(), vec![], ()));
+            assert_send_static(streaming::ListenerEvents::subscribe(
+                client(),
+                plan_ids(),
+                (),
+            ));
+            assert_send_static(ml::fit(
+                client(),
+                plan_ids(),
+                vec![],
+                command(),
+                String::new(),
+                (),
+            ));
+            assert_send_static(ml::evaluate(client(), plan_ids(), vec![], command(), ()));
+            assert_send_static(execute_command_ignoring_errors(client(), command()));
+            assert_send_static(pipelines::create_dataflow_graph(
+                client(),
+                plan_ids(),
+                vec![],
+                None,
+                None,
+                Default::default(),
+                (),
+            ));
+            assert_send_static(pipelines::start_run(client(), vec![], command(), ()));
+        };
+    }
 }
