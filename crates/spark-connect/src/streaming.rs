@@ -10,6 +10,8 @@ use uuid;
 use spark_connect_core::error::{Result, SparkError, SparkErrorKind};
 use spark_connect_core::execution;
 use spark_connect_core::runtime::block_on;
+pub use spark_connect_core::streaming::Trigger;
+use spark_connect_core::streaming::WriteStreamSpec;
 use spark_connect_proto as proto;
 
 use crate::dataframe::DataFrame;
@@ -249,36 +251,6 @@ impl DataStreamReader {
     }
 }
 
-/// Trigger for streaming queries.
-#[derive(Debug, Clone)]
-pub enum Trigger {
-    /// Process every `interval` milliseconds or duration string (e.g., "10 seconds").
-    ProcessingTime(String),
-    /// Process only once.
-    Once,
-    /// Process as soon as available data arrives.
-    AvailableNow,
-    /// Continuous processing with checkpoint interval.
-    Continuous(String),
-    /// Real-time processing, of batches of the duration (e.g., "5 seconds"), as PySpark's
-    /// `trigger(realTime=...)`.
-    RealTime(String),
-}
-
-impl Trigger {
-    /// The trigger of a `WriteStreamOperationStart`.
-    pub(crate) fn to_proto(&self) -> proto::write_stream_operation_start::Trigger {
-        use proto::write_stream_operation_start::Trigger as Proto;
-        match self {
-            Trigger::ProcessingTime(interval) => Proto::ProcessingTimeInterval(interval.clone()),
-            Trigger::Once => Proto::Once(true),
-            Trigger::AvailableNow => Proto::AvailableNow(true),
-            Trigger::Continuous(interval) => Proto::ContinuousCheckpointInterval(interval.clone()),
-            Trigger::RealTime(duration) => Proto::RealTimeBatchDuration(duration.clone()),
-        }
-    }
-}
-
 /// DataStreamWriter for writing streaming data to various sinks.
 ///
 /// Mirrors `pyspark.sql.connect.streaming.DataStreamWriter`.
@@ -428,62 +400,24 @@ impl DataStreamWriter {
         self,
         on_started: impl FnOnce(&StreamingQueryManager, &StreamingQueryListenerEvent) -> Result<()>,
     ) -> Result<StreamingQuery> {
-        let mut write_op = proto::WriteStreamOperationStart::default();
-        write_op.input = Some(crate::plan::relation_with_ids(
+        let mut name = self.query_name.clone();
+        let write_op = WriteStreamSpec {
+            format: self.format,
+            output_mode: self.output_mode,
+            options: self.options,
+            partitioning_columns: self.partitioning_columns,
+            clustering_columns: self.clustering_columns,
+            query_name: self.query_name,
+            trigger: self.trigger,
+            path: self.path,
+            table_name: self.table_name,
+            foreach_batch_payload: self.foreach_batch_payload,
+            foreach_payload: self.foreach_payload,
+        }
+        .to_proto(crate::plan::relation_with_ids(
             &self.plan,
             self.session.plan_ids(),
         ));
-
-        if let Some(fmt) = &self.format {
-            write_op.format = fmt.clone();
-        }
-
-        if let Some(mode) = &self.output_mode {
-            write_op.output_mode = mode.clone();
-        }
-
-        write_op.options = self.options;
-        write_op.partitioning_column_names = self.partitioning_columns;
-        write_op.clustering_column_names = self.clustering_columns;
-
-        if let Some(name) = &self.query_name {
-            write_op.query_name = name.clone();
-        }
-
-        write_op.trigger = self.trigger.as_ref().map(Trigger::to_proto);
-
-        if let Some(path) = &self.path {
-            // A memory/console/foreach sink has no path; only set the destination for a
-            // real (non-empty) path so those sinks send an unset sink_destination.
-            if !path.is_empty() {
-                write_op.sink_destination = Some(
-                    proto::write_stream_operation_start::SinkDestination::Path(path.clone()),
-                );
-            }
-        }
-
-        if let Some(table) = &self.table_name {
-            write_op.sink_destination = Some(
-                proto::write_stream_operation_start::SinkDestination::TableName(table.clone()),
-            );
-        }
-
-        if let Some(foreach_batch) = &self.foreach_batch_payload {
-            let mut foreach_func = proto::StreamingForeachFunction::default();
-            foreach_func.function =
-                Some(proto::streaming_foreach_function::Function::PythonFunction(
-                    foreach_batch.to_proto(),
-                ));
-            write_op.foreach_batch = Some(foreach_func);
-        }
-
-        if let Some(foreach) = &self.foreach_payload {
-            let mut foreach_func = proto::StreamingForeachFunction::default();
-            foreach_func.function = Some(
-                proto::streaming_foreach_function::Function::PythonFunction(foreach.to_proto()),
-            );
-            write_op.foreach_writer = Some(foreach_func);
-        }
 
         // Run the WriteStreamOperationStart command, as other commands are, on the
         // reattachable path with the session's tags, so that an error carries the operation
@@ -495,7 +429,6 @@ impl DataStreamWriter {
         )?;
         let mut query_id = String::new();
         let mut run_id = String::new();
-        let mut name = self.query_name.clone();
         let mut started_event = None;
         for resp in responses {
             if let Some(

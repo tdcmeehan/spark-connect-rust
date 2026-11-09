@@ -116,7 +116,7 @@ pub fn embed_wasm_udf(src_file: impl AsRef<Path>) -> PathBuf {
 /// length-prefixed binary codec (`Abi`) the macro's per-row export wrappers call,
 /// and the Arrow-buffer codec (`batch`) of its batch exports. Must stay
 /// byte-compatible with `spark_connect::wasm_udf::AbiType` and the Python
-/// runners in the embedded packer (`spark-connect/src/wasm_packer.py`).
+/// runners in the embedded packer (`spark-connect-core/src/wasm_packer.py`).
 const WASM_RUNTIME: &str = r#"
 #[allow(dead_code)]
 pub mod spark_wasm_rt {

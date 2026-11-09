@@ -10,54 +10,14 @@ use std::collections::HashMap;
 
 use spark_connect_core::error::{Result, SparkError};
 use spark_connect_core::execution;
+pub use spark_connect_core::pipelines::{OutputSpec, SinkDetailsSpec, TableDetailsSpec};
 use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
 use crate::dataframe::{execute_command_collect, DataFrame};
 use crate::session::SparkSession;
-use crate::types::DataType;
 
-use proto::pipeline_command;
-use proto::pipeline_command::{
-    define_flow, define_output, CreateDataflowGraph, DefineFlow, DefineOutput,
-    DefineSqlGraphElements, StartRun,
-};
-
-/// The details needed to define one pipeline output (table/materialized-view/view/sink).
-pub struct OutputSpec {
-    pub name: String,
-    /// `spark.connect.OutputType` enum value (MATERIALIZED_VIEW=1, TABLE=2, TEMPORARY_VIEW=3, SINK=4).
-    pub output_type: i32,
-    pub comment: Option<String>,
-    pub source_code_location: Option<proto::SourceCodeLocation>,
-    /// Present for TABLE/MATERIALIZED_VIEW.
-    pub table_details: Option<TableDetailsSpec>,
-    /// Present for SINK.
-    pub sink_details: Option<SinkDetailsSpec>,
-}
-
-/// Table/materialized-view details.
-pub struct TableDetailsSpec {
-    pub table_properties: HashMap<String, String>,
-    pub partition_cols: Vec<String>,
-    pub clustering_columns: Vec<String>,
-    pub format: Option<String>,
-    /// Schema as a DDL string, or a structured type, or neither.
-    pub schema_string: Option<String>,
-    pub schema_data_type: Option<DataType>,
-}
-
-/// External-sink details.
-pub struct SinkDetailsSpec {
-    pub options: HashMap<String, String>,
-    pub format: Option<String>,
-}
-
-fn wrap(cmd: pipeline_command::CommandType) -> proto::command::CommandType {
-    proto::command::CommandType::PipelineCommand(proto::PipelineCommand {
-        command_type: Some(cmd),
-    })
-}
+use proto::pipeline_command::define_flow;
 
 /// `PipelineCommand.CreateDataflowGraph` — returns the server-assigned graph id.
 pub fn create_dataflow_graph(
@@ -66,15 +26,12 @@ pub fn create_dataflow_graph(
     default_database: Option<String>,
     sql_conf: HashMap<String, String>,
 ) -> Result<String> {
-    let inner = CreateDataflowGraph {
+    let command = spark_connect_core::pipelines::create_dataflow_graph(
         default_catalog,
         default_database,
         sql_conf,
-    };
-    let responses = execute_command_collect(
-        session,
-        wrap(pipeline_command::CommandType::CreateDataflowGraph(inner)),
-    )?;
+    );
+    let responses = execute_command_collect(session, command)?;
     for resp in responses {
         if let Some(proto::execute_plan_response::ResponseType::PipelineCommandResult(r)) =
             resp.response_type
@@ -99,43 +56,8 @@ pub fn define_output(
     dataflow_graph_id: &str,
     spec: OutputSpec,
 ) -> Result<()> {
-    let details = if let Some(t) = spec.table_details {
-        let schema = match (t.schema_data_type, t.schema_string) {
-            (Some(dt), _) => Some(define_output::table_details::Schema::SchemaDataType(
-                dt.to_proto(),
-            )),
-            (None, Some(s)) => Some(define_output::table_details::Schema::SchemaString(s)),
-            (None, None) => None,
-        };
-        Some(define_output::Details::TableDetails(
-            define_output::TableDetails {
-                table_properties: t.table_properties,
-                partition_cols: t.partition_cols,
-                clustering_columns: t.clustering_columns,
-                format: t.format,
-                schema,
-            },
-        ))
-    } else {
-        spec.sink_details.map(|s| {
-            define_output::Details::SinkDetails(define_output::SinkDetails {
-                options: s.options,
-                format: s.format,
-            })
-        })
-    };
-    let inner = DefineOutput {
-        dataflow_graph_id: Some(dataflow_graph_id.to_string()),
-        output_name: Some(spec.name),
-        output_type: Some(spec.output_type),
-        comment: spec.comment,
-        source_code_location: spec.source_code_location,
-        details,
-    };
-    execute_command_collect(
-        session,
-        wrap(pipeline_command::CommandType::DefineOutput(inner)),
-    )?;
+    let command = spark_connect_core::pipelines::define_output(dataflow_graph_id, spec);
+    execute_command_collect(session, command)?;
     Ok(())
 }
 
@@ -149,25 +71,15 @@ pub fn define_flow(
     sql_conf: HashMap<String, String>,
     source_code_location: Option<proto::SourceCodeLocation>,
 ) -> Result<()> {
-    let relation = relation_df.relation();
-    let details =
-        define_flow::Details::RelationFlowDetails(define_flow::WriteRelationFlowDetails {
-            relation: Some(relation),
-        });
-    let inner = DefineFlow {
-        dataflow_graph_id: Some(dataflow_graph_id.to_string()),
-        flow_name: Some(flow_name.to_string()),
-        target_dataset_name: Some(target_dataset_name.to_string()),
+    let command = spark_connect_core::pipelines::define_flow(
+        dataflow_graph_id,
+        flow_name,
+        target_dataset_name,
+        relation_df.relation(),
         sql_conf,
-        client_id: None,
         source_code_location,
-        once: None,
-        details: Some(details),
-    };
-    execute_command_collect(
-        session,
-        wrap(pipeline_command::CommandType::DefineFlow(inner)),
-    )?;
+    );
+    execute_command_collect(session, command)?;
     Ok(())
 }
 
@@ -182,20 +94,15 @@ pub fn define_auto_cdc_flow(
     sql_conf: HashMap<String, String>,
     source_code_location: Option<proto::SourceCodeLocation>,
 ) -> Result<()> {
-    let inner = DefineFlow {
-        dataflow_graph_id: Some(dataflow_graph_id.to_string()),
-        flow_name: Some(flow_name.to_string()),
-        target_dataset_name: Some(target_dataset_name.to_string()),
+    let command = spark_connect_core::pipelines::define_auto_cdc_flow(
+        dataflow_graph_id,
+        flow_name,
+        target_dataset_name,
+        details,
         sql_conf,
-        client_id: None,
         source_code_location,
-        once: None,
-        details: Some(define_flow::Details::AutoCdcFlowDetails(details)),
-    };
-    execute_command_collect(
-        session,
-        wrap(pipeline_command::CommandType::DefineFlow(inner)),
-    )?;
+    );
+    execute_command_collect(session, command)?;
     Ok(())
 }
 
@@ -206,15 +113,12 @@ pub fn define_sql_graph_elements(
     sql_text: &str,
     sql_file_path: &str,
 ) -> Result<()> {
-    let inner = DefineSqlGraphElements {
-        dataflow_graph_id: Some(dataflow_graph_id.to_string()),
-        sql_file_path: Some(sql_file_path.to_string()),
-        sql_text: Some(sql_text.to_string()),
-    };
-    execute_command_collect(
-        session,
-        wrap(pipeline_command::CommandType::DefineSqlGraphElements(inner)),
-    )?;
+    let command = spark_connect_core::pipelines::define_sql_graph_elements(
+        dataflow_graph_id,
+        sql_text,
+        sql_file_path,
+    );
+    execute_command_collect(session, command)?;
     Ok(())
 }
 
@@ -259,18 +163,18 @@ pub fn start_run(
     dry: bool,
     storage: Option<String>,
 ) -> Result<PipelineRunStream> {
-    let inner = StartRun {
-        dataflow_graph_id: Some(dataflow_graph_id.to_string()),
+    let command = spark_connect_core::pipelines::start_run(
+        dataflow_graph_id,
         full_refresh_selection,
-        full_refresh_all: Some(full_refresh_all),
+        full_refresh_all,
         refresh_selection,
-        dry: Some(dry),
+        dry,
         storage,
-    };
+    );
     let request = execution::execute_plan_request(
         session.client().session_id(),
         session.tags(),
-        execution::command(wrap(pipeline_command::CommandType::StartRun(inner))),
+        execution::command(command),
     );
     Ok(PipelineRunStream {
         session: session.clone(),

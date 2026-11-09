@@ -1098,14 +1098,15 @@ impl Catalog {
 
     /// Build an ExecutePlanRequest for a catalog operation.
     fn build_execute_catalog_request(&self, catalog: &proto::Catalog) -> proto::ExecutePlanRequest {
-        let mut relation = proto::Relation::default();
-        relation.common = Some(proto::RelationCommon::default());
-        relation.rel_type = Some(proto::relation::RelType::Catalog(catalog.clone()));
-
         execution::execute_plan_request(
             self.session.client().session_id(),
             Vec::new(),
-            execution::root(relation),
+            execution::root(
+                crate::plan::LogicalPlan::Catalog {
+                    catalog: catalog.clone(),
+                }
+                .to_proto(),
+            ),
         )
     }
 }

@@ -44,10 +44,13 @@ crates/
                         reattach, artifacts, config, error mapping (core.py,
                         retries.py, reattach.py, artifact.py, channel_builder);
                         plan building: types, expressions, column, plan,
-                        functions, window, udf, observation; execution
+                        functions, window, udf, observation; the protos of
+                        writes, write streams, merge actions, ML and pipeline
+                        commands, and WASM UDF construction; execution
                         requests and info; Arrow decoding
   spark-connect         pure-Rust API mirroring pyspark: dataframe, session,
-                        readwriter, catalog, group, udf/udtf, streaming; re-exports
+                        readwriter, catalog and its commands, group, udf/udtf,
+                        streaming and its query and manager commands; re-exports
                         the plan-building modules of spark-connect-core
   pyspark-rs            PyO3 bindings -> native module `_pyspark`
 python/

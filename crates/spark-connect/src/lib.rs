@@ -34,8 +34,41 @@ pub mod streaming;
 pub mod table_arg;
 pub mod tvf;
 /// Run Rust UDFs on Spark via WebAssembly. Requires the `wasm-udf` feature.
+///
+/// See [`spark_connect_core::wasm_udf`] for how they are built and run.
 #[cfg(feature = "wasm-udf")]
-pub mod wasm_udf;
+pub mod wasm_udf {
+    pub use spark_connect_core::wasm_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
+
+    use spark_connect_core::error::Result;
+
+    /// UDF registration accessor, returned by [`crate::session::SparkSession::udf`] and
+    /// mirroring `pyspark.sql.SparkSession.udf`.
+    pub struct UdfRegistration<'a> {
+        session: &'a crate::session::SparkSession,
+    }
+
+    impl<'a> UdfRegistration<'a> {
+        /// Register `udf` under `name` so it can be called from SQL
+        /// (`spark.sql("SELECT name(col) ...")`) and the DataFrame API.
+        ///
+        /// Mirrors `spark.udf.register(name, udf)`: the cloudpickled WASM runner is shipped
+        /// by value inside a `RegisterFunction` command, so the Spark executors only need
+        /// the `wasmtime` Python package (not `pyspark_wasm_udf`).
+        pub fn register(&self, name: &str, udf: &UserDefinedFunction) -> Result<()> {
+            self.session
+                .register_function(udf.registration_expression(name)?)
+        }
+    }
+
+    impl crate::session::SparkSession {
+        /// UDF registration accessor. Mirrors `pyspark.sql.SparkSession.udf`, so a WASM
+        /// UDF is registered with `spark.udf().register("name", &udf)`.
+        pub fn udf(&self) -> UdfRegistration<'_> {
+            UdfRegistration { session: self }
+        }
+    }
+}
 
 pub use spark_connect_core::{
     column, expression, observation, origin, plan, row, types, udf, window,
