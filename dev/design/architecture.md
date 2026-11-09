@@ -66,9 +66,18 @@ into the interpreter, not reimplemented in Rust.
 
 ## Runtime & async model
 
-Rust transport is async (`tonic` + `tokio`). Python's API is synchronous, so
-`pyspark-rs` owns a shared multi-thread `tokio` runtime and blocks on it at the
-FFI boundary, releasing the GIL during network waits (`Python::allow_threads`).
+The core is async (`tonic` + `tokio`): each action of the client is an async
+function in `spark-connect-core`'s `actions`, whose future owns its inputs and
+chooses the operation id of an execution before it sends it. The synchronous API
+(`spark-connect`) makes one blocking call per action through
+`spark-connect-blocking`, whose `Blocking` polls the future on the calling thread
+with a process-wide multi-thread runtime entered: the callbacks of an execution
+(progress handlers, hooks, nested queries) run on the caller's thread, also when
+it is inside a runtime of either flavor, except those of the prefetching
+iterator's read and of the background releases (the delete of a dropped ML model
+and the removal of the cached relation of a dropped checkpoint), which run on a
+thread of that runtime. `pyspark-rs` blocks through the same
+instance at the FFI boundary, releasing the GIL around each call (`py.detach`).
 Server-streaming RPCs (`ExecutePlan`) are consumed into Arrow record batches.
 
 ## Data path

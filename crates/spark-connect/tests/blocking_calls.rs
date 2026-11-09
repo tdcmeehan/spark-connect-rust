@@ -123,6 +123,24 @@ fn a_hook_can_run_a_blocking_call_of_its_own() {
 }
 
 #[test]
+fn a_hook_that_runs_queries_without_end_fails_with_a_recursion_error() {
+    let spark = session();
+    let other = spark.clone();
+    let hook: ExecutePlanHook = Arc::new(move |request| {
+        other.sql("SELECT 1")?;
+        Ok(request)
+    });
+    spark.set_execute_plan_hook(Some(hook));
+    let Err(error) = spark.sql("SELECT 1") else {
+        panic!("the hooks ran without end");
+    };
+    assert_eq!(error.kind, spark_connect::SparkErrorKind::RecursionError);
+    // Once the hooks have returned, queries run again.
+    spark.set_execute_plan_hook(None);
+    spark.sql("SELECT 2").unwrap();
+}
+
+#[test]
 fn the_actions_of_a_dataframe_run_inside_runtimes_of_either_flavor() {
     let spark = session();
     let df = spark.range(3).unwrap();
@@ -238,6 +256,24 @@ fn a_prefetching_iterator_can_be_dropped_before_its_end() {
         assert_eq!(recorder.wait_for_releases(Duration::from_millis(200), 2), 2);
         df.collect().unwrap();
     });
+}
+
+#[test]
+fn an_iterator_dropped_in_a_current_thread_runtime_that_then_ends_is_released() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let df = spark.sql(server::THREE_BATCHES).unwrap();
+    // That of the SQL command.
+    assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 0), 1);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut iterator = df.to_local_iterator(false).unwrap();
+        iterator.next().unwrap().unwrap();
+    });
+    drop(runtime);
+    assert_eq!(recorder.wait_for_releases(Duration::from_secs(10), 1), 2);
 }
 
 #[test]

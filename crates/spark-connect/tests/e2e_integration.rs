@@ -8,11 +8,11 @@
 
 use std::time::Duration;
 
+use spark_connect::blocking::block_on;
 use spark_connect::column::{col, lit};
 use spark_connect::row::Value;
 use spark_connect::session::SparkSession;
 use spark_connect::types::DataType;
-use spark_connect_core::runtime::block_on;
 use spark_connect_core::{ChannelBuilder, SparkConnectClient};
 use spark_connect_proto as proto;
 

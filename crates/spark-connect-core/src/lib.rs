@@ -25,7 +25,6 @@ pub mod readwriter;
 pub mod reattach;
 pub mod retries;
 pub mod row;
-pub mod runtime;
 pub mod streaming;
 // Shared with `apache-spark-connect`, whose session keeps per-thread tags the same way.
 #[doc(hidden)]
@@ -46,4 +45,3 @@ pub use client::{ExecutePlanHook, RpcDeadlines, SparkConnectClient};
 pub use error::{QueryContext, QueryContextType, Result, SparkError, SparkErrorKind};
 pub use reattach::ExecutePlanResponseReattachableIterator;
 pub use retries::{RetryPolicy, RetryPolicyState, DEFAULT_MAX_RETRY_EXCEPTION_ELAPSED_TIME};
-pub use runtime::{block_on, get_runtime};
