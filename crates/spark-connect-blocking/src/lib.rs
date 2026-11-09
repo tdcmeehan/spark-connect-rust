@@ -6,12 +6,16 @@
 //!
 //! - it never panics, outside any runtime or inside one of either flavor;
 //! - the code a future runs, callbacks included, runs on the calling thread, so it sees that
-//!   thread's thread-locals, and may call `block_on` again;
+//!   thread's thread-locals, and may call `block_on` again; the tasks spawned on
+//!   [`Blocking::handle`] run on the runtime's threads, and may call it there too;
 //! - the future may borrow from the caller and need not be `Send`.
 //!
-//! Blocking a thread of another runtime stops that runtime's other tasks until the call returns,
-//! as any blocking call does.
+//! On a worker of a multi-thread runtime, its own included, the outermost call first hands the
+//! worker's other tasks to another thread ([`tokio::task::block_in_place`]). On the thread of a
+//! current-thread runtime, that runtime's other tasks wait until the call returns, as with any
+//! blocking call.
 
+use std::cell::Cell;
 use std::future::Future;
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +23,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 
-use tokio::runtime::{Builder, Handle, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime, RuntimeFlavor};
 
 /// Runs futures to completion from synchronous code, on a runtime of its own.
 #[derive(Debug)]
@@ -49,6 +53,21 @@ impl Blocking {
 
     /// Runs `future` to completion on the calling thread and returns its output.
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        // A nested call sees this runtime as current, even where block_in_place panics.
+        if POLLING.with(|polling| polling.replace(true)) {
+            return self.poll_to_completion(future);
+        }
+        let _outermost = Outermost;
+        let in_a_multi_thread_runtime = Handle::try_current()
+            .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread);
+        if in_a_multi_thread_runtime {
+            tokio::task::block_in_place(|| self.poll_to_completion(future))
+        } else {
+            self.poll_to_completion(future)
+        }
+    }
+
+    fn poll_to_completion<F: Future>(&self, future: F) -> F::Output {
         let _context = self.handle().enter();
         // A task of another runtime may have used up its budget: the resources this future
         // polls must not see it, or they would return pending until that task yields.
@@ -78,6 +97,19 @@ impl Drop for Blocking {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
         }
+    }
+}
+
+thread_local! {
+    static POLLING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The outermost call on this thread, for as long as it lives.
+struct Outermost;
+
+impl Drop for Outermost {
+    fn drop(&mut self) {
+        POLLING.with(|polling| polling.set(false));
     }
 }
 
@@ -169,12 +201,67 @@ mod tests {
     fn a_callback_can_block_on_a_nested_future() {
         let blocking = Blocking::new().unwrap();
         let callback = |value: i32| blocking.block_on(after_a_timer(value + 1));
-        let value = blocking.block_on(async {
-            let first = after_a_timer(1).await;
-            let nested = callback(first);
-            after_a_timer(nested + 1).await
+        let run = || {
+            blocking.block_on(async {
+                let first = after_a_timer(1).await;
+                let nested = callback(first);
+                after_a_timer(nested + 1).await
+            })
+        };
+        assert_eq!(run(), 3);
+        // Also when the caller is the thread of a current-thread runtime.
+        let runtime = Builder::new_current_thread().build().unwrap();
+        assert_eq!(runtime.block_on(async { run() }), 3);
+    }
+
+    #[test]
+    fn calls_from_every_thread_of_its_runtime_return() {
+        let blocking = Arc::new(Blocking::new().unwrap());
+        let threads = thread::available_parallelism().map_or(1, |count| count.get());
+        let (sender, returned) = std::sync::mpsc::channel();
+        for task in 0..threads {
+            let (helper, sender) = (Arc::clone(&blocking), sender.clone());
+            blocking.handle().spawn(async move {
+                let value = helper.block_on(async move {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    task
+                });
+                // Before the send, so that the runtime is dropped by the test's thread.
+                drop(helper);
+                sender.send(value).unwrap();
+            });
+        }
+        let mut values: Vec<usize> = (0..threads)
+            .map(|_| returned.recv_timeout(Duration::from_secs(10)).unwrap())
+            .collect();
+        values.sort_unstable();
+        assert_eq!(values, (0..threads).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_task_that_used_up_its_budget_can_block_on_a_ready_resource() {
+        let blocking = Blocking::new().unwrap();
+        let (sender, returned) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let runtime = Builder::new_current_thread().build().unwrap();
+            let value = runtime.block_on(async {
+                let (messages, mut received) = tokio::sync::mpsc::unbounded_channel();
+                let (ready, mut ready_received) = tokio::sync::mpsc::unbounded_channel();
+                for message in 0..200 {
+                    messages.send(message).unwrap();
+                }
+                ready.send(8).unwrap();
+                std::future::poll_fn(|context| {
+                    // Each ready message takes a unit of the task's budget, until it is used up.
+                    while received.poll_recv(context).is_ready() {}
+                    Poll::Ready(blocking.block_on(ready_received.recv()))
+                })
+                .await
+            });
+            sender.send(value).unwrap();
         });
-        assert_eq!(value, 3);
+        let value = returned.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(value, Some(8));
     }
 
     #[test]
