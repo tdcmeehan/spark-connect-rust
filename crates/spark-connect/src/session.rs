@@ -160,6 +160,15 @@ impl SparkSession {
         }
     }
 
+    /// A session over `url` whose RPCs are tried once: without a server, a test fails at once.
+    #[cfg(test)]
+    pub(crate) fn without_retries(url: &str) -> Self {
+        let builder = ChannelBuilder::parse(url).unwrap();
+        let mut client = block_on(SparkConnectClient::connect(&builder)).unwrap();
+        client.set_retry_policy(spark_connect_core::RetryPolicy::no_retries());
+        SparkSession::new(client)
+    }
+
     /// Add a tag to be attached to all subsequent operations that this thread starts from
     /// this session.
     ///
@@ -2773,7 +2782,7 @@ mod tests {
 
     #[test]
     fn version_runs_inside_both_runtime_flavors_and_keeps_its_cache_usable() {
-        let spark = session();
+        let spark = SparkSession::without_retries("sc://localhost:15002");
         let handle = spark.clone();
         let runtimes = || {
             [
