@@ -143,41 +143,55 @@ pub(crate) struct SessionObserver {
     accumulators: PythonAccumulators,
     last_execution: ExecutionSlot,
     progress: Option<ProgressTracker>,
-    /// The slot of the DataFrame whose execution this is, which records it as its own too.
-    dataframe_execution: Option<ExecutionSlot>,
-    /// Whether an execution that fails is recorded, as the local iterator records it.
-    record_failure: bool,
+    record: Record,
+}
+
+/// What an execution records as the last execution, when it ends.
+enum Record {
+    /// The session's, when it ends without an error.
+    Session,
+    /// The DataFrame's, in its slot, and the session's, when it ends without an error.
+    DataFrame(ExecutionSlot),
+    /// The session's, also when it fails, as the local iterator records it.
+    SessionEvenOnFailure,
+    /// Nothing, as for a catalog operation.
+    Nothing,
 }
 
 impl SessionObserver {
     /// The observer of an execution about to start, which fails with a `RecursionError` when
     /// the callbacks that run queries are nested too deep on this thread.
     pub(crate) fn start(session: &SparkSession) -> Result<Self> {
+        Self::recording(session, Record::Session)
+    }
+
+    /// As [`SessionObserver::start`], for an execution of `dataframe`.
+    pub(crate) fn for_dataframe(dataframe: &DataFrame) -> Result<Self> {
+        Self::recording(
+            &dataframe.session,
+            Record::DataFrame(dataframe.execution_slot()),
+        )
+    }
+
+    /// As [`SessionObserver::start`], for an execution that the local iterator reads, which
+    /// records the execution also when it fails.
+    pub(crate) fn for_iterator(session: &SparkSession) -> Result<Self> {
+        Self::recording(session, Record::SessionEvenOnFailure)
+    }
+
+    /// As [`SessionObserver::start`], for an execution that records nothing.
+    pub(crate) fn unrecorded(session: &SparkSession) -> Result<Self> {
+        Self::recording(session, Record::Nothing)
+    }
+
+    fn recording(session: &SparkSession, record: Record) -> Result<Self> {
         check_callback_depth()?;
         Ok(SessionObserver {
             handlers: session.progress_handlers(),
             accumulators: session.python_accumulators().clone(),
             last_execution: session.last_execution_slot(),
             progress: None,
-            dataframe_execution: None,
-            record_failure: false,
-        })
-    }
-
-    /// As [`SessionObserver::start`], for an execution of `dataframe`.
-    pub(crate) fn for_dataframe(dataframe: &DataFrame) -> Result<Self> {
-        Ok(SessionObserver {
-            dataframe_execution: Some(dataframe.execution_slot()),
-            ..SessionObserver::start(&dataframe.session)?
-        })
-    }
-
-    /// As [`SessionObserver::start`], for an execution that the local iterator reads, which
-    /// records the execution also when it fails.
-    pub(crate) fn for_iterator(session: &SparkSession) -> Result<Self> {
-        Ok(SessionObserver {
-            record_failure: true,
-            ..SessionObserver::start(session)?
+            record,
         })
     }
 }
@@ -202,14 +216,16 @@ impl ExecutionObserver for SessionObserver {
     }
 
     fn on_complete(&mut self, info: &ExecutionInfo) {
-        if let Some(dataframe_execution) = &self.dataframe_execution {
+        if let Record::DataFrame(dataframe_execution) = &self.record {
             *dataframe_execution.lock().unwrap() = Some(info.clone());
         }
-        *self.last_execution.lock().unwrap() = Some(info.clone());
+        if !matches!(self.record, Record::Nothing) {
+            *self.last_execution.lock().unwrap() = Some(info.clone());
+        }
     }
 
     fn on_failure(&mut self, info: &ExecutionInfo, _error: &SparkError) {
-        if self.record_failure {
+        if matches!(self.record, Record::SessionEvenOnFailure) {
             *self.last_execution.lock().unwrap() = Some(info.clone());
         }
     }

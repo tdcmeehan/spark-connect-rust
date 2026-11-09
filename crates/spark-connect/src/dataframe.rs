@@ -20,6 +20,7 @@ use crate::row::{Row, Value};
 use crate::session::{ExecutionInfo, SparkSession};
 use crate::types::DataType;
 use crate::udf::CommonInlineUserDefinedFunctionExpression;
+#[cfg(test)]
 pub(crate) use spark_connect_core::decode::decode_arrow_batch;
 #[cfg(test)]
 use spark_connect_core::decode::{
