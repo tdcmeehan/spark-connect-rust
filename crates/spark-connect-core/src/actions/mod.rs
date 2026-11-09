@@ -36,8 +36,7 @@ pub trait ExecutionObserver: Send {
     /// When the execution has ended without an error, with what it reported.
     fn on_complete(&mut self, _info: &ExecutionInfo) {}
 
-    /// When an execution whose result is read as it arrives has failed after it started,
-    /// with what it reported until then.
+    /// When the execution has failed after it started, with what it reported until then.
     fn on_failure(&mut self, _info: &ExecutionInfo, _error: &SparkError) {}
 }
 

@@ -116,8 +116,7 @@ impl PrefetchedRows {
     }
 }
 
-/// The rows of the result of `request`, with its schema if the server sends it, and what the
-/// execution reported.
+/// The rows of the result of `request`, with its schema if the server sends it.
 pub async fn collect_rows(
     client: Arc<SparkConnectClient>,
     plan_ids: Arc<PlanIds>,
