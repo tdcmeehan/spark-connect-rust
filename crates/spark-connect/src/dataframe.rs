@@ -2424,22 +2424,7 @@ pub(crate) fn execute_command_with_info(
     session: &SparkSession,
     command_type: proto::command::CommandType,
 ) -> Result<(Vec<proto::ExecutePlanResponse>, ExecutionInfo)> {
-    let request = execution::execute_plan_request(
-        session.client().session_id(),
-        session.tags(),
-        execution::command(command_type),
-    );
-    let mut stream = session.execute_plan(request)?;
-    // Drain the response stream so the command runs to completion server-side,
-    // capturing any metrics/progress emitted along the way.
-    let mut info = ExecutionInfo::default();
-    let mut responses = Vec::new();
-    while let Some(mut resp) = block_on(stream.message())? {
-        capture_execution(&mut resp, &mut info, session);
-        responses.push(resp);
-    }
-    session.record_execution(info.clone());
-    Ok((responses, info))
+    session.execute_command(command_type)
 }
 
 /// Pull execution metrics/observed-metrics off a response; the `ExecutionStream` of the

@@ -3,6 +3,8 @@
 
 #![allow(clippy::result_large_err)] // SparkError is large; changing the type would break the API
 
+pub mod actions;
+pub mod arrow_input;
 pub mod artifact;
 pub mod bytes_codec;
 pub mod channel;

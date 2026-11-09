@@ -15,7 +15,9 @@
 
 #![allow(clippy::result_large_err)] // SparkError is large; changing the type would break the API
 
-mod arrow_input;
+use spark_connect_core::arrow_input;
+#[doc(hidden)]
+pub mod blocking;
 pub mod catalog;
 pub mod conf;
 pub mod dataframe;
@@ -88,8 +90,6 @@ pub mod functions {
 }
 
 // Re-export commonly used types
-#[doc(hidden)]
-pub use arrow_input::ArrowInputOptions;
 pub use column::{col, lit, lit_boolean, lit_double, lit_string, Column};
 pub use dataframe::{DataFrame, LocalRowIterator};
 pub use datasource::{CommonInlineUserDefinedDataSourceExpression, PythonDataSourcePayload};
@@ -108,6 +108,8 @@ pub use resource::{
     ExecutorResourceRequests, ResourceProfile, ResourceProfileBuilder, TaskResourceRequests,
 };
 pub use session::{SparkSession, SparkSessionBuilder};
+#[doc(hidden)]
+pub use spark_connect_core::arrow_input::ArrowInputOptions;
 pub use spark_connect_core::client::ExecutePlanHook;
 /// Re-exported so fallible APIs (e.g. the `#[spark_wasm_udf]`-generated UDF
 /// constructors) can name the client's `Result`/error types.

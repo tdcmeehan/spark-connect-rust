@@ -4,12 +4,15 @@
 
 use std::sync::Arc;
 
+use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::client::ReattachableResponseStream;
 use spark_connect_core::error::Result;
-use spark_connect_core::runtime::CallbackGuard;
+use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
 use spark_connect_proto as proto;
 
-use crate::session::{ProgressHandler, ProgressHandlers, SparkSession};
+use crate::dataframe::ExecutionSlot;
+use crate::profiler::PythonAccumulators;
+use crate::session::{ExecutionInfo, ProgressHandler, ProgressHandlers, SparkSession};
 
 /// The progress of a stage of an execution, as PySpark's `StageInfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,8 +58,12 @@ pub(crate) struct ProgressTracker {
 
 impl ProgressTracker {
     pub(crate) fn new(session: &SparkSession, operation_id: Option<String>) -> Self {
+        Self::with_handlers(session.progress_handlers(), operation_id)
+    }
+
+    fn with_handlers(handlers: ProgressHandlers, operation_id: Option<String>) -> Self {
         ProgressTracker {
-            handlers: session.progress_handlers(),
+            handlers,
             operation_id,
             stages: Vec::new(),
             inflight_tasks: 0,
@@ -79,6 +86,15 @@ impl ProgressTracker {
             self.stages = stages;
             self.inflight_tasks = progress.num_inflight_tasks;
             self.notify(false);
+        }
+    }
+
+    /// The progress of `response`, if it is one.
+    fn observe(&mut self, response: &proto::ExecutePlanResponse) {
+        if let Some(proto::execute_plan_response::ResponseType::ExecutionProgress(progress)) =
+            &response.response_type
+        {
+            self.update(progress, &response.operation_id);
         }
     }
 
@@ -119,6 +135,54 @@ impl Drop for ProgressTracker {
     }
 }
 
+/// The observer of an execution of a session that the core runs: the progress of the execution
+/// for the handlers of the session, the updates of its Python accumulators, and the record of the
+/// execution as the session's most recent one.
+pub(crate) struct SessionObserver {
+    handlers: ProgressHandlers,
+    accumulators: PythonAccumulators,
+    last_execution: ExecutionSlot,
+    progress: Option<ProgressTracker>,
+}
+
+impl SessionObserver {
+    /// The observer of an execution about to start, which fails with a `RecursionError` when
+    /// the callbacks that run queries are nested too deep on this thread.
+    pub(crate) fn start(session: &SparkSession) -> Result<Self> {
+        check_callback_depth()?;
+        Ok(SessionObserver {
+            handlers: session.progress_handlers(),
+            accumulators: session.python_accumulators().clone(),
+            last_execution: session.last_execution_slot(),
+            progress: None,
+        })
+    }
+}
+
+impl ExecutionObserver for SessionObserver {
+    fn on_start(&mut self, operation_id: &str) {
+        self.progress = Some(ProgressTracker::with_handlers(
+            Arc::clone(&self.handlers),
+            Some(operation_id.to_string()),
+        ));
+    }
+
+    fn on_response(&mut self, response: &proto::ExecutePlanResponse) {
+        if let Some(progress) = &mut self.progress {
+            progress.observe(response);
+        }
+    }
+
+    fn on_observed_metrics(&mut self, metrics: &[proto::execute_plan_response::ObservedMetrics]) {
+        // The updates of the Python accumulators, such as the results of the UDF profilers.
+        self.accumulators.accumulate(metrics);
+    }
+
+    fn on_complete(&mut self, info: &ExecutionInfo) {
+        *self.last_execution.lock().unwrap() = Some(info.clone());
+    }
+}
+
 /// The responses of an execution, with its progress for the handlers of the session: each
 /// `ExecutionProgress` updates it, and it ends when the stream is dropped.
 pub(crate) struct ExecutionStream {
@@ -135,11 +199,7 @@ impl ExecutionStream {
     pub(crate) async fn message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
         let response = self.stream.message().await?;
         if let Some(response) = &response {
-            if let Some(proto::execute_plan_response::ResponseType::ExecutionProgress(progress)) =
-                &response.response_type
-            {
-                self.progress.update(progress, &response.operation_id);
-            }
+            self.progress.observe(response);
         }
         Ok(response)
     }

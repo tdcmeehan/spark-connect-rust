@@ -5,18 +5,19 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use spark_connect_core::actions;
 use spark_connect_core::channel::ChannelBuilder;
 use spark_connect_core::client::{ExecutePlanHook, SparkConnectClient};
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::execution;
-use spark_connect_core::runtime::{block_on, check_callback_depth};
+use spark_connect_core::runtime::check_callback_depth;
 use spark_connect_core::thread_entries::forget_when_thread_ends;
 use spark_connect_proto as proto;
 
+use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::plan::{LogicalPlan, PlanIds};
 use crate::profiler::PythonAccumulators;
-use crate::progress::{ExecutionStream, ProgressTracker, ProgressUpdate};
+use crate::progress::{ExecutionStream, ProgressTracker, ProgressUpdate, SessionObserver};
 use crate::row::{Row, Value};
 use crate::types::DataType;
 pub use spark_connect_core::execution::ExecutionInfo;
@@ -162,6 +163,15 @@ impl SparkSession {
         }
     }
 
+    /// A session over `url` whose RPCs are tried once: without a server, a test fails at once.
+    #[cfg(test)]
+    pub(crate) fn without_retries(url: &str) -> Self {
+        let builder = ChannelBuilder::parse(url).unwrap();
+        let mut client = block_on(SparkConnectClient::connect(&builder)).unwrap();
+        client.set_retry_policy(spark_connect_core::RetryPolicy::no_retries());
+        SparkSession::new(client)
+    }
+
     /// Add a tag to be attached to all subsequent operations that this thread starts from
     /// this session.
     ///
@@ -269,10 +279,7 @@ impl SparkSession {
         &self,
         mut request: proto::ExecutePlanRequest,
     ) -> Result<ExecutionStream> {
-        let operation_id = request
-            .operation_id
-            .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
-            .clone();
+        let operation_id = actions::operation_id(&mut request);
         // Before the request: an execution that fails to start ends, as done, too.
         check_callback_depth()?;
         let progress = ProgressTracker::new(self, Some(operation_id));
@@ -280,10 +287,31 @@ impl SparkSession {
         Ok(ExecutionStream::new(stream, progress))
     }
 
+    /// Execute the command `command_type` to completion, with the progress of the execution for
+    /// the progress handlers, and return its responses and what it reported, which becomes the
+    /// session's most recent execution.
+    pub(crate) fn execute_command(
+        &self,
+        command_type: proto::command::CommandType,
+    ) -> Result<(Vec<proto::ExecutePlanResponse>, ExecutionInfo)> {
+        block_on(actions::execute_command(
+            Arc::clone(&self.client),
+            Arc::clone(&self.plan_ids),
+            self.tags(),
+            command_type,
+            SessionObserver::start(self)?,
+        ))
+    }
+
     /// Store the metrics captured from the most recent execution. Called by the
     /// execute loop; not part of the public API.
     pub(crate) fn record_execution(&self, info: ExecutionInfo) {
         *self.last_execution.lock().unwrap() = Some(info);
+    }
+
+    /// Share the slot of the most recent execution without retaining the session.
+    pub(crate) fn last_execution_slot(&self) -> crate::dataframe::ExecutionSlot {
+        Arc::clone(&self.last_execution)
     }
 
     /// The metrics captured from the most recent execution on this session, if any.
@@ -405,41 +433,19 @@ impl SparkSession {
     /// Parse a DDL string on the server, mirroring PySpark Connect's `_parse_ddl`: the
     /// `DDLParse` of an `AnalyzePlanRequest`, of a schema or a type, as Spark parses it.
     pub fn parse_ddl(&self, ddl: &str) -> Result<DataType> {
-        let request = execution::analyze_plan_request(
-            self.client().session_id(),
-            proto::analyze_plan_request::Analyze::DdlParse(proto::analyze_plan_request::DdlParse {
-                ddl_string: ddl.to_string(),
-            }),
-        );
-        let response = block_on(self.client().analyze_plan(request))?;
-        match response.result {
-            Some(proto::analyze_plan_response::Result::DdlParse(r)) => {
-                DataType::from_proto(&r.parsed.unwrap_or_default())
-            }
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain a DDL parse result",
-            )),
-        }
+        block_on(actions::session::parse_ddl(
+            Arc::clone(&self.client),
+            ddl.to_string(),
+        ))
     }
 
     /// Convert the JSON of a schema to DDL on the server, mirroring PySpark Connect's
     /// `_to_ddl`: the `JsonToDDL` of an `AnalyzePlanRequest`, as Spark writes it.
     pub fn json_to_ddl(&self, json: &str) -> Result<String> {
-        let request = execution::analyze_plan_request(
-            self.client().session_id(),
-            proto::analyze_plan_request::Analyze::JsonToDdl(
-                proto::analyze_plan_request::JsonToDdl {
-                    json_string: json.to_string(),
-                },
-            ),
-        );
-        let response = block_on(self.client().analyze_plan(request))?;
-        match response.result {
-            Some(proto::analyze_plan_response::Result::JsonToDdl(r)) => Ok(r.ddl_string),
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain a DDL string",
-            )),
-        }
+        block_on(actions::session::json_to_ddl(
+            Arc::clone(&self.client),
+            json.to_string(),
+        ))
     }
 
     /// Execute a SQL statement and return a DataFrame.
@@ -483,22 +489,13 @@ impl SparkSession {
         // As pyspark, run the statement as a command now. The server executes a command and
         // returns a relation of its result; for a query it returns the query's relation, which
         // then runs at an action.
-        let command = proto::SqlCommand {
-            input: Some(crate::dataframe::build_input_relation(&plan, self)),
-            ..Default::default()
-        };
-        let responses = crate::dataframe::execute_command_collect(
-            self,
-            proto::command::CommandType::SqlCommand(command),
-        )?;
-        let returned = responses
-            .into_iter()
-            .find_map(|response| match response.response_type {
-                Some(proto::execute_plan_response::ResponseType::SqlCommandResult(result)) => {
-                    result.relation
-                }
-                _ => None,
-            });
+        let (returned, _) = block_on(actions::session::sql(
+            Arc::clone(&self.client),
+            Arc::clone(&self.plan_ids),
+            self.tags(),
+            crate::dataframe::build_input_relation(&plan, self),
+            SessionObserver::start(self)?,
+        ))?;
         Ok(DataFrame::new(
             self.clone(),
             match returned {
@@ -589,12 +586,12 @@ impl SparkSession {
         schema: DataType,
     ) -> Result<LogicalPlan> {
         if crate::arrow_input::batch_data_size(&batch) >= LOCAL_RELATION_SETTINGS_BYTES {
-            return crate::arrow_input::create_relation(
-                &self.client,
+            return block_on(crate::arrow_input::create_relation(
+                Arc::clone(&self.client),
                 vec![batch],
                 Some(schema),
                 None,
-            );
+            ));
         }
         Ok(LogicalPlan::LocalRelation {
             schema: Some(schema),
@@ -640,7 +637,12 @@ impl SparkSession {
             let batches = reader
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(|e| SparkError::connect_msg(format!("Failed to read Arrow IPC: {e}")))?;
-            crate::arrow_input::create_relation(&self.client, batches, Some(schema), None)?
+            block_on(crate::arrow_input::create_relation(
+                Arc::clone(&self.client),
+                batches,
+                Some(schema),
+                None,
+            ))?
         } else {
             LogicalPlan::LocalRelation {
                 schema: Some(schema),
@@ -666,14 +668,19 @@ impl SparkSession {
         batches: Vec<arrow::record_batch::RecordBatch>,
         schema: impl Into<Option<DataType>>,
     ) -> Result<DataFrame> {
-        let plan = crate::arrow_input::create_relation(&self.client, batches, schema.into(), None)?;
+        let plan = block_on(crate::arrow_input::create_relation(
+            Arc::clone(&self.client),
+            batches,
+            schema.into(),
+            None,
+        ))?;
         Ok(DataFrame::new(self.clone(), plan))
     }
 
     /// Internal settings handoff for the Python Arrow importer; not a stable API.
     #[doc(hidden)]
     pub fn arrow_input_options(&self) -> Result<crate::ArrowInputOptions> {
-        crate::ArrowInputOptions::from_client(&self.client)
+        block_on(crate::ArrowInputOptions::from_client(&self.client))
     }
 
     /// Internal Arrow import entry point using the normalization settings snapshot.
@@ -684,12 +691,12 @@ impl SparkSession {
         schema: impl Into<Option<DataType>>,
         options: &crate::ArrowInputOptions,
     ) -> Result<DataFrame> {
-        let plan = crate::arrow_input::create_relation(
-            &self.client,
+        let plan = block_on(crate::arrow_input::create_relation(
+            Arc::clone(&self.client),
             batches,
             schema.into(),
-            Some(options),
-        )?;
+            Some(options.clone()),
+        ))?;
         Ok(DataFrame::new(self.clone(), plan))
     }
 
@@ -756,23 +763,9 @@ impl SparkSession {
         return_type: Option<DataType>,
         aggregate: bool,
     ) -> Result<()> {
-        let mut java_udf = proto::JavaUdf::default();
-        java_udf.class_name = java_class_name.to_string();
-        if let Some(return_type) = return_type {
-            java_udf.output_type = Some(return_type.to_proto());
-        } else {
-            java_udf.aggregate = aggregate;
-        }
-        let mut fun = proto::CommonInlineUserDefinedFunction::default();
-        fun.function_name = name.to_string();
-        // As PySpark's CommonInlineUserDefinedFunction, which is not deterministic by default.
-        fun.deterministic = false;
-        fun.function =
-            Some(proto::common_inline_user_defined_function::Function::JavaUdf(java_udf));
-        crate::dataframe::execute_command_collect(
-            self,
-            proto::command::CommandType::RegisterFunction(fun),
-        )?;
+        let function =
+            actions::session::java_function(name, java_class_name, return_type.as_ref(), aggregate);
+        self.execute_command(proto::command::CommandType::RegisterFunction(function))?;
         Ok(())
     }
 
@@ -963,22 +956,9 @@ impl SparkSession {
         if let Some(version) = cached.as_ref() {
             return Ok(version.clone());
         }
-        let request = execution::analyze_plan_request(
-            self.client.session_id(),
-            proto::analyze_plan_request::Analyze::SparkVersion(
-                proto::analyze_plan_request::SparkVersion::default(),
-            ),
-        );
-        let resp = block_on(self.client.analyze_plan(request))?;
-        match resp.result {
-            Some(proto::analyze_plan_response::Result::SparkVersion(v)) => {
-                *cached = Some(v.version.clone());
-                Ok(v.version)
-            }
-            _ => Err(SparkError::connect_msg(
-                "AnalyzePlan response did not contain a spark version",
-            )),
-        }
+        let version = block_on(actions::session::spark_version(Arc::clone(&self.client)))?;
+        *cached = Some(version.clone());
+        Ok(version)
     }
 
     /// Return the DataFrame for the given table/view.
@@ -1130,25 +1110,12 @@ impl SparkSession {
         &self,
         profile: &crate::resource::ResourceProfile,
     ) -> Result<i32> {
-        let mut cmd = proto::CreateResourceProfileCommand::default();
-        cmd.profile = Some(profile.proto().clone());
-
-        let responses = crate::dataframe::execute_command_collect(
-            self,
-            proto::command::CommandType::CreateResourceProfileCommand(cmd),
-        )?;
-
-        for resp in responses {
-            if let Some(
-                proto::execute_plan_response::ResponseType::CreateResourceProfileCommandResult(res),
-            ) = resp.response_type
-            {
-                return Ok(res.profile_id);
-            }
-        }
-
-        Err(SparkError::connect_msg(
-            "build_resource_profile: server returned no CreateResourceProfileCommandResult",
+        block_on(actions::session::create_resource_profile(
+            Arc::clone(&self.client),
+            Arc::clone(&self.plan_ids),
+            self.tags(),
+            profile.proto().clone(),
+            SessionObserver::start(self)?,
         ))
     }
 
@@ -2039,11 +2006,15 @@ pub fn decimal_str_to_unscaled(s: &str, precision: i32, scale: i32) -> Result<i1
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::builder::Int64Builder;
+    use arrow::array::{Array, ArrayRef, Int64Array, MapArray, MapBuilder, UnionArray};
     use arrow::array::{
         BinaryArray, BooleanArray, Float32Array, Int16Array, Int32Array, StringArray, StructArray,
     };
+    use arrow::datatypes::{DataType as ArrowType, Field, FieldRef, Schema};
     use arrow::ipc::reader::StreamReader;
-    use arrow::record_batch::RecordBatch;
+    use arrow::record_batch::{RecordBatch, RecordBatchOptions};
+    use spark_connect_core::arrow_input::{inline_relation, normalize_map_names};
     use std::io::Cursor;
 
     #[test]
@@ -2994,6 +2965,39 @@ mod tests {
     }
 
     #[test]
+    fn version_runs_inside_both_runtime_flavors_and_keeps_its_cache_usable() {
+        let spark = SparkSession::without_retries("sc://localhost:15002");
+        let handle = spark.clone();
+        let runtimes = || {
+            [
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap(),
+                tokio::runtime::Builder::new_multi_thread().build().unwrap(),
+            ]
+        };
+        // The synchronous API blocks on its own runtime, so it returns inside a runtime of
+        // either flavor: with the version, or with the error of a missing server.
+        for runtime in runtimes() {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                runtime.block_on(async { spark.version() })
+            }));
+            let looked_up = result
+                .expect("version() must not panic inside a runtime")
+                .ok();
+            assert!(!spark.server_version.is_poisoned());
+            assert_eq!(*spark.server_version.lock().unwrap(), looked_up);
+        }
+        *spark.server_version.lock().unwrap() = Some("4.3.0".into());
+        for runtime in runtimes() {
+            assert_eq!(
+                runtime.block_on(async { handle.version() }).unwrap(),
+                "4.3.0"
+            );
+        }
+    }
+
+    #[test]
     fn session_is_not_stopped_initially() {
         let spark = session();
         assert!(!spark.is_stopped());
@@ -3917,5 +3921,221 @@ mod tests {
         );
         spark.set_server_session_id(None);
         assert_eq!(spark.server_session_id(), None);
+    }
+
+    fn map(rows: usize) -> MapArray {
+        let mut builder = MapBuilder::new(None, Int64Builder::new(), Int64Builder::new());
+        for row in 0..rows {
+            if row % 3 == 1 {
+                builder.append(false).unwrap();
+            } else {
+                if row % 3 == 0 {
+                    builder.keys().append_value(row as i64);
+                    builder.values().append_value(row as i64 + 10);
+                    builder.keys().append_value(row as i64 + 100);
+                    builder.values().append_null();
+                }
+                builder.append(true).unwrap();
+            }
+        }
+        builder.finish()
+    }
+
+    fn map_batch(rows: usize) -> RecordBatch {
+        let map: ArrayRef = Arc::new(map(rows));
+        RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new(
+                "mapping",
+                map.data_type().clone(),
+                true,
+            )])),
+            vec![map],
+        )
+        .unwrap()
+    }
+
+    fn map_fields(data_type: &ArrowType) -> (&FieldRef, &arrow::datatypes::Fields, bool) {
+        let ArrowType::Map(entries, sorted) = data_type else {
+            panic!("expected map");
+        };
+        let ArrowType::Struct(fields) = entries.data_type() else {
+            panic!("expected entries struct");
+        };
+        (entries, fields, *sorted)
+    }
+
+    fn assert_canonical_map(data_type: &ArrowType) {
+        let (entries, fields, _) = map_fields(data_type);
+        assert_eq!(entries.name(), "entries");
+        assert_eq!(fields[0].name(), "key");
+        assert_eq!(fields[1].name(), "value");
+    }
+
+    #[test]
+    fn original_map_schema_mismatches_are_rejected_before_normalization() {
+        fn assert_schema_error<T>(result: Result<T>) {
+            let Err(error) = result else {
+                panic!("expected the original batch-schema mismatch");
+            };
+            assert_eq!(error.message(), "Arrow batch schemas must match");
+        }
+        let session = crate::SparkSession::builder()
+            .remote("sc://127.0.0.1:1")
+            .get_or_create()
+            .unwrap();
+        for rows in [0, 1] {
+            let raw = map_batch(rows);
+            let canonical = normalize_map_names(std::slice::from_ref(&raw))
+                .unwrap()
+                .into_owned()
+                .remove(0);
+            let batches = vec![raw, canonical];
+            assert_schema_error(normalize_map_names(&batches));
+            assert_schema_error(inline_relation(&batches, None));
+            assert_schema_error(session.create_dataframe_from_arrow(batches, None));
+        }
+    }
+
+    #[test]
+    fn reordered_union_schema_fields_are_rejected_before_relabeling_children() {
+        let maps: ArrayRef = Arc::new(map(1));
+        let fields = [
+            (0, Arc::new(Field::new("small", ArrowType::Int32, false))),
+            (1, Arc::new(Field::new("large", ArrowType::Int64, false))),
+            (
+                2,
+                Arc::new(Field::new("maps", maps.data_type().clone(), true)),
+            ),
+        ];
+        let array: ArrayRef = Arc::new(
+            UnionArray::try_new(
+                fields.clone().into_iter().collect(),
+                vec![0, 1, 2].into(),
+                Some(vec![0, 0, 0].into()),
+                vec![
+                    Arc::new(Int32Array::from(vec![42])),
+                    Arc::new(Int64Array::from(vec![84])),
+                    maps,
+                ],
+            )
+            .unwrap(),
+        );
+        array.to_data().validate_full().unwrap();
+        let schema_type = ArrowType::Union(
+            [fields[1].clone(), fields[0].clone(), fields[2].clone()]
+                .into_iter()
+                .collect(),
+            arrow::datatypes::UnionMode::Dense,
+        );
+        assert_ne!(array.data_type(), &schema_type);
+        assert!(array.data_type().equals_datatype(&schema_type));
+        let batch = RecordBatch::try_new_with_options(
+            Arc::new(Schema::new(vec![Field::new(
+                "user_union",
+                schema_type,
+                true,
+            )])),
+            vec![array],
+            &RecordBatchOptions::new().with_match_field_names(false),
+        )
+        .unwrap();
+        let session = crate::SparkSession::builder()
+            .remote("sc://127.0.0.1:1")
+            .get_or_create()
+            .unwrap();
+        for result in [
+            normalize_map_names(std::slice::from_ref(&batch)).map(|_| ()),
+            inline_relation(std::slice::from_ref(&batch), None).map(|_| ()),
+            session
+                .create_dataframe_from_arrow(vec![batch], None)
+                .map(|_| ()),
+        ] {
+            let Err(error) = result else {
+                panic!("reordered union fields must not relabel physical children");
+            };
+            assert_eq!(
+                error.message(),
+                "Arrow column type does not match its schema field"
+            );
+        }
+    }
+
+    #[test]
+    fn inconsistent_union_child_types_are_rejected_without_reinterpretation() {
+        let session = crate::SparkSession::builder()
+            .remote("sc://127.0.0.1:1")
+            .get_or_create()
+            .unwrap();
+        // The second fixture's Int32 buffer has enough bytes for one Int64;
+        // checking buffer sizes alone would not prove retyping was rejected.
+        for values in [vec![42], vec![42, 43]] {
+            let maps: ArrayRef = Arc::new(map(1));
+            let array: ArrayRef = Arc::new(
+                UnionArray::try_new(
+                    [
+                        (0, Arc::new(Field::new("wide", ArrowType::Int64, false))),
+                        (
+                            1,
+                            Arc::new(Field::new("maps", maps.data_type().clone(), true)),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    vec![0, 1].into(),
+                    Some(vec![0, 0].into()),
+                    vec![Arc::new(Int32Array::from(values)), maps],
+                )
+                .unwrap(),
+            );
+            // Arrow 58.3 accepts this through its safe constructor despite the
+            // declared Int64 field containing an Int32 child.
+            assert!(array.to_data().validate_full().is_err());
+            let batch = RecordBatch::try_new(
+                Arc::new(Schema::new(vec![Field::new(
+                    "user_union",
+                    array.data_type().clone(),
+                    true,
+                )])),
+                vec![array],
+            )
+            .unwrap();
+            for result in [
+                normalize_map_names(std::slice::from_ref(&batch)).map(|_| ()),
+                inline_relation(std::slice::from_ref(&batch), None).map(|_| ()),
+                session
+                    .create_dataframe_from_arrow(vec![batch], None)
+                    .map(|_| ()),
+            ] {
+                let Err(error) = result else {
+                    panic!("declared union types must not reinterpret physical children");
+                };
+                assert_eq!(
+                    error.message(),
+                    "Arrow column type does not match its schema field"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn public_zero_row_arrow_input_canonicalizes_maps_without_a_config_rpc() {
+        let session = crate::SparkSession::builder()
+            .remote("sc://127.0.0.1:1")
+            .get_or_create()
+            .unwrap();
+        let dataframe = session
+            .create_dataframe_from_arrow(vec![map_batch(0)], None)
+            .unwrap();
+        let Some(spark_connect_proto::relation::RelType::LocalRelation(local)) =
+            dataframe.to_relation().rel_type
+        else {
+            panic!("expected zero-row inline relation");
+        };
+        assert!(local.schema.is_none());
+        let reader = StreamReader::try_new(Cursor::new(local.data.unwrap()), None).unwrap();
+        assert_canonical_map(reader.schema().field(0).data_type());
+        let batches = reader.collect::<std::result::Result<Vec<_>, _>>().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 0);
     }
 }
