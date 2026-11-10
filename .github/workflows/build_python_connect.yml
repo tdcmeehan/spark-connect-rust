@@ -678,7 +678,7 @@ jobs:
       - name: Cargo build
         run: cargo build --release
       - name: Cargo test
-        run: cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking --release
+        run: cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release
       - name: No-stub audit
         run: bash scripts/audit_no_stubs.sh
 

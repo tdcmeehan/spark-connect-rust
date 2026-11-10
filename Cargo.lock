@@ -75,6 +75,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "apache-spark-connect-async"
+version = "4.3.0"
+dependencies = [
+ "apache-spark-connect",
+ "apache-spark-connect-core",
+ "apache-spark-connect-proto",
+ "arrow",
+ "futures",
+ "prost",
+ "tempfile",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "apache-spark-connect-blocking"
 version = "4.3.0"
 dependencies = [

@@ -262,7 +262,7 @@ Vendor the ones we don't have a Rust implementation for.
 
 Run all of these green before pushing:
 ```
-cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking --release --lib
+cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
 cargo test -p apache-spark-connect -p apache-spark-connect-core --release --features wasm-udf --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate

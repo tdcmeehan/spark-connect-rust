@@ -90,6 +90,25 @@ pub fn command(command_type: proto::command::CommandType) -> proto::Plan {
     }
 }
 
+/// The error of a tag that an operation cannot carry, an empty one or one with a comma. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn check_tag(tag: &str) -> crate::error::Result<()> {
+    if tag.contains(',') {
+        return Err(SparkError::value(
+            "VALUE_ALLOWED",
+            &[("arg_name", "Spark Connect tag"), ("disallowed_value", ",")],
+        ));
+    }
+    if tag.is_empty() {
+        return Err(SparkError::value(
+            "VALUE_NOT_NON_EMPTY_STR",
+            &[("arg_name", "Spark Connect tag"), ("arg_value", "")],
+        ));
+    }
+    Ok(())
+}
+
 /// The request that executes `plan` in the session `session_id`, tagged with `tags`.
 pub fn execute_plan_request(
     session_id: &str,

@@ -191,19 +191,7 @@ impl SparkSession {
     /// tag of a comma, which separates the tags of Spark jobs, and `VALUE_NOT_NON_EMPTY_STR` for
     /// an empty tag. `add_tag` checks them, as does the `removeTag` of the Python client.
     pub fn check_tag(tag: &str) -> Result<()> {
-        if tag.contains(',') {
-            return Err(SparkError::value(
-                "VALUE_ALLOWED",
-                &[("arg_name", "Spark Connect tag"), ("disallowed_value", ",")],
-            ));
-        }
-        if tag.is_empty() {
-            return Err(SparkError::value(
-                "VALUE_NOT_NON_EMPTY_STR",
-                &[("arg_name", "Spark Connect tag"), ("arg_value", "")],
-            ));
-        }
-        Ok(())
+        spark_connect_core::execution::check_tag(tag)
     }
 
     /// Remove a tag that this thread added. Mirrors `SparkSession.removeTag`.

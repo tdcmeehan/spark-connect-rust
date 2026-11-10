@@ -74,9 +74,9 @@ jobs:
         # default-members and requires maturin/Python to build.
         run: cargo build --release
 
-      - name: Cargo test (spark-connect, spark-connect-core and spark-connect-blocking)
+      - name: Cargo test (spark-connect, spark-connect-core, spark-connect-blocking and spark-connect-async)
         # Test the core transport and pure-Rust client crates
-        run: cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking --release
+        run: cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release
 
       - name: Cargo build/test with optional conversion features (datafusion, polars)
         # Exercises the to_datafusion()/to_polars() conversions, which are gated
@@ -200,4 +200,4 @@ jobs:
         run: |
           cargo +1.88 check --locked -p apache-spark-connect -p apache-spark-connect-core \
             -p apache-spark-connect-proto -p apache-spark-connect-macros -p apache-spark-connect-build \
-            -p apache-spark-connect-blocking --features apache-spark-connect/wasm-udf
+            -p apache-spark-connect-blocking -p apache-spark-connect-async --features apache-spark-connect/wasm-udf

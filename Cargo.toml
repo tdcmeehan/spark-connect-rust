@@ -22,6 +22,7 @@ members = [
     "crates/spark-connect-core",
     "crates/spark-connect-blocking",
     "crates/spark-connect",
+    "crates/spark-connect-async",
     "crates/spark-connect-macros",
     "crates/spark-connect-build",
     "crates/pyspark-rs",
@@ -48,6 +49,7 @@ default-members = [
     "crates/spark-connect-core",
     "crates/spark-connect-blocking",
     "crates/spark-connect",
+    "crates/spark-connect-async",
     "crates/spark-connect-macros",
     "crates/spark-connect-build",
 ]

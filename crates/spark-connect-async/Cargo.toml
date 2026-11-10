@@ -1,0 +1,26 @@
+[package]
+name = "apache-spark-connect-async"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "An async Rust client for Spark Connect, with typed results and Rust errors"
+
+[lib]
+name = "spark_connect_async"
+
+[dependencies]
+spark-connect-core = { package = "apache-spark-connect-core", path = "../spark-connect-core", version = "4.3.0" }
+tokio.workspace = true
+tonic.workspace = true
+
+[dev-dependencies]
+arrow.workspace = true
+spark-connect = { package = "apache-spark-connect", path = "../spark-connect", version = "4.3.0" }
+spark-connect-proto = { package = "apache-spark-connect-proto", path = "../spark-connect-proto", version = "4.3.0" }
+futures.workspace = true
+prost.workspace = true
+tempfile = "3"
