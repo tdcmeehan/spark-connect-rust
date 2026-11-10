@@ -2185,22 +2185,16 @@ pub(crate) fn execute_command_with_info(
     session.execute_command(command_type)
 }
 
-/// For the tests of the capture of a response: what an action of the core does with each one, as
-/// it captures what the execution reports and hands the observed metrics to the session's
-/// observer.
+/// For the tests of the capture of a response: the core's step for each response of an
+/// execution, with the session's observer.
 #[cfg(test)]
 fn capture_execution(
     resp: &mut proto::ExecutePlanResponse,
     info: &mut ExecutionInfo,
     session: &SparkSession,
 ) {
-    use spark_connect_core::actions::ExecutionObserver;
-    let observed = info.capture(resp, session.plan_ids());
-    if !observed.is_empty() {
-        SessionObserver::start(session)
-            .unwrap()
-            .on_observed_metrics(observed);
-    }
+    let mut observer = SessionObserver::start(session).unwrap();
+    spark_connect_core::actions::capture_response(resp, info, session.plan_ids(), &mut observer);
 }
 
 /// A random seed of a sample without one, as PySpark's `random.randint(0, sys.maxsize)`: the

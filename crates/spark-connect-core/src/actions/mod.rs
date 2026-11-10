@@ -116,10 +116,12 @@ impl<O: ExecutionObserver> Execution<O> {
             self.complete();
             return Ok(None);
         };
-        let observed = self.info.capture(&mut response, &self.plan_ids);
-        if !observed.is_empty() {
-            self.responses.observer.on_observed_metrics(observed);
-        }
+        capture_response(
+            &mut response,
+            &mut self.info,
+            &self.plan_ids,
+            &mut self.responses.observer,
+        );
         Ok(Some(response))
     }
 
@@ -134,6 +136,22 @@ impl<O: ExecutionObserver> Execution<O> {
             self.responses.observer.on_failure(&self.info, error);
         }
         result
+    }
+}
+
+/// What an execution takes from each of its responses after the observer heard of it: `info`
+/// gets what the response reports, the observations of the plans of `plan_ids` get their
+/// metrics, and then the observer gets them too. Not a stable API.
+#[doc(hidden)]
+pub fn capture_response(
+    response: &mut proto::ExecutePlanResponse,
+    info: &mut ExecutionInfo,
+    plan_ids: &PlanIds,
+    observer: &mut impl ExecutionObserver,
+) {
+    let observed = info.capture(response, plan_ids);
+    if !observed.is_empty() {
+        observer.on_observed_metrics(observed);
     }
 }
 

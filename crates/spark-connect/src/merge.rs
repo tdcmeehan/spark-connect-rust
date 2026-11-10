@@ -126,7 +126,7 @@ impl WhenMatched {
         let action = merge_action(
             proto::merge_action::ActionType::UpdateStar,
             self.condition.as_ref(),
-            None,
+            [],
         );
         self.writer.matched_actions.push(action);
         self.writer
@@ -136,7 +136,7 @@ impl WhenMatched {
         let action = merge_action(
             proto::merge_action::ActionType::Update,
             self.condition.as_ref(),
-            Some(assignments),
+            assignments,
         );
         self.writer.matched_actions.push(action);
         self.writer
@@ -146,7 +146,7 @@ impl WhenMatched {
         let action = merge_action(
             proto::merge_action::ActionType::Delete,
             self.condition.as_ref(),
-            None,
+            [],
         );
         self.writer.matched_actions.push(action);
         self.writer
@@ -164,7 +164,7 @@ impl WhenNotMatched {
         let action = merge_action(
             proto::merge_action::ActionType::InsertStar,
             self.condition.as_ref(),
-            None,
+            [],
         );
         self.writer.not_matched_actions.push(action);
         self.writer
@@ -174,7 +174,7 @@ impl WhenNotMatched {
         let action = merge_action(
             proto::merge_action::ActionType::Insert,
             self.condition.as_ref(),
-            Some(assignments),
+            assignments,
         );
         self.writer.not_matched_actions.push(action);
         self.writer
@@ -192,7 +192,7 @@ impl WhenNotMatchedBySource {
         let action = merge_action(
             proto::merge_action::ActionType::UpdateStar,
             self.condition.as_ref(),
-            None,
+            [],
         );
         self.writer.not_matched_by_source_actions.push(action);
         self.writer
@@ -202,7 +202,7 @@ impl WhenNotMatchedBySource {
         let action = merge_action(
             proto::merge_action::ActionType::Update,
             self.condition.as_ref(),
-            Some(assignments),
+            assignments,
         );
         self.writer.not_matched_by_source_actions.push(action);
         self.writer
@@ -212,7 +212,7 @@ impl WhenNotMatchedBySource {
         let action = merge_action(
             proto::merge_action::ActionType::Delete,
             self.condition.as_ref(),
-            None,
+            [],
         );
         self.writer.not_matched_by_source_actions.push(action);
         self.writer
