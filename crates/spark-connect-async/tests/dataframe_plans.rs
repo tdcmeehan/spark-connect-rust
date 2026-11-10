@@ -770,3 +770,243 @@ fn weights_of_a_split_that_are_negative_or_add_up_to_zero_are_rejected() {
     }
     assert!(RandomSplit::try_new([0.0, 1.0]).is_ok());
 }
+
+#[tokio::test]
+async fn groupings_and_aggregations_have_the_plans_of_the_old_api() {
+    use spark_connect::row::Value as V;
+    use spark_connect_async::options::Pivot;
+    let s = Sessions::connect().await;
+    let total = Column::from(spark_connect::functions::sum(old_col("v")).alias("total"));
+    let aggregates = [total.clone(), col("w").alias("w")];
+    let totals = [total.clone()];
+    let sets = || vec![vec![old_col("a")], vec![old_col("a"), old_col("b")], vec![]];
+    let new_sets = || vec![vec![col("a")], vec![col("a"), col("b")], vec![]];
+    assert_same_plans(vec![
+        (
+            "agg of a DataFrame",
+            s.old_df().agg(exprs(&aggregates)),
+            s.new_df().agg(aggregates.clone()),
+        ),
+        (
+            "group_by agg",
+            s.old_df().group_by(["k"]).agg(exprs(&aggregates)),
+            s.new_df().group_by(["k"]).agg(aggregates.clone()),
+        ),
+        (
+            "group_by of expressions",
+            s.old_df()
+                .group_by([old_col("k").alias("key")])
+                .agg(exprs(&totals)),
+            s.new_df()
+                .group_by([col("k").alias("key")])
+                .agg([total.clone()]),
+        ),
+        (
+            "group_by count",
+            s.old_df().group_by(["k", "j"]).count(),
+            s.new_df().group_by(["k", "j"]).count(),
+        ),
+        (
+            "rollup",
+            s.old_df().rollup(["a", "b"]).agg(exprs(&totals)),
+            s.new_df().rollup(["a", "b"]).agg([total.clone()]),
+        ),
+        (
+            "cube count",
+            s.old_df().cube(["a", "b"]).count(),
+            s.new_df().cube(["a", "b"]).count(),
+        ),
+        (
+            "grouping_sets of their columns",
+            s.old_df().grouping_sets(sets()).count(),
+            s.new_df().grouping_sets(new_sets(), ["a", "b"]).count(),
+        ),
+        (
+            "grouping_sets with columns",
+            s.old_df()
+                .grouping_sets_with_columns(sets(), vec![old_col("b")])
+                .agg(exprs(&totals)),
+            s.new_df()
+                .grouping_sets(new_sets(), ["b"])
+                .agg([total.clone()]),
+        ),
+        (
+            "pivot",
+            s.old_df()
+                .group_by(["k"])
+                .pivot(old_col("p"), None)
+                .unwrap()
+                .agg(exprs(&totals)),
+            s.new_df().group_by(["k"]).pivot("p").agg([total.clone()]),
+        ),
+        (
+            "pivot of string values",
+            s.old_df()
+                .group_by(["k"])
+                .pivot(
+                    old_col("p"),
+                    Some(vec![V::String("x".into()), V::String("y".into())]),
+                )
+                .unwrap()
+                .count(),
+            s.new_df()
+                .group_by(["k"])
+                .pivot(Pivot::new("p").values(["x", "y"]))
+                .count(),
+        ),
+        (
+            "pivot of integer values",
+            s.old_df()
+                .group_by(["k"])
+                .pivot(old_col("p"), Some(vec![V::Integer(1), V::Integer(2)]))
+                .unwrap()
+                .count(),
+            s.new_df()
+                .group_by(["k"])
+                .pivot(Pivot::new(col("p")).values([1, 2]))
+                .count(),
+        ),
+        (
+            "pivot of long values",
+            s.old_df()
+                .group_by(["k"])
+                .pivot(old_col("p"), Some(vec![V::Long(1 << 40)]))
+                .unwrap()
+                .count(),
+            s.new_df()
+                .group_by(["k"])
+                .pivot(Pivot::new("p").values([1i64 << 40]))
+                .count(),
+        ),
+    ]);
+}
+
+#[tokio::test]
+async fn statistics_and_missing_values_have_the_plans_of_the_old_api() {
+    use spark_connect::row::Value as V;
+    use spark_connect::{Expression, LiteralExpression as L};
+    use spark_connect_async::options::{DropNa, FillColumns, FillValue, Replace};
+    let s = Sessions::connect().await;
+    let string_type = DataType::String {
+        collation: "UTF8_BINARY".to_string(),
+    };
+    let strata = vec![
+        (Expression::literal(L::int(0)), 0.5),
+        (Expression::literal(L::int(1)), 0.25),
+    ];
+    assert_same_plans(vec![
+        (
+            "crosstab",
+            s.old_df().stat().crosstab("a", "b"),
+            s.new_df().stat().crosstab("a", "b"),
+        ),
+        (
+            "freq_items",
+            s.old_df().stat().freq_items(vec!["a", "b"], 0.1),
+            s.new_df().stat().freq_items(["a", "b"], 0.1),
+        ),
+        (
+            "sample_by",
+            s.old_df().stat().sample_by("k", strata.clone(), Some(7)),
+            s.new_df()
+                .stat()
+                .sample_by("k", [(0, 0.5), (1, 0.25)], Some(7)),
+        ),
+        (
+            "sample_by without a seed",
+            s.old_df().stat().sample_by("k", strata, None),
+            s.new_df()
+                .stat()
+                .sample_by("k", [(0, 0.5), (1, 0.25)], None),
+        ),
+        (
+            "dropna",
+            s.old_df().dropna(None, None, None),
+            s.new_df().na().drop(DropNa::default()),
+        ),
+        (
+            "dropna of any",
+            s.old_df().na().drop(Some("any"), None, Some(vec!["a"])),
+            s.new_df().na().drop(DropNa::any().subset(["a"])),
+        ),
+        (
+            "dropna of all",
+            s.old_df().dropna(Some("all"), None, Some(vec!["a", "b"])),
+            s.new_df().na().drop(DropNa::all().subset(["a", "b"])),
+        ),
+        (
+            "dropna of a threshold",
+            s.old_df().dropna(None, Some(2), None),
+            s.new_df().na().drop(DropNa::at_least(2)),
+        ),
+        (
+            "fillna",
+            s.old_df().fillna(0, None),
+            s.new_df().na().fill(0),
+        ),
+        (
+            "fillna of an i64 and a subset",
+            s.old_df().na().fill(5, Some(vec!["a"])),
+            s.new_df().na().fill(FillValue::from(5i64).subset(["a"])),
+        ),
+        (
+            "fillna_double",
+            s.old_df().fillna_double(0.5, None),
+            s.new_df().na().fill(0.5),
+        ),
+        (
+            "fillna_string",
+            s.old_df().fillna_string("x", Some(vec!["s", "t"])),
+            s.new_df()
+                .na()
+                .fill(FillValue::from("x").subset(["s", "t"])),
+        ),
+        (
+            "fillna_bool",
+            s.old_df().fillna_bool(true, None),
+            s.new_df().na().fill(true),
+        ),
+        (
+            "fillna_value",
+            s.old_df().fillna_value(V::String("y".into()), None),
+            s.new_df().na().fill("y".to_string()),
+        ),
+        (
+            "fillna_map",
+            s.old_df().fillna_map(vec![
+                ("a".into(), V::Long(0)),
+                ("s".into(), V::String("?".into())),
+            ]),
+            s.new_df()
+                .na()
+                .fill(FillColumns::new().column("a", 0).column("s", "?")),
+        ),
+        (
+            "replace of numbers",
+            s.old_df().replace(vec![("1".into(), "2.5".into())], None),
+            s.new_df().na().replace([(1.0, 2.5)]),
+        ),
+        (
+            "replace of strings in a subset",
+            s.old_df()
+                .na()
+                .replace(vec![("a".into(), "b".into())], Some(vec!["s"])),
+            s.new_df()
+                .na()
+                .replace(Replace::from(vec![("a", "b")]).subset(["s"])),
+        ),
+        (
+            "replace_literals with a null",
+            s.old_df().replace_literals(
+                vec![
+                    (L::string("n/a"), L::Null(string_type)),
+                    (L::boolean(true), L::boolean(false)),
+                ],
+                None,
+            ),
+            s.new_df()
+                .na()
+                .replace(Replace::new().pair("n/a", None::<&str>).pair(true, false)),
+        ),
+    ]);
+}

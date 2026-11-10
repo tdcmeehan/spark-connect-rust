@@ -16,6 +16,8 @@ pub mod execution;
 pub mod expression;
 pub mod functions;
 #[doc(hidden)]
+pub mod group;
+#[doc(hidden)]
 pub mod interop;
 pub mod merge;
 pub mod ml;

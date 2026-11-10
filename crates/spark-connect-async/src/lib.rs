@@ -25,14 +25,17 @@ pub mod column;
 pub mod dataframe;
 pub mod de;
 pub mod error;
+pub mod group;
 pub mod observation;
 pub mod options;
 pub mod progress;
 pub mod session;
 pub mod sql;
+pub mod stat;
 pub mod stream;
 pub mod tvf;
 pub mod value;
+pub mod window;
 
 /// Spark data types.
 pub mod types {

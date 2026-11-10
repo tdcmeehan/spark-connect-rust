@@ -22,11 +22,18 @@ mod support;
 
 use std::collections::BTreeMap;
 
+use spark_connect::expression::SortOrder;
 use spark_connect::functions::when as old_when;
+use spark_connect::window::WindowSpec as OldWindow;
 use spark_connect::{col as oc, lit as ol, Column as Old};
 use spark_connect_async::column::AliasSpec;
 use spark_connect_async::types::DataType;
+use spark_connect_async::window::{FrameBound, Window};
 use spark_connect_async::{col, lit, when, Column};
+
+fn expr(name: &str) -> spark_connect::Expression {
+    oc(name).expression().clone()
+}
 
 fn sent(column: Column) -> spark_connect_proto::Expression {
     Old::from(column).to_proto()
@@ -234,6 +241,47 @@ fn every_column_method_builds_the_expression_of_the_old_api() {
             "otherwise of a column",
             oc("x").otherwise(ol(1)),
             col("x").otherwise(lit(1)),
+        ),
+        (
+            "over a partition",
+            oc("x").over(OldWindow::new().partition_by(vec![expr("a"), expr("b")])),
+            col("x").over(Window::new().partition_by(["a"]).partition_by([col("b")])),
+        ),
+        (
+            "over an order",
+            oc("x").over(OldWindow::new().order_by(vec![
+                SortOrder::asc_nulls_first(expr("b")),
+                SortOrder::desc_nulls_last(expr("c")),
+            ])),
+            col("x").over(Window::new().order_by([col("b"), col("c").desc()])),
+        ),
+        (
+            "over rows",
+            oc("x").over(
+                OldWindow::new()
+                    .partition_by(vec![expr("a")])
+                    .order_by(vec![SortOrder::asc_nulls_last(expr("b"))])
+                    .rows_between(FrameBound::Preceding(1), FrameBound::Following(2)),
+            ),
+            col("x").over(
+                Window::new()
+                    .partition_by(["a"])
+                    .order_by([col("b").asc_nulls_last()])
+                    .rows_between(FrameBound::Preceding(1), FrameBound::Following(2)),
+            ),
+        ),
+        (
+            "over a range",
+            oc("x").over(
+                OldWindow::new()
+                    .order_by(vec![SortOrder::asc_nulls_first(expr("b"))])
+                    .range_between(FrameBound::UnboundedPreceding, FrameBound::CurrentRow),
+            ),
+            col("x").over(
+                Window::new()
+                    .order_by(["b"])
+                    .range_between(FrameBound::UnboundedPreceding, FrameBound::CurrentRow),
+            ),
         ),
     ];
     let cases = cases

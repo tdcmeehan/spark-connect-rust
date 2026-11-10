@@ -11,6 +11,7 @@ use spark_connect_core::types::{DataType, DayTimeIntervalType};
 
 use crate::dataframe::DataFrame;
 use crate::value::Decimal;
+use crate::window::Window;
 
 /// An expression over the columns of a DataFrame: a column, a literal, or an operation on
 /// other columns. Its methods build new columns; nothing reaches the server until an action
@@ -298,6 +299,11 @@ impl Column {
     /// it is a `CASE WHEN` of this branch, as [`when`] makes it.
     pub fn when(self, condition: impl Into<Column>, value: impl Into<Column>) -> Column {
         Column(self.0.when(to_core(condition), to_core(value)))
+    }
+
+    /// The value of the window function or aggregate for each row, over the rows of `window`.
+    pub fn over(self, window: Window) -> Column {
+        Column(self.0.over(window.into_core()))
     }
 
     /// The value of the `CASE WHEN` where no condition holds, which is `NULL` without it. A

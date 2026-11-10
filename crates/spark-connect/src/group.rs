@@ -5,6 +5,9 @@
 use std::sync::Arc;
 
 use spark_connect_core::error::{Result, SparkError, SparkErrorKind};
+use spark_connect_core::group::{numeric_aggregates, NumericAggregates};
+#[cfg(test)]
+use spark_connect_core::group::{parse_attr_name, verify_numeric_col_name};
 
 use crate::column::Column;
 use crate::dataframe::DataFrame;
@@ -377,41 +380,21 @@ impl GroupedData {
     /// column that is not a numeric one of its schema.
     pub fn numeric_agg(&self, function: &str, columns: Vec<&str>) -> Result<DataFrame> {
         let schema = self.dataframe.schema()?;
-        let names: Vec<String> = if columns.is_empty() {
-            match &schema {
-                DataType::Struct { fields } => fields
+        match numeric_aggregates(function, &schema, &columns) {
+            NumericAggregates::Aggregates(expressions) => Ok(self.agg(expressions)),
+            NumericAggregates::NotNumeric(invalid) => {
+                let invalid: Vec<String> = invalid
                     .iter()
-                    .filter(|field| is_numeric(&field.data_type))
-                    .map(|field| field.name.clone())
-                    .collect(),
-                _ => Vec::new(),
-            }
-        } else {
-            let mut invalid = Vec::new();
-            for column in &columns {
-                if !verify_numeric_col_name(column, &schema)? {
-                    invalid.push(crate::expression::python_str_repr(column));
-                }
-            }
-            if !invalid.is_empty() {
-                return Err(SparkError::classed(
+                    .map(|column| crate::expression::python_str_repr(column))
+                    .collect();
+                Err(SparkError::classed(
                     SparkErrorKind::TypeError,
                     "NOT_NUMERIC_COLUMNS",
                     &[("invalid_columns", &format!("[{}]", invalid.join(", ")))],
-                ));
+                ))
             }
-            columns.iter().map(|column| column.to_string()).collect()
-        };
-        let expressions = names
-            .iter()
-            .map(|name| {
-                Expression::function(
-                    function,
-                    vec![crate::column::col(name).expression().clone()],
-                )
-            })
-            .collect();
-        Ok(self.agg(expressions))
+            NumericAggregates::Struct { error, .. } => Err(*error),
+        }
     }
 
     /// Sum values in each group, as `GroupedData.sum`: every numeric column without `columns`.
@@ -437,98 +420,6 @@ impl GroupedData {
     /// Mean (alias for avg).
     pub fn mean(&self, columns: Vec<&str>) -> Result<DataFrame> {
         self.avg(columns)
-    }
-}
-
-/// Whether `data_type` is a `NumericType` of PySpark.
-fn is_numeric(data_type: &DataType) -> bool {
-    matches!(
-        data_type,
-        DataType::Byte
-            | DataType::Short
-            | DataType::Integer
-            | DataType::Long
-            | DataType::Float
-            | DataType::Double
-            | DataType::Decimal { .. }
-    )
-}
-
-/// The parts of an attribute name, as PySpark's `parse_attr_name`: split by dots, of
-/// backtick-quoted parts too; None for a name that it does not parse.
-fn parse_attr_name(name: &str) -> Option<Vec<String>> {
-    let chars: Vec<char> = name.chars().collect();
-    let n = chars.len();
-    let (mut parts, mut part, mut in_backtick, mut i) = (Vec::new(), String::new(), false, 0);
-    while i < n {
-        let c = chars[i];
-        if in_backtick {
-            if c == '`' {
-                if i + 1 < n && chars[i + 1] == '`' {
-                    part.push('`');
-                    i += 1;
-                } else {
-                    in_backtick = false;
-                    if i + 1 < n && chars[i + 1] != '.' {
-                        return None;
-                    }
-                }
-            } else {
-                part.push(c);
-            }
-        } else if c == '`' {
-            if !part.is_empty() {
-                return None;
-            }
-            in_backtick = true;
-        } else if c == '.' {
-            // As Python's `name[i - 1]`, the last character for the first.
-            let previous = chars[(i + n - 1) % n];
-            if previous == '.' || i == n - 1 {
-                return None;
-            }
-            parts.push(std::mem::take(&mut part));
-        } else {
-            part.push(c);
-        }
-        i += 1;
-    }
-    if in_backtick {
-        return None;
-    }
-    parts.push(part);
-    Some(parts)
-}
-
-/// Whether `name` is of a numeric column of `schema`, as PySpark's
-/// `verify_numeric_col_name`: by its parts, of the fields of structs and of the structs of
-/// arrays. As PySpark's, the name of a struct is an `IndexError`.
-fn verify_numeric_col_name(name: &str, schema: &DataType) -> Result<bool> {
-    fn verify(parts: &[String], data_type: &DataType) -> Result<bool> {
-        if parts.is_empty() && is_numeric(data_type) {
-            return Ok(true);
-        }
-        let fields = match data_type {
-            DataType::Struct { fields } => fields,
-            DataType::Array { element_type, .. } => match element_type.as_ref() {
-                DataType::Struct { fields } => fields,
-                _ => return Ok(false),
-            },
-            _ => return Ok(false),
-        };
-        let Some((part, rest)) = parts.split_first() else {
-            let mut err = SparkError::value_msg("list index out of range");
-            err.kind = SparkErrorKind::IndexError;
-            return Err(err);
-        };
-        match fields.iter().find(|field| field.name == *part) {
-            Some(field) => verify(rest, &field.data_type),
-            None => Ok(false),
-        }
-    }
-    match parse_attr_name(name) {
-        Some(parts) if !parts.is_empty() => verify(&parts, schema),
-        _ => Ok(false),
     }
 }
 

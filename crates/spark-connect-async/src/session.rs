@@ -533,6 +533,14 @@ mod tests {
         assert_send_sync::<crate::actions::Show>();
         assert_send_sync::<crate::Observation>();
         assert_send_sync::<crate::stream::ExecutionInfo>();
+        assert_send_sync::<crate::group::GroupedData<crate::group::ByColumns>>();
+        assert_send_sync::<crate::group::GroupedData>();
+        assert_send_sync::<crate::stat::StatFunctions>();
+        assert_send_sync::<crate::stat::NaFunctions>();
+        assert_send_sync::<crate::window::Window>();
+        assert_send_sync::<crate::options::Pivot>();
+        assert_send_sync::<crate::options::FillValue>();
+        assert_send_sync::<crate::options::Replace>();
         fn assert_send<T: Send>() {}
         assert_send::<crate::RecordBatchStream>();
         // Type-checked, never called: it would need a server.
@@ -557,6 +565,9 @@ mod tests {
             assert_send_static(df.explain(Default::default()));
             assert_send_static(df.checkpoint(Default::default()));
             assert_send_static(df.create_temp_view("v", Default::default()));
+            assert_send_static(df.group_by(["id"]).sum(["id"]));
+            assert_send_static(df.stat().corr("a", "b"));
+            assert_send_static(df.stat().approx_quantile(["a"], [0.5], 0.1));
             assert_send_static(conf.set("k", "v"));
             assert_send_static(conf.get("k"));
             assert_send_static(conf.get_all());

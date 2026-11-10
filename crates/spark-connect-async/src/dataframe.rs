@@ -12,12 +12,14 @@ use spark_connect_proto as proto;
 use tokio::sync::OnceCell;
 
 use crate::column::{expressions, subquery_column, to_core, Column};
+use crate::group::{ByColumns, GroupedData, Grouping};
 use crate::observation::Observation;
 use crate::options::{
     AsOfJoin, JoinType, NearestByJoin, Partitioning, PartitioningKind, RandomSplit, Sample,
     UnionByName,
 };
 use crate::session::Session;
+use crate::stat::{NaFunctions, StatFunctions};
 use crate::tvf::TableArg;
 
 /// A query of a session, which runs on the server at its actions.
@@ -59,7 +61,7 @@ impl From<Column> for ColumnOrName {
     }
 }
 
-fn strings(names: impl IntoIterator<Item = impl Into<String>>) -> Vec<String> {
+pub(crate) fn strings(names: impl IntoIterator<Item = impl Into<String>>) -> Vec<String> {
     names.into_iter().map(Into::into).collect()
 }
 
@@ -651,6 +653,54 @@ impl DataFrame {
                 .map(|index| index.expression().clone())
                 .collect(),
         })
+    }
+
+    /// The rows in groups of the values of `columns`.
+    pub fn group_by(
+        &self,
+        columns: impl IntoIterator<Item = impl Into<Column>>,
+    ) -> GroupedData<ByColumns> {
+        GroupedData::new(self.clone(), expressions(columns), Grouping::By)
+    }
+
+    /// The rows in the groups of a rollup of `columns`: of the values of every column, of
+    /// every column but the last, and so on, down to one group of every row. A column that a
+    /// group is not of is `NULL` in its row.
+    pub fn rollup(&self, columns: impl IntoIterator<Item = impl Into<Column>>) -> GroupedData {
+        GroupedData::new(self.clone(), expressions(columns), Grouping::Rollup)
+    }
+
+    /// The rows in the groups of a cube of `columns`: of the values of each combination of the
+    /// columns. A column that a group is not of is `NULL` in its row.
+    pub fn cube(&self, columns: impl IntoIterator<Item = impl Into<Column>>) -> GroupedData {
+        GroupedData::new(self.clone(), expressions(columns), Grouping::Cube)
+    }
+
+    /// The rows in the groups of each set of `sets`, with the columns `columns` in each row of
+    /// the result besides the aggregations. A column that a set does not hold is `NULL` in the
+    /// rows of that set.
+    pub fn grouping_sets(
+        &self,
+        sets: impl IntoIterator<Item = impl IntoIterator<Item = impl Into<Column>>>,
+        columns: impl IntoIterator<Item = impl Into<Column>>,
+    ) -> GroupedData {
+        let sets = sets.into_iter().map(expressions).collect();
+        GroupedData::new(self.clone(), expressions(columns), Grouping::Sets(sets))
+    }
+
+    /// One row of the aggregations `aggregates` of every row.
+    pub fn agg(&self, aggregates: impl IntoIterator<Item = impl Into<Column>>) -> DataFrame {
+        GroupedData::<ByColumns>::new(self.clone(), vec![], Grouping::By).agg(aggregates)
+    }
+
+    /// The statistics of the columns.
+    pub fn stat(&self) -> StatFunctions {
+        StatFunctions::new(self.clone())
+    }
+
+    /// The handling of the missing values of the columns.
+    pub fn na(&self) -> NaFunctions {
+        NaFunctions::new(self.clone())
     }
 
     /// The count, mean, standard deviation, minimum and maximum of the columns `names`, or of

@@ -34,7 +34,7 @@ use prost::Message;
 use spark_connect::SparkSession;
 use spark_connect_async::actions::{Checkpoint, ExplainMode, StorageLevel, TempView};
 use spark_connect_async::progress::ProgressUpdate;
-use spark_connect_async::{DataFrame, ErrorKind, Session, SessionBuilder};
+use spark_connect_async::{Column, DataFrame, ErrorKind, Session, SessionBuilder};
 use spark_connect_proto as proto;
 
 const SESSION_ID: &str = "00000000-0000-4000-8000-00000000005e";
@@ -278,6 +278,101 @@ fn cases() -> Vec<Case> {
             },
             |s| s.with_tag("etl").unwrap().range(3).collect().await.unwrap()
         ),
+        case!(
+            "sum of every numeric column",
+            |s| s
+                .range(3)
+                .unwrap()
+                .group_by(["id"])
+                .sum(vec![])
+                .unwrap()
+                .collect(),
+            |s| {
+                let summed = s.range(3).group_by(["id"]).sum(Vec::<String>::new());
+                summed.await.unwrap().collect().await
+            }
+        ),
+        case!(
+            "avg of columns",
+            |s| s
+                .range(3)
+                .unwrap()
+                .rollup(["name"])
+                .avg(vec!["value", "id"])
+                .unwrap()
+                .collect(),
+            |s| s
+                .range(3)
+                .rollup(["name"])
+                .avg(["value", "id"])
+                .await
+                .unwrap()
+                .collect()
+                .await
+        ),
+        case!(
+            "min of a cube",
+            |s| s
+                .range(3)
+                .unwrap()
+                .cube(["name"])
+                .min(vec!["value"])
+                .unwrap()
+                .collect(),
+            |s| s
+                .range(3)
+                .cube(["name"])
+                .min(["value"])
+                .await
+                .unwrap()
+                .collect()
+                .await
+        ),
+        case!(
+            "max of a pivot",
+            |s| s
+                .range(3)
+                .unwrap()
+                .group_by(["name"])
+                .pivot(spark_connect::col("id"), None)
+                .unwrap()
+                .max(vec![])
+                .unwrap()
+                .collect(),
+            |s| s
+                .range(3)
+                .group_by(["name"])
+                .pivot("id")
+                .max(Vec::<String>::new())
+                .await
+                .unwrap()
+                .collect()
+                .await
+        ),
+        case!(
+            "corr",
+            |s| s.range(3).unwrap().stat().corr("id", "value"),
+            |s| s.range(3).stat().corr("id", "value").await
+        ),
+        case!(
+            "cov",
+            |s| s.range(3).unwrap().stat().cov("id", "value"),
+            |s| s.range(3).stat().cov("id", "value").await
+        ),
+        case!(
+            "approx_quantile",
+            |s| s
+                .range(3)
+                .unwrap()
+                .stat()
+                .approx_quantile(vec!["id"], vec![0.5, 0.9], 0.01)
+                .collect(),
+            |s| s
+                .range(3)
+                .stat()
+                .approx_quantile(["id"], [0.5, 0.9], 0.01)
+                .await
+        ),
     ]
 }
 
@@ -364,6 +459,35 @@ async fn results_read_into_rust_types_and_a_failure_ends_the_stream() {
     let error = batches.next().await.unwrap().unwrap_err();
     assert!(error.message().contains("the execution failed"), "{error}");
     assert!(batches.next().await.is_none());
+}
+
+#[tokio::test]
+async fn a_numeric_aggregation_of_a_column_that_is_not_numeric_fails() {
+    let (recorder, url) = start();
+    let session = Session::builder().remote(url).connect().await.unwrap();
+    let grouped = session.range(3).group_by(["id"]);
+    let error = grouped.sum(["value", "name", "nope"]).await.err().unwrap();
+    assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+    assert_eq!(error.error_class(), Some("NOT_NUMERIC_COLUMNS"));
+    assert!(error.message().contains(r#"["name", "nope"]"#), "{error}");
+    let analyzed = recorder.take();
+    assert!(analyzed
+        .iter()
+        .all(|entry| entry.kind == "AnalyzePlanRequest"));
+}
+
+#[tokio::test]
+async fn a_numeric_aggregation_without_columns_aggregates_every_numeric_column() {
+    let (_, url) = start();
+    let session = Session::builder().remote(url).connect().await.unwrap();
+    let grouped = session.range(3).group_by(["name"]);
+    let summed = grouped.sum(Vec::<String>::new()).await.unwrap();
+    let sum = |name| Column::from(spark_connect::functions::sum(spark_connect::col(name)));
+    let expected = grouped.agg([sum("id"), sum("value")]);
+    assert_eq!(
+        support::renumbered(&summed.to_relation()),
+        support::renumbered(&expected.to_relation())
+    );
 }
 
 #[tokio::test]

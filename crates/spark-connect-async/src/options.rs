@@ -6,9 +6,10 @@ use std::hash::BuildHasher;
 use std::ops::Range;
 
 use spark_connect_core::error::SparkError;
-use spark_connect_core::expression::Expression;
+use spark_connect_core::expression::{Expression, LiteralExpression};
+use spark_connect_core::row::Value as CoreValue;
 
-use crate::column::{expressions, Column};
+use crate::column::{expressions, Column, IntoLiteral};
 use crate::error::Result;
 
 /// The integers of [`Session::range`](crate::Session::range): from `start`, inclusive, to
@@ -411,5 +412,273 @@ impl NearestByJoin {
     pub fn left_outer(mut self) -> Self {
         self.left_outer = true;
         self
+    }
+}
+
+/// The pivot of [`GroupedData::pivot`](crate::group::GroupedData::pivot): a column of the
+/// result for each value of a column, in each group. Without values, the server finds them,
+/// which runs a query. A column or a column name is a pivot without values.
+#[derive(Debug, Clone)]
+pub struct Pivot {
+    pub(crate) column: Column,
+    pub(crate) values: Vec<Expression>,
+}
+
+impl Pivot {
+    /// The pivot on the values of `column` that the server finds.
+    pub fn new(column: impl Into<Column>) -> Self {
+        Pivot {
+            column: column.into(),
+            values: Vec::new(),
+        }
+    }
+
+    /// Pivots on `values` only, in their order.
+    pub fn values(mut self, values: impl IntoIterator<Item = impl IntoLiteral>) -> Self {
+        self.values = values
+            .into_iter()
+            .map(|value| Expression::literal(value.into_literal()))
+            .collect();
+        self
+    }
+}
+
+impl From<&str> for Pivot {
+    fn from(name: &str) -> Self {
+        Pivot::new(name)
+    }
+}
+
+impl From<String> for Pivot {
+    fn from(name: String) -> Self {
+        Pivot::new(name)
+    }
+}
+
+impl From<Column> for Pivot {
+    fn from(column: Column) -> Self {
+        Pivot::new(column)
+    }
+}
+
+/// A value that replaces `NULL`s: an integer, a floating-point number, a boolean or a string.
+/// The server fills only the columns of the value's type; an integer fills as a `BIGINT`.
+pub trait FillScalar: sealed::Sealed {
+    #[doc(hidden)]
+    fn into_fill(self) -> CoreValue;
+}
+
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for f64 {}
+    impl Sealed for bool {}
+    impl Sealed for &str {}
+    impl Sealed for String {}
+}
+
+macro_rules! fill_scalar {
+    ($($rust:ty => |$value:ident| $fill:expr;)*) => {
+        $(impl FillScalar for $rust {
+            fn into_fill(self) -> CoreValue {
+                let $value = self;
+                $fill
+            }
+        })*
+    };
+}
+
+fill_scalar! {
+    i32 => |v| CoreValue::Long(v.into());
+    i64 => |v| CoreValue::Long(v);
+    f64 => |v| CoreValue::Double(v);
+    bool => |v| CoreValue::Bool(v);
+    &str => |v| CoreValue::String(v.to_string());
+    String => |v| CoreValue::String(v);
+}
+
+/// What [`NaFunctions::fill`](crate::stat::NaFunctions::fill) puts in place of `NULL`s: one
+/// value, in every column of its type or in some columns, or a value of each column
+/// ([`FillColumns`]). A [`FillScalar`] value converts into it.
+///
+/// ```
+/// use spark_connect_async::options::{FillColumns, FillValue};
+///
+/// let zero = FillValue::from(0);
+/// let unknown = FillValue::from("unknown").subset(["name", "city"]);
+/// let each = FillColumns::new().column("age", 0).column("name", "unknown");
+/// ```
+#[derive(Debug, Clone)]
+pub struct FillValue {
+    pub(crate) fill: Fill,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum Fill {
+    One {
+        value: CoreValue,
+        columns: Vec<String>,
+    },
+    PerColumn(Vec<(String, CoreValue)>),
+}
+
+impl FillValue {
+    /// Fills only the columns `columns`, of the value's type. A value of each column
+    /// ([`FillColumns`]) keeps its own columns.
+    pub fn subset(self, columns: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        match self.fill {
+            Fill::One { value, .. } => FillValue {
+                fill: Fill::One {
+                    value,
+                    columns: columns.into_iter().map(Into::into).collect(),
+                },
+            },
+            per_column @ Fill::PerColumn(_) => FillValue { fill: per_column },
+        }
+    }
+}
+
+impl<T: FillScalar> From<T> for FillValue {
+    fn from(value: T) -> Self {
+        FillValue {
+            fill: Fill::One {
+                value: value.into_fill(),
+                columns: Vec::new(),
+            },
+        }
+    }
+}
+
+/// The value of each column that [`NaFunctions::fill`](crate::stat::NaFunctions::fill) puts in
+/// place of its `NULL`s.
+#[derive(Debug, Clone, Default)]
+pub struct FillColumns(Vec<(String, CoreValue)>);
+
+impl FillColumns {
+    /// No column.
+    pub fn new() -> Self {
+        FillColumns::default()
+    }
+
+    /// Fills the column `name` with `value`.
+    pub fn column(mut self, name: impl Into<String>, value: impl FillScalar) -> Self {
+        self.0.push((name.into(), value.into_fill()));
+        self
+    }
+}
+
+impl From<FillColumns> for FillValue {
+    fn from(columns: FillColumns) -> Self {
+        FillValue {
+            fill: Fill::PerColumn(columns.0),
+        }
+    }
+}
+
+/// Which rows [`NaFunctions::drop`](crate::stat::NaFunctions::drop) drops: by default each
+/// row with a `NULL` or NaN in any column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DropNa {
+    pub(crate) rows: DropRows,
+    pub(crate) columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DropRows {
+    Any,
+    All,
+    AtLeast(i32),
+}
+
+impl DropNa {
+    /// Drops each row with a `NULL` or NaN in any column.
+    pub fn any() -> Self {
+        DropNa {
+            rows: DropRows::Any,
+            columns: Vec::new(),
+        }
+    }
+
+    /// Drops each row whose columns are all `NULL` or NaN.
+    pub fn all() -> Self {
+        DropNa {
+            rows: DropRows::All,
+            ..DropNa::any()
+        }
+    }
+
+    /// Drops each row with fewer than `count` values that are neither `NULL` nor NaN.
+    pub fn at_least(count: i32) -> Self {
+        DropNa {
+            rows: DropRows::AtLeast(count),
+            ..DropNa::any()
+        }
+    }
+
+    /// Looks only at the columns `columns`.
+    pub fn subset(mut self, columns: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.columns = columns.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+impl Default for DropNa {
+    fn default() -> Self {
+        DropNa::any()
+    }
+}
+
+/// The replacements of [`NaFunctions::replace`](crate::stat::NaFunctions::replace): each value
+/// and the value that replaces it, which may be `None`, in every column of the value's type
+/// or in some columns. The server replaces booleans, floating-point numbers and strings; an
+/// array of pairs, or a `Vec`, converts into it.
+///
+/// ```
+/// use spark_connect_async::options::Replace;
+///
+/// let names = Replace::from([("Bob", "Robert"), ("Al", "Albert")]).subset(["name"]);
+/// let mixed = Replace::new().pair(0.0, None::<f64>).pair("n/a", None::<&str>);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Replace {
+    pub(crate) replacements: Vec<(LiteralExpression, LiteralExpression)>,
+    pub(crate) columns: Vec<String>,
+}
+
+impl Replace {
+    /// No replacement.
+    pub fn new() -> Self {
+        Replace::default()
+    }
+
+    /// Replaces `value` with `replacement`.
+    pub fn pair(mut self, value: impl IntoLiteral, replacement: impl IntoLiteral) -> Self {
+        self.replacements
+            .push((value.into_literal(), replacement.into_literal()));
+        self
+    }
+
+    /// Replaces only in the columns `columns`.
+    pub fn subset(mut self, columns: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.columns = columns.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+impl<V: IntoLiteral, R: IntoLiteral, const N: usize> From<[(V, R); N]> for Replace {
+    fn from(pairs: [(V, R); N]) -> Self {
+        Replace::from(Vec::from(pairs))
+    }
+}
+
+impl<V: IntoLiteral, R: IntoLiteral> From<Vec<(V, R)>> for Replace {
+    fn from(pairs: Vec<(V, R)>) -> Self {
+        pairs
+            .into_iter()
+            .fold(Replace::new(), |replace, (value, replacement)| {
+                replace.pair(value, replacement)
+            })
     }
 }
