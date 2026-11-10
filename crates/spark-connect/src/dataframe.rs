@@ -811,8 +811,10 @@ impl DataFrame {
     /// # Arguments
     /// * `prefetch_partitions` - If true, a background task fetches the next batch
     ///   from the server while the caller consumes the current one (one batch buffered
-    ///   ahead), overlapping network I/O with row processing. If false, each batch is
-    ///   fetched on demand only once the previous batch is exhausted.
+    ///   ahead), overlapping network I/O with row processing. That task runs on a thread of
+    ///   the client's runtime, and so do the progress and accumulator handlers of the
+    ///   execution, also their last call when the iterator is dropped early. If false, each
+    ///   batch is fetched on demand only once the previous batch is exhausted.
     pub fn to_local_iterator(&self, prefetch_partitions: bool) -> Result<LocalRowIterator> {
         let request = self.build_execute_request();
         let execution = block_on(actions::Execution::start(

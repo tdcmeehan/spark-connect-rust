@@ -558,7 +558,9 @@ impl SparkConnectClient {
         error
     }
 
-    /// Set the hook of the executions of this client and of its clones, or clear it.
+    /// Set the hook of the executions of this client and of its clones, or clear it. Unlike
+    /// `SparkSession::set_execute_plan_hook` of `apache-spark-connect`, it does not bound how
+    /// deeply hooks nest when a hook runs a query of its own.
     pub fn set_execute_plan_hook(&self, hook: Option<ExecutePlanHook>) {
         *self
             .execute_plan_hook

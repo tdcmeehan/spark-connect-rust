@@ -27,12 +27,12 @@ flowchart TD
         SKIN["python/pyspark - drop-in package"]
         EXT["_pyspark - PyO3 extension (crates/pyspark-rs)"]
         RS["User Rust code"]
+        API["apache-spark-connect - synchronous DataFrame / SQL API"]
     end
 
-    subgraph core["Rust core"]
-        API["apache-spark-connect - DataFrame / Column / functions / SQL"]
-        PLAN["Plan builder - spark.connect protobuf"]
-        XPORT["apache-spark-connect-core - gRPC channel, retries, reattach, artifacts"]
+    subgraph core["Rust core: apache-spark-connect-core"]
+        PLAN["Plan builder - types, columns, functions, plans to spark.connect protobuf"]
+        XPORT["Async actions, gRPC channel, retries, reattach, artifacts"]
         ARROW["Arrow result decode"]
     end
 

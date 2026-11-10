@@ -10,7 +10,10 @@
 //! calling thread until it completes, as any blocking call does, so avoid it in a task that
 //! must keep other tasks of the same runtime running. The work of a call, its callbacks
 //! included, runs on the calling thread, while a runtime of the client drives its I/O, so it uses
-//! the tags and user context extensions of the calling thread. In a multi-thread runtime the
+//! the tags and user context extensions of the calling thread. The exceptions run on a thread of
+//! the client's runtime: the read of a prefetching [`DataFrame::to_local_iterator`], with its
+//! progress and accumulator handlers, and the background releases of a dropped ML model or
+//! checkpoint, with their execute-plan hooks. In a multi-thread runtime the
 //! outermost call first hands the thread's other tasks to another thread
 //! ([`tokio::task::block_in_place`]). In a `current_thread` runtime (the default of
 //! `#[tokio::test]` and of `#[tokio::main(flavor = "current_thread")]`) that runtime's other
