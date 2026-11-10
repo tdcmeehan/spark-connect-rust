@@ -1,13 +1,53 @@
 //! Columns, and literals of Rust values.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike, Utc};
-use spark_connect_core::expression::{Expression, LiteralExpression};
+use spark_connect_core::expression::{
+    Expression, ExpressionNode, LiteralExpression, SubqueryExpression,
+};
 use spark_connect_core::types::{DataType, DayTimeIntervalType};
 
 use crate::value::Decimal;
 
 #[doc(no_inline)]
 pub use spark_connect_core::column::Column;
+
+/// The column `name`, which the server resolves against the input of the operation that uses
+/// it. A `&str` or `String` converts into the same column, wherever a column is taken.
+/// [`DataFrame::col`](crate::DataFrame::col) refers to the column of one DataFrame, as a join
+/// of two DataFrames with the same column names needs.
+pub fn col(name: &str) -> Column {
+    Column::from(name)
+}
+
+/// A value of an argument that is a literal or a column: a Rust value of [`IntoLiteral`],
+/// as [`lit`] makes it, or a [`Column`]. A `&str` is a string, not a column name.
+pub trait IntoArgument {
+    #[doc(hidden)]
+    fn into_argument(self) -> Column;
+}
+
+impl<T: IntoLiteral> IntoArgument for T {
+    fn into_argument(self) -> Column {
+        lit(self)
+    }
+}
+
+impl IntoArgument for Column {
+    fn into_argument(self) -> Column {
+        self
+    }
+}
+
+pub(crate) fn expressions(columns: impl IntoIterator<Item = impl Into<Column>>) -> Vec<Expression> {
+    columns
+        .into_iter()
+        .map(|column| column.into().expression().clone())
+        .collect()
+}
+
+pub(crate) fn subquery_column(subquery: SubqueryExpression) -> Column {
+    Column::new(ExpressionNode::Subquery(Box::new(subquery)).into())
+}
 
 /// A column of the literal `value`, of the Spark type of its Rust type: `i32` is an `INT`, `i64`
 /// a `BIGINT`, `&str` a `STRING`, [`NaiveDate`] a `DATE`, `None::<T>` a `NULL` of `T`'s type.

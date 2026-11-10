@@ -13,9 +13,15 @@ use spark_connect_core::channel::{
 use spark_connect_core::client::SparkConnectClient;
 use spark_connect_core::error::SparkError;
 use spark_connect_core::execution::check_tag;
+use spark_connect_core::plan::{LogicalPlan, PlanIds};
+use spark_connect_core::readwriter::ReadType;
 use tokio::sync::OnceCell;
 
+use crate::dataframe::DataFrame;
 use crate::error::{Error, Result};
+use crate::options::RangeSpec;
+use crate::sql::Sql;
+use crate::tvf::TableFunctions;
 
 /// A session with a Spark Connect server.
 ///
@@ -30,6 +36,7 @@ pub struct Session {
 
 struct Shared {
     client: Arc<SparkConnectClient>,
+    plan_ids: Arc<PlanIds>,
     version: OnceCell<String>,
     stopped: AtomicBool,
 }
@@ -44,6 +51,7 @@ impl Session {
         Session {
             shared: Arc::new(Shared {
                 client: Arc::new(client),
+                plan_ids: Arc::new(PlanIds::new()),
                 version: OnceCell::new(),
                 stopped: AtomicBool::new(false),
             }),
@@ -51,8 +59,12 @@ impl Session {
         }
     }
 
-    fn client(&self) -> Arc<SparkConnectClient> {
+    pub(crate) fn client(&self) -> Arc<SparkConnectClient> {
         Arc::clone(&self.shared.client)
+    }
+
+    pub(crate) fn plan_ids(&self) -> &Arc<PlanIds> {
+        &self.shared.plan_ids
     }
 
     /// The id of the session on the server.
@@ -88,6 +100,68 @@ impl Session {
     /// The tags of this handle's operations.
     pub fn tags(&self) -> &[String] {
         &self.tags
+    }
+
+    /// A DataFrame of the integers of `range`, in a column `id` of type `BIGINT`: `range(10)`
+    /// is 0 to 9, `range(5..10)` is 5 to 9, and [`RangeSpec`] sets a step and the number of
+    /// partitions.
+    ///
+    /// ```no_run
+    /// # fn run(session: spark_connect_async::Session) {
+    /// use spark_connect_async::options::RangeSpec;
+    ///
+    /// let first_ten = session.range(10);
+    /// let even = session.range(RangeSpec::new(0..100).step(2).partitions(4));
+    /// # }
+    /// ```
+    pub fn range(&self, range: impl Into<RangeSpec>) -> DataFrame {
+        let range = range.into();
+        DataFrame::new(
+            self.clone(),
+            LogicalPlan::Range {
+                start: range.start,
+                end: range.end,
+                step: range.step,
+                num_partitions: range.partitions,
+            },
+        )
+    }
+
+    /// A DataFrame of the table or view `name`, which may be qualified by its catalog and
+    /// schema.
+    pub fn table(&self, name: impl Into<String>) -> DataFrame {
+        DataFrame::new(
+            self.clone(),
+            LogicalPlan::Read {
+                read_type: ReadType::NamedTable {
+                    table_name: name.into(),
+                    options: Default::default(),
+                },
+                is_streaming: false,
+            },
+        )
+    }
+
+    /// A SQL statement, with the arguments and DataFrames that [`Sql`] adds. Awaiting it sends
+    /// the statement: a command, such as `CREATE VIEW`, runs then, and a query returns a
+    /// DataFrame that runs at its actions.
+    ///
+    /// ```no_run
+    /// # async fn run(session: spark_connect_async::Session) -> spark_connect_async::Result<()> {
+    /// let adults = session
+    ///     .sql("SELECT * FROM people WHERE age >= :age")
+    ///     .named_arg("age", 18)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn sql(&self, query: impl Into<String>) -> Sql {
+        Sql::new(self.clone(), query.into())
+    }
+
+    /// The table-valued functions of the session, such as `explode`.
+    pub fn tvf(&self) -> TableFunctions {
+        TableFunctions::new(self.clone())
     }
 
     /// Interrupts every running operation of the session, and returns the ids of those it
@@ -386,6 +460,11 @@ mod tests {
         assert_send_sync::<RuntimeConfig>();
         assert_send_sync::<AddArtifacts>();
         assert_send_sync::<Error>();
+        assert_send_sync::<crate::DataFrame>();
+        assert_send_sync::<crate::sql::Sql>();
+        assert_send_sync::<TableFunctions>();
+        assert_send_sync::<crate::tvf::TableArg>();
+        assert_send_sync::<crate::tvf::PartitionedTableArg>();
         // Type-checked, never called: it would need a server.
         let _ = |session: Session| {
             let conf = session.conf();
@@ -396,6 +475,7 @@ mod tests {
             assert_send_static(session.add_artifacts(["a.jar"]).into_future());
             assert_send_static(session.version());
             assert_send_static(session.stop());
+            assert_send_static(session.sql("SELECT 1").arg(1).into_future());
             assert_send_static(conf.set("k", "v"));
             assert_send_static(conf.get("k"));
             assert_send_static(conf.get_all());

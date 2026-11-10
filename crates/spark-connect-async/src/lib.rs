@@ -21,12 +21,23 @@
 //! ```
 
 pub mod column;
+pub mod dataframe;
 pub mod de;
 pub mod error;
+pub mod options;
 pub mod session;
+pub mod sql;
+pub mod tvf;
 pub mod value;
 
-pub use column::{lit, Column, IntoLiteral};
+/// Spark data types.
+pub mod types {
+    #[doc(no_inline)]
+    pub use spark_connect_core::types::{DataType, StructField};
+}
+
+pub use column::{col, lit, Column, IntoArgument, IntoLiteral};
+pub use dataframe::DataFrame;
 pub use error::{Error, ErrorKind, Result};
 pub use session::{Session, SessionBuilder};
 pub use value::{Decimal, Row, Value};

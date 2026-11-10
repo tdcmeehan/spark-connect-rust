@@ -14,6 +14,7 @@ name = "spark_connect_async"
 
 [dependencies]
 spark-connect-core = { package = "apache-spark-connect-core", path = "../spark-connect-core", version = "4.3.0" }
+spark-connect-proto = { package = "apache-spark-connect-proto", path = "../spark-connect-proto", version = "4.3.0" }
 arrow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 serde = "1"
@@ -23,7 +24,6 @@ tonic.workspace = true
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 spark-connect = { package = "apache-spark-connect", path = "../spark-connect", version = "4.3.0" }
-spark-connect-proto = { package = "apache-spark-connect-proto", path = "../spark-connect-proto", version = "4.3.0" }
 futures.workspace = true
 prost.workspace = true
 tempfile = "3"
