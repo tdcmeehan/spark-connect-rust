@@ -284,7 +284,9 @@ functions of `tests/golden/rust_api_inventory.tsv` without one.
 A new builder in `crates/spark-connect-core/src/functions.rs` also gets a row in
 `scripts/async_functions/functions.tsv`, which says what it becomes in the async crate; then
 `python3 scripts/gen_async_functions.py` rewrites the async crate's generated functions and their
-plan-equality cases. CI runs it with `--check`. A new SQL function needs its description:
+plan-equality cases. CI runs it with `--check`. A builder that leaves out optional arguments
+calls a form in `crates/spark-connect-core/src/function_forms.rs` that takes them, so the async
+function can too. A new SQL function needs its description:
 rerun `scripts/extract_spark_function_descriptions.py --spark-src <checkout of the Spark tag>`.
 
 **Run the NEW version's own official test cases — they change every release.**

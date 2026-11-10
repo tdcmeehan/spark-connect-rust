@@ -73,6 +73,17 @@ FORMS = """
 pub fn greatest(cols: impl IntoIterator<Item = Column>) -> Column {
     func("greatest", expressions(cols))
 }
+
+pub fn abs(col: Column, scale: Option<Column>, mode: Option<Column>) -> Column {
+    with_options("abs", [col], [(scale, Absent::Omitted), (mode, Absent::Omitted)])
+}
+
+pub fn alias_of_abs<F>(col: Column, f: Option<F>) -> Column
+where
+    F: FnOnce(Vec<Column>) -> Column,
+{
+    func("abs", vec![])
+}
 """
 
 
@@ -130,10 +141,17 @@ class DerivedKindTests(unittest.TestCase):
             with self.subTest(annotation=annotation, core_type=core_type):
                 self.assertEqual(gen.derived_kind(annotation, core_type, optional), kind)
         self.assertEqual(gen.derived_kind("Callable", "F", False, 2), "fn2")
+        self.assertEqual(gen.derived_kind("Optional[Mapping[str, str]]", "Column", True), "?col")
+        comparator = (
+            "Optional[Callable[[pyspark.sql.column.Column, pyspark.sql.column.Column], Any]]"
+        )
+        self.assertEqual(gen.derived_kind(comparator, "F", True), "?fn2")
+        self.assertEqual(gen.option_type("Option<Column>"), "Column")
+        self.assertEqual(gen.option_type("Option<&str>"), "&str")
 
     def test_an_annotation_without_a_rule_is_an_error(self):
         with self.assertRaises(ValueError):
-            gen.derived_kind("Mapping[str, str]", "Column", False)
+            gen.derived_kind("Iterable[int]", "Column", False)
 
     def test_names_are_snake_case_and_not_keywords(self):
         self.assertEqual(gen.snake("ignoreNulls"), "ignore_nulls")
@@ -177,6 +195,30 @@ class GeneratingTests(unittest.TestCase):
                 self.assertEqual(gen.variant_for(function, given).core, core)
         with self.assertRaises(ValueError):
             gen.variant_for(function, {"count"})
+
+    def test_arguments_the_builder_does_not_take_go_to_the_core_form(self):
+        functions = gen.core_functions(CORE, FORMS)
+        forms = gen.form_functions(FORMS)
+        (function,) = gen.functions_of(
+            [row("abs", "abs", "col:col, scale:?i32, mode:?col")], functions, forms
+        )
+        self.assertEqual(
+            gen.body(function, self.by_name),
+            "Column::from(function_forms::abs("
+            "to_core(col), scale.map(literal), mode.map(to_core)))",
+        )
+        (closure,) = gen.functions_of(
+            [row("alias_of_abs", "alias_of_abs", "col:col, f:?fn1")], functions, forms
+        )
+        self.assertIn("f.map(lambda1)", gen.body(closure, self.by_name))
+        self.assertIn("with_options", forms["abs"].calls)
+        self.assertNotIn("with_options", forms["alias_of_abs"].calls)
+        self.assertEqual(forms["abs"].sql, ["abs"])
+        self.assertEqual(
+            gen.form_case(function, "abs"),
+            'Case { name: "abs with every argument", old: || call("abs", vec![oc("a"), oint(3), '
+            'oc("b")]), new: || abs("a", Some(3), Some(col("b"))) },',
+        )
 
     def test_parameter_types_become_rust_types(self):
         cases = {
@@ -234,7 +276,8 @@ class StalenessTests(unittest.TestCase):
         names = ["abs", "concat", "struct", "greatest", "transform", "round"]
         descriptions = {"functions": {name: {"usage": name} for name in names}}
         hand_written = {"greatest", "col", "lit", "when"}
-        self.assertEqual(gen.problems(complete, functions, descriptions, hand_written), [])
+        forms = gen.form_functions(FORMS)
+        self.assertEqual(gen.problems(complete, functions, forms, descriptions, hand_written), [])
         missing_description = {"functions": {n: {"usage": n} for n in names if n != "concat"}}
         cases = [
             ("a builder without a row", complete[1:], descriptions, "no row for the builder abs"),
@@ -246,9 +289,21 @@ class StalenessTests(unittest.TestCase):
             ),
             (
                 "an argument count that differs",
-                [row("abs", "abs", "col:col, x:col")] + complete[1:],
+                [complete[0], row("concat", "concat", "cols:cols, x:col")] + complete[2:],
                 descriptions,
                 "2 arguments for 1 parameters",
+            ),
+            (
+                "a form argument that is not optional",
+                [row("abs", "abs", "col:col, scale:i32, mode:?col")] + complete[1:],
+                descriptions,
+                "the arguments the builder does not take must be optional",
+            ),
+            (
+                "a form with other arguments",
+                [row("abs", "abs", "col:col, scale:?i32")] + complete[1:],
+                descriptions,
+                "2 arguments for 3 parameters",
             ),
             (
                 "a missing description",
@@ -265,7 +320,7 @@ class StalenessTests(unittest.TestCase):
         ]
         for name, rows, data, problem in cases:
             with self.subTest(name):
-                found = gen.problems(rows, functions, data, hand_written)
+                found = gen.problems(rows, functions, forms, data, hand_written)
                 self.assertTrue(any(problem in p for p in found), found)
         names_cases = [
             (
@@ -281,7 +336,7 @@ class StalenessTests(unittest.TestCase):
         ]
         for name, names, problem in names_cases:
             with self.subTest(name):
-                found = gen.problems(complete, functions, descriptions, names)
+                found = gen.problems(complete, functions, forms, descriptions, names)
                 self.assertTrue(any(problem in p for p in found), found)
 
     def test_the_hand_written_names_are_its_functions_and_column_re_exports(self):

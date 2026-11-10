@@ -306,44 +306,17 @@ pub fn localtimestamp() -> Column {
 
 /// Mirrors `pyspark.sql.functions.make_dt_interval`.
 pub fn make_dt_interval() -> Column {
-    func(
-        "make_dt_interval",
-        vec![
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            Expression::literal(LiteralExpression::Decimal {
-                value: "0".to_string(),
-                precision: 10,
-                scale: 0,
-            }),
-        ],
-    )
+    function_forms::make_dt_interval(None, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.make_interval`.
 pub fn make_interval() -> Column {
-    func(
-        "make_interval",
-        vec![
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            Expression::literal(LiteralExpression::Decimal {
-                value: "0".to_string(),
-                precision: 10,
-                scale: 0,
-            }),
-        ],
-    )
+    function_forms::make_interval(None, None, None, None, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.make_ym_interval`.
 pub fn make_ym_interval() -> Column {
-    func("make_ym_interval", vec![lit_int(0), lit_int(0)])
+    function_forms::make_ym_interval(None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.map_concat`.
@@ -386,12 +359,12 @@ pub fn pi() -> Column {
 
 /// Mirrors `pyspark.sql.functions.rand`.
 pub fn rand() -> Column {
-    func("rand", vec![lit_long(2371029763967735218)])
+    function_forms::rand(None)
 }
 
 /// Mirrors `pyspark.sql.functions.randn`.
 pub fn randn() -> Column {
-    func("randn", vec![lit_long(2561831801369089374)])
+    function_forms::randn(None)
 }
 
 /// Mirrors `pyspark.sql.functions.rank`.
@@ -443,22 +416,7 @@ pub fn r#struct<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column {
 
 /// Mirrors `pyspark.sql.functions.try_make_interval`.
 pub fn try_make_interval() -> Column {
-    func(
-        "try_make_interval",
-        vec![
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            lit_int(0),
-            Expression::literal(LiteralExpression::Decimal {
-                value: "0".to_string(),
-                precision: 10,
-                scale: 0,
-            }),
-        ],
-    )
+    function_forms::try_make_interval(None, None, None, None, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_reflect`.
@@ -472,7 +430,7 @@ pub fn try_reflect<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column
 
 /// Mirrors `pyspark.sql.functions.unix_timestamp`.
 pub fn unix_timestamp() -> Column {
-    func("unix_timestamp", vec![])
+    function_forms::unix_timestamp(None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.user`.
@@ -515,7 +473,7 @@ pub fn acosh(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.any_value`.
 pub fn any_value(col1: Column) -> Column {
-    func("any_value", vec![col1.expression().clone()])
+    function_forms::any_value(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.approxCountDistinct`.
@@ -568,7 +526,7 @@ pub fn array_size(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.array_sort`.
 pub fn array_sort(col1: Column) -> Column {
-    func("array_sort", vec![col1.expression().clone()])
+    function_forms::array_sort(col1, None::<fn(Vec<Column>) -> Column>)
 }
 
 /// Mirrors `pyspark.sql.functions.ascii`.
@@ -588,7 +546,7 @@ pub fn asinh(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.assert_true`.
 pub fn assert_true(col1: Column) -> Column {
-    func("assert_true", vec![col1.expression().clone()])
+    function_forms::assert_true(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.atan`.
@@ -709,7 +667,7 @@ pub fn bround_scale(col1: Column, scale: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.btrim`.
 pub fn btrim(col1: Column) -> Column {
-    func("btrim", vec![col1.expression().clone()])
+    function_forms::btrim(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.cardinality`.
@@ -737,7 +695,7 @@ pub fn ceil_scale(col1: Column, scale: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.ceiling`.
 pub fn ceiling(col1: Column) -> Column {
-    func("ceiling", vec![col1.expression().clone()])
+    function_forms::ceiling(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.char`.
@@ -904,12 +862,12 @@ pub fn factorial(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.first`.
 pub fn first(col1: Column) -> Column {
-    func("first", vec![col1.expression().clone(), lit_bool(false)])
+    function_forms::first(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.first_value`.
 pub fn first_value(col1: Column) -> Column {
-    func("first_value", vec![col1.expression().clone()])
+    function_forms::first_value(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.flatten`.
@@ -943,10 +901,7 @@ pub fn format_string<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Colu
 
 /// Mirrors `pyspark.sql.functions.from_unixtime`.
 pub fn from_unixtime(col1: Column) -> Column {
-    func(
-        "from_unixtime",
-        vec![col1.expression().clone(), lit_str("yyyy-MM-dd HH:mm:ss")],
-    )
+    function_forms::from_unixtime(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.grouping`.
@@ -961,7 +916,7 @@ pub fn hex(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.hll_sketch_agg`.
 pub fn hll_sketch_agg(col1: Column) -> Column {
-    func("hll_sketch_agg", vec![col1.expression().clone()])
+    function_forms::hll_sketch_agg(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.hll_sketch_estimate`.
@@ -971,7 +926,7 @@ pub fn hll_sketch_estimate(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.hll_union_agg`.
 pub fn hll_union_agg(col1: Column) -> Column {
-    func("hll_union_agg", vec![col1.expression().clone()])
+    function_forms::hll_union_agg(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.hour`.
@@ -1061,7 +1016,7 @@ pub fn lag<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column {
 
 /// Mirrors `pyspark.sql.functions.last`.
 pub fn last(col1: Column) -> Column {
-    func("last", vec![col1.expression().clone(), lit_bool(false)])
+    function_forms::last(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.last_day`.
@@ -1071,7 +1026,7 @@ pub fn last_day(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.last_value`.
 pub fn last_value(col1: Column) -> Column {
-    func("last_value", vec![col1.expression().clone()])
+    function_forms::last_value(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.lcase`.
@@ -1121,7 +1076,7 @@ pub fn ln(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.log`.
 pub fn log(col1: Column) -> Column {
-    func("ln", vec![col1.expression().clone()])
+    function_forms::log(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.log10`.
@@ -1184,16 +1139,7 @@ pub fn map_values(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.mask`.
 pub fn mask(col1: Column) -> Column {
-    func(
-        "mask",
-        vec![
-            col1.expression().clone(),
-            lit_str("X"),
-            lit_str("x"),
-            lit_str("n"),
-            Expression::literal(LiteralExpression::null(crate::types::DataType::Null)),
-        ],
-    )
+    function_forms::mask(col1, None, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.max`.
@@ -1228,7 +1174,7 @@ pub fn minute(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.mode`.
 pub fn mode(col1: Column) -> Column {
-    func("mode", vec![col1.expression().clone(), lit_bool(false)])
+    function_forms::mode(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.month`.
@@ -1359,12 +1305,12 @@ pub fn rtrim_with(col1: Column, trim: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.schema_of_csv`.
 pub fn schema_of_csv(col1: Column) -> Column {
-    func("schema_of_csv", vec![col1.expression().clone()])
+    function_forms::schema_of_csv(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.schema_of_json`.
 pub fn schema_of_json(col1: Column) -> Column {
-    func("schema_of_json", vec![col1.expression().clone()])
+    function_forms::schema_of_json(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.schema_of_variant`.
@@ -1379,7 +1325,7 @@ pub fn schema_of_variant_agg(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.schema_of_xml`.
 pub fn schema_of_xml(col1: Column) -> Column {
-    func("schema_of_xml", vec![col1.expression().clone()])
+    function_forms::schema_of_xml(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.sec`.
@@ -1409,10 +1355,7 @@ pub fn sha1(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.shuffle`.
 pub fn shuffle(col1: Column) -> Column {
-    func(
-        "shuffle",
-        vec![col1.expression().clone(), lit_long(1810822539051918711)],
-    )
+    function_forms::shuffle(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.sign`.
@@ -1573,37 +1516,37 @@ pub fn to_binary_format(col1: Column, format: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.to_csv`.
 pub fn to_csv(col1: Column) -> Column {
-    func("to_csv", vec![col1.expression().clone()])
+    function_forms::to_csv(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_date`.
 pub fn to_date(col1: Column) -> Column {
-    func("to_date", vec![col1.expression().clone()])
+    function_forms::to_date(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_json`.
 pub fn to_json(col1: Column) -> Column {
-    func("to_json", vec![col1.expression().clone()])
+    function_forms::to_json(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_timestamp`.
 pub fn to_timestamp(col1: Column) -> Column {
-    func("to_timestamp", vec![col1.expression().clone()])
+    function_forms::to_timestamp(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_timestamp_ltz`.
 pub fn to_timestamp_ltz(col1: Column) -> Column {
-    func("to_timestamp_ltz", vec![col1.expression().clone()])
+    function_forms::to_timestamp_ltz(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_timestamp_ntz`.
 pub fn to_timestamp_ntz(col1: Column) -> Column {
-    func("to_timestamp_ntz", vec![col1.expression().clone()])
+    function_forms::to_timestamp_ntz(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_unix_timestamp`.
 pub fn to_unix_timestamp(col1: Column) -> Column {
-    func("to_unix_timestamp", vec![col1.expression().clone()])
+    function_forms::to_unix_timestamp(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_variant_object`.
@@ -1613,7 +1556,7 @@ pub fn to_variant_object(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.to_xml`.
 pub fn to_xml(col1: Column) -> Column {
-    func("to_xml", vec![col1.expression().clone()])
+    function_forms::to_xml(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.trim`.
@@ -1647,12 +1590,12 @@ pub fn try_sum(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.try_to_binary`.
 pub fn try_to_binary(col1: Column) -> Column {
-    func("try_to_binary", vec![col1.expression().clone()])
+    function_forms::try_to_binary(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_to_timestamp`.
 pub fn try_to_timestamp(col1: Column) -> Column {
-    func("try_to_timestamp", vec![col1.expression().clone()])
+    function_forms::try_to_timestamp(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_url_decode`.
@@ -1789,43 +1732,17 @@ pub fn add_months(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.aes_decrypt`.
 pub fn aes_decrypt(col1: Column, col2: Column) -> Column {
-    func(
-        "aes_decrypt",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_str("GCM"),
-            lit_str("DEFAULT"),
-            lit_str(""),
-        ],
-    )
+    function_forms::aes_decrypt(col1, col2, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.aes_encrypt`.
 pub fn aes_encrypt(col1: Column, col2: Column) -> Column {
-    func(
-        "aes_encrypt",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_str("GCM"),
-            lit_str("DEFAULT"),
-            lit_str(""),
-            lit_str(""),
-        ],
-    )
+    function_forms::aes_encrypt(col1, col2, None, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.approx_percentile`.
 pub fn approx_percentile(col1: Column, col2: Column) -> Column {
-    func(
-        "approx_percentile",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_int(10000),
-        ],
-    )
+    function_forms::approx_percentile(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.array_append`.
@@ -1862,10 +1779,7 @@ pub fn array_intersect(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.array_join`.
 pub fn array_join(col1: Column, col2: Column) -> Column {
-    func(
-        "array_join",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::array_join(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.array_position`.
@@ -2118,18 +2032,12 @@ pub fn format_number(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.from_csv`.
 pub fn from_csv(col1: Column, col2: Column) -> Column {
-    func(
-        "from_csv",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::from_csv(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.from_json`.
 pub fn from_json(col1: Column, col2: Column) -> Column {
-    func(
-        "from_json",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::from_json(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.from_utc_timestamp`.
@@ -2142,10 +2050,7 @@ pub fn from_utc_timestamp(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.from_xml`.
 pub fn from_xml(col1: Column, col2: Column) -> Column {
-    func(
-        "from_xml",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::from_xml(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.get`.
@@ -2187,10 +2092,7 @@ pub fn histogram_numeric(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.hll_union`.
 pub fn hll_union(col1: Column, col2: Column) -> Column {
-    func(
-        "hll_union",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::hll_union(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.hypot`.
@@ -2211,10 +2113,7 @@ pub fn ifnull(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.ilike`.
 pub fn ilike(col1: Column, col2: Column) -> Column {
-    func(
-        "ilike",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::ilike(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.instr`.
@@ -2263,30 +2162,17 @@ pub fn left(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.levenshtein`.
 pub fn levenshtein(col1: Column, col2: Column) -> Column {
-    func(
-        "levenshtein",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::levenshtein(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.like`.
 pub fn like(col1: Column, col2: Column) -> Column {
-    func(
-        "like",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::like(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.locate`.
 pub fn locate(col1: Column, col2: Column) -> Column {
-    func(
-        "locate",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_int(1),
-        ],
-    )
+    function_forms::locate(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.map_contains_key`.
@@ -2307,30 +2193,17 @@ pub fn map_from_arrays(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.max_by`.
 pub fn max_by(col1: Column, col2: Column) -> Column {
-    func(
-        "max_by",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::max_by(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.min_by`.
 pub fn min_by(col1: Column, col2: Column) -> Column {
-    func(
-        "min_by",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::min_by(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.months_between`.
 pub fn months_between(col1: Column, col2: Column) -> Column {
-    func(
-        "months_between",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_bool(true),
-        ],
-    )
+    function_forms::months_between(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.nanvl`.
@@ -2351,14 +2224,7 @@ pub fn next_day(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.nth_value`.
 pub fn nth_value(col1: Column, col2: Column) -> Column {
-    func(
-        "nth_value",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_bool(false),
-        ],
-    )
+    function_forms::nth_value(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.nullif`.
@@ -2379,34 +2245,17 @@ pub fn nvl(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.parse_url`.
 pub fn parse_url(col1: Column, col2: Column) -> Column {
-    func(
-        "parse_url",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::parse_url(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.percentile`.
 pub fn percentile(col1: Column, col2: Column) -> Column {
-    func(
-        "percentile",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_int(1),
-        ],
-    )
+    function_forms::percentile(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.percentile_approx`.
 pub fn percentile_approx(col1: Column, col2: Column) -> Column {
-    func(
-        "percentile_approx",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_int(10000),
-        ],
-    )
+    function_forms::percentile_approx(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.pmod`.
@@ -2419,10 +2268,7 @@ pub fn pmod(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.position`.
 pub fn position(col1: Column, col2: Column) -> Column {
-    func(
-        "position",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::position(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.pow`.
@@ -2459,18 +2305,12 @@ pub fn regexp_count(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.regexp_extract_all`.
 pub fn regexp_extract_all(col1: Column, col2: Column) -> Column {
-    func(
-        "regexp_extract_all",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::regexp_extract_all(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.regexp_instr`.
 pub fn regexp_instr(col1: Column, col2: Column) -> Column {
-    func(
-        "regexp_instr",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::regexp_instr(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.regexp_like`.
@@ -2571,10 +2411,7 @@ pub fn repeat(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.replace`.
 pub fn replace(col1: Column, col2: Column) -> Column {
-    func(
-        "replace",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::replace(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.right`.
@@ -2595,10 +2432,7 @@ pub fn rlike(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.sequence`.
 pub fn sequence(col1: Column, col2: Column) -> Column {
-    func(
-        "sequence",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::sequence(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.session_window`.
@@ -2659,14 +2493,7 @@ pub fn shiftrightunsigned(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.split`.
 pub fn split(col1: Column, col2: Column) -> Column {
-    func(
-        "split",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_int(-1),
-        ],
-    )
+    function_forms::split(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.startswith`.
@@ -2679,10 +2506,7 @@ pub fn startswith(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.substr`.
 pub fn substr(col1: Column, col2: Column) -> Column {
-    func(
-        "substr",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::substr(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.to_char`.
@@ -2735,16 +2559,7 @@ pub fn try_add(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.try_aes_decrypt`.
 pub fn try_aes_decrypt(col1: Column, col2: Column) -> Column {
-    func(
-        "try_aes_decrypt",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_str("GCM"),
-            lit_str("DEFAULT"),
-            lit_str(""),
-        ],
-    )
+    function_forms::try_aes_decrypt(col1, col2, None, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_divide`.
@@ -2781,10 +2596,7 @@ pub fn try_multiply(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.try_parse_url`.
 pub fn try_parse_url(col1: Column, col2: Column) -> Column {
-    func(
-        "try_parse_url",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::try_parse_url(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_subtract`.
@@ -2805,14 +2617,7 @@ pub fn try_to_number(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.uniform`.
 pub fn uniform(col1: Column, col2: Column) -> Column {
-    func(
-        "uniform",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            lit_long(1779860837174053365),
-        ],
-    )
+    function_forms::uniform(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.when`: starts a CASE WHEN (so chaining
@@ -2936,15 +2741,7 @@ pub fn convert_timezone(col1: Column, col2: Column, col3: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.count_min_sketch`.
 pub fn count_min_sketch(col1: Column, col2: Column, col3: Column) -> Column {
-    func(
-        "count_min_sketch",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            col3.expression().clone(),
-            lit_long(9151685696388386553),
-        ],
-    )
+    function_forms::count_min_sketch(col1, col2, col3, None)
 }
 
 /// Mirrors `pyspark.sql.functions.lpad`.
@@ -2985,15 +2782,7 @@ pub fn nvl2(col1: Column, col2: Column, col3: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.overlay`.
 pub fn overlay(col1: Column, col2: Column, col3: Column) -> Column {
-    func(
-        "overlay",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            col3.expression().clone(),
-            lit_int(-1),
-        ],
-    )
+    function_forms::overlay(col1, col2, col3, None)
 }
 
 /// Mirrors `pyspark.sql.functions.regexp_extract`.
@@ -3184,7 +2973,7 @@ use crate::expression::{next_lambda_var_index, LambdaFunction, UnresolvedNamedLa
 
 /// Build a lambda function with fresh variable names from a closure.
 /// The closure receives a Vec of fresh Column variables and returns the body expression.
-fn make_lambda<F>(num_args: usize, closure: F) -> LambdaFunction
+pub(crate) fn make_lambda<F>(num_args: usize, closure: F) -> LambdaFunction
 where
     F: FnOnce(Vec<Column>) -> Column,
 {
@@ -3404,7 +3193,7 @@ pub fn reduce<F>(col: Column, init: Column, f: F) -> Column
 where
     F: FnOnce(Vec<Column>) -> Column,
 {
-    aggregate(col, init, f)
+    function_forms::reduce(col, init, f, None::<F>)
 }
 
 // ============================================================================
@@ -3599,7 +3388,7 @@ pub fn current_path() -> Column {
 
 /// Mirrors `pyspark.sql.functions.current_time`.
 pub fn current_time() -> Column {
-    func("current_time", vec![])
+    function_forms::current_time(None)
 }
 
 /// Mirrors `pyspark.sql.functions.hmac`.
@@ -3637,32 +3426,32 @@ pub fn jaro_winkler_similarity(left: Column, right: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.kll_merge_agg_bigint`.
 pub fn kll_merge_agg_bigint(col: Column) -> Column {
-    func("kll_merge_agg_bigint", vec![col.expression().clone()])
+    function_forms::kll_merge_agg_bigint(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.kll_merge_agg_double`.
 pub fn kll_merge_agg_double(col: Column) -> Column {
-    func("kll_merge_agg_double", vec![col.expression().clone()])
+    function_forms::kll_merge_agg_double(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.kll_merge_agg_float`.
 pub fn kll_merge_agg_float(col: Column) -> Column {
-    func("kll_merge_agg_float", vec![col.expression().clone()])
+    function_forms::kll_merge_agg_float(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.kll_sketch_agg_bigint`.
 pub fn kll_sketch_agg_bigint(col: Column) -> Column {
-    func("kll_sketch_agg_bigint", vec![col.expression().clone()])
+    function_forms::kll_sketch_agg_bigint(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.kll_sketch_agg_double`.
 pub fn kll_sketch_agg_double(col: Column) -> Column {
-    func("kll_sketch_agg_double", vec![col.expression().clone()])
+    function_forms::kll_sketch_agg_double(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.kll_sketch_agg_float`.
 pub fn kll_sketch_agg_float(col: Column) -> Column {
-    func("kll_sketch_agg_float", vec![col.expression().clone()])
+    function_forms::kll_sketch_agg_float(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.kll_sketch_get_n_bigint`.
@@ -3794,17 +3583,7 @@ pub fn make_timestamp(
     mins: Column,
     secs: Column,
 ) -> Column {
-    func(
-        "make_timestamp",
-        vec![
-            years.expression().clone(),
-            months.expression().clone(),
-            days.expression().clone(),
-            hours.expression().clone(),
-            mins.expression().clone(),
-            secs.expression().clone(),
-        ],
-    )
+    function_forms::make_timestamp(years, months, days, hours, mins, secs, None)
 }
 
 /// Mirrors `pyspark.sql.functions.make_timestamp_ltz`.
@@ -3816,17 +3595,7 @@ pub fn make_timestamp_ltz(
     mins: Column,
     secs: Column,
 ) -> Column {
-    func(
-        "make_timestamp_ltz",
-        vec![
-            years.expression().clone(),
-            months.expression().clone(),
-            days.expression().clone(),
-            hours.expression().clone(),
-            mins.expression().clone(),
-            secs.expression().clone(),
-        ],
-    )
+    function_forms::make_timestamp_ltz(years, months, days, hours, mins, secs, None)
 }
 
 /// Mirrors `pyspark.sql.functions.make_timestamp_ntz`.
@@ -3863,7 +3632,7 @@ pub fn sha2(col: Column, numbits: i32) -> Column {
 
 /// Mirrors `pyspark.sql.functions.st_asbinary`.
 pub fn st_asbinary(geo: Column) -> Column {
-    func("st_asbinary", vec![geo.expression().clone()])
+    function_forms::st_asbinary(geo, None)
 }
 
 /// Mirrors `pyspark.sql.functions.st_geogfromwkb`.
@@ -3873,7 +3642,7 @@ pub fn st_geogfromwkb(wkb: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.st_geomfromwkb`.
 pub fn st_geomfromwkb(wkb: Column) -> Column {
-    func("st_geomfromwkb", vec![wkb.expression().clone()])
+    function_forms::st_geomfromwkb(wkb, None)
 }
 
 /// Mirrors `pyspark.sql.functions.st_setsrid`.
@@ -3912,7 +3681,7 @@ pub fn theta_intersection_agg(col: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.theta_sketch_agg`.
 pub fn theta_sketch_agg(col: Column) -> Column {
-    func("theta_sketch_agg", vec![col.expression().clone()])
+    function_forms::theta_sketch_agg(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.theta_sketch_estimate`.
@@ -3922,23 +3691,17 @@ pub fn theta_sketch_estimate(col: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.theta_union`.
 pub fn theta_union(col1: Column, col2: Column) -> Column {
-    func(
-        "theta_union",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::theta_union(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.theta_union_agg`.
 pub fn theta_union_agg(col: Column) -> Column {
-    func("theta_union_agg", vec![col.expression().clone()])
+    function_forms::theta_union_agg(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.time_bucket`.
 pub fn time_bucket(bucket_size: Column, ts: Column) -> Column {
-    func(
-        "time_bucket",
-        vec![bucket_size.expression().clone(), ts.expression().clone()],
-    )
+    function_forms::time_bucket(bucket_size, ts, None)
 }
 
 /// Mirrors `pyspark.sql.functions.time_diff`.
@@ -3998,7 +3761,7 @@ pub fn timestamp_nanos(col: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.to_time`.
 pub fn to_time(str: Column) -> Column {
-    func("to_time", vec![str.expression().clone()])
+    function_forms::to_time(str, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_make_timestamp`.
@@ -4010,17 +3773,7 @@ pub fn try_make_timestamp(
     mins: Column,
     secs: Column,
 ) -> Column {
-    func(
-        "try_make_timestamp",
-        vec![
-            years.expression().clone(),
-            months.expression().clone(),
-            days.expression().clone(),
-            hours.expression().clone(),
-            mins.expression().clone(),
-            secs.expression().clone(),
-        ],
-    )
+    function_forms::try_make_timestamp(years, months, days, hours, mins, secs, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_make_timestamp_ltz`.
@@ -4032,17 +3785,7 @@ pub fn try_make_timestamp_ltz(
     mins: Column,
     secs: Column,
 ) -> Column {
-    func(
-        "try_make_timestamp_ltz",
-        vec![
-            years.expression().clone(),
-            months.expression().clone(),
-            days.expression().clone(),
-            hours.expression().clone(),
-            mins.expression().clone(),
-            secs.expression().clone(),
-        ],
-    )
+    function_forms::try_make_timestamp_ltz(years, months, days, hours, mins, secs, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_make_timestamp_ntz`.
@@ -4069,12 +3812,12 @@ pub fn try_make_timestamp_ntz(
 
 /// Mirrors `pyspark.sql.functions.try_to_date`.
 pub fn try_to_date(col: Column) -> Column {
-    func("try_to_date", vec![col.expression().clone()])
+    function_forms::try_to_date(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_to_time`.
 pub fn try_to_time(str: Column) -> Column {
-    func("try_to_time", vec![str.expression().clone()])
+    function_forms::try_to_time(str, None)
 }
 
 /// Mirrors `pyspark.sql.functions.try_variant_array_append`.
@@ -4143,7 +3886,7 @@ pub fn unix_nanos(col: Column) -> Column {
 /// the `rand`/`randn` builders. The seed is treated as run-to-run noise by the
 /// golden test (see `RANDOM_SEED_FUNCS`).
 pub fn uuid() -> Column {
-    func("uuid", vec![lit_long(1214072022411175128)])
+    function_forms::uuid(None)
 }
 
 /// Mirrors `pyspark.sql.functions.variant_array_append`.
@@ -4301,50 +4044,32 @@ pub fn tuple_difference_theta_integer(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.tuple_intersection_agg_double`.
 pub fn tuple_intersection_agg_double(col: Column) -> Column {
-    func(
-        "tuple_intersection_agg_double",
-        vec![col.expression().clone()],
-    )
+    function_forms::tuple_intersection_agg_double(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_intersection_agg_integer`.
 pub fn tuple_intersection_agg_integer(col: Column) -> Column {
-    func(
-        "tuple_intersection_agg_integer",
-        vec![col.expression().clone()],
-    )
+    function_forms::tuple_intersection_agg_integer(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_intersection_double`.
 pub fn tuple_intersection_double(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_intersection_double",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_intersection_double(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_intersection_integer`.
 pub fn tuple_intersection_integer(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_intersection_integer",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_intersection_integer(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_intersection_theta_double`.
 pub fn tuple_intersection_theta_double(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_intersection_theta_double",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_intersection_theta_double(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_intersection_theta_integer`.
 pub fn tuple_intersection_theta_integer(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_intersection_theta_integer",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_intersection_theta_integer(col1, col2, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_sketch_agg_double`.
@@ -4352,15 +4077,7 @@ pub fn tuple_intersection_theta_integer(col1: Column, col2: Column) -> Column {
 /// The reference client materializes the default `nom_entries` (lgK = 12) and
 /// `mode` ("sum") arguments into the call, so we emit them here too for parity.
 pub fn tuple_sketch_agg_double(key: Column, summary: Column) -> Column {
-    func(
-        "tuple_sketch_agg_double",
-        vec![
-            key.expression().clone(),
-            summary.expression().clone(),
-            lit_int(12),
-            lit_str("sum"),
-        ],
-    )
+    function_forms::tuple_sketch_agg_double(key, summary, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_sketch_agg_integer`.
@@ -4368,15 +4085,7 @@ pub fn tuple_sketch_agg_double(key: Column, summary: Column) -> Column {
 /// As with the double variant, the reference client materializes the default
 /// `nom_entries` (lgK = 12) and `mode` ("sum") arguments.
 pub fn tuple_sketch_agg_integer(key: Column, summary: Column) -> Column {
-    func(
-        "tuple_sketch_agg_integer",
-        vec![
-            key.expression().clone(),
-            summary.expression().clone(),
-            lit_int(12),
-            lit_str("sum"),
-        ],
-    )
+    function_forms::tuple_sketch_agg_integer(key, summary, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_sketch_estimate_double`.
@@ -4397,18 +4106,12 @@ pub fn tuple_sketch_estimate_integer(col: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.tuple_sketch_summary_double`.
 pub fn tuple_sketch_summary_double(col: Column) -> Column {
-    func(
-        "tuple_sketch_summary_double",
-        vec![col.expression().clone()],
-    )
+    function_forms::tuple_sketch_summary_double(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_sketch_summary_integer`.
 pub fn tuple_sketch_summary_integer(col: Column) -> Column {
-    func(
-        "tuple_sketch_summary_integer",
-        vec![col.expression().clone()],
-    )
+    function_forms::tuple_sketch_summary_integer(col, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_sketch_theta_double`.
@@ -4423,44 +4126,32 @@ pub fn tuple_sketch_theta_integer(col: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.tuple_union_agg_double`.
 pub fn tuple_union_agg_double(col: Column) -> Column {
-    func("tuple_union_agg_double", vec![col.expression().clone()])
+    function_forms::tuple_union_agg_double(col, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_union_agg_integer`.
 pub fn tuple_union_agg_integer(col: Column) -> Column {
-    func("tuple_union_agg_integer", vec![col.expression().clone()])
+    function_forms::tuple_union_agg_integer(col, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_union_double`.
 pub fn tuple_union_double(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_union_double",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_union_double(col1, col2, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_union_integer`.
 pub fn tuple_union_integer(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_union_integer",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_union_integer(col1, col2, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_union_theta_double`.
 pub fn tuple_union_theta_double(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_union_theta_double",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_union_theta_double(col1, col2, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.tuple_union_theta_integer`.
 pub fn tuple_union_theta_integer(col1: Column, col2: Column) -> Column {
-    func(
-        "tuple_union_theta_integer",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::tuple_union_theta_integer(col1, col2, None, None)
 }
 
 #[cfg(test)]

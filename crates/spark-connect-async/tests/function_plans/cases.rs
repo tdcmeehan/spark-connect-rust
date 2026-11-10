@@ -113,8 +113,8 @@ pub fn cases() -> Vec<Case> {
         },
         Case {
             name: "window",
-            old: || old::window(oc("t"), "10 minutes"),
-            new: || window("t", "10 minutes", None, None),
+            old: || old::window(oc("a"), "x"),
+            new: || window("a", "x", None, None),
         },
         Case {
             name: "window_with_slide_and_start",
@@ -221,17 +221,17 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "make_dt_interval",
             old: || old::make_dt_interval(),
-            new: || make_dt_interval(),
+            new: || make_dt_interval(None, None, None, None),
         },
         Case {
             name: "make_interval",
             old: || old::make_interval(),
-            new: || make_interval(),
+            new: || make_interval(None, None, None, None, None, None, None),
         },
         Case {
             name: "make_ym_interval",
             old: || old::make_ym_interval(),
-            new: || make_ym_interval(),
+            new: || make_ym_interval(None, None),
         },
         Case {
             name: "map_concat",
@@ -266,12 +266,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "rand",
             old: || old::rand(),
-            new: || rand(),
+            new: || rand(None),
         },
         Case {
             name: "randn",
             old: || old::randn(),
-            new: || randn(),
+            new: || randn(None),
         },
         Case {
             name: "rank",
@@ -311,7 +311,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "try_make_interval",
             old: || old::try_make_interval(),
-            new: || try_make_interval(),
+            new: || try_make_interval(None, None, None, None, None, None, None),
         },
         Case {
             name: "try_reflect",
@@ -321,7 +321,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "unix_timestamp",
             old: || old::unix_timestamp(),
-            new: || unix_timestamp(),
+            new: || unix_timestamp(None, None),
         },
         Case {
             name: "user",
@@ -356,7 +356,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "any_value",
             old: || old::any_value(oc("a")),
-            new: || any_value("a"),
+            new: || any_value("a", None),
         },
         Case {
             name: "approxCountDistinct",
@@ -406,7 +406,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "array_sort",
             old: || old::array_sort(oc("a")),
-            new: || array_sort("a"),
+            new: || array_sort("a", None),
         },
         Case {
             name: "ascii",
@@ -426,7 +426,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "assert_true",
             old: || old::assert_true(oc("a")),
-            new: || assert_true("a"),
+            new: || assert_true("a", None),
         },
         Case {
             name: "atan",
@@ -546,7 +546,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "btrim",
             old: || old::btrim(oc("a")),
-            new: || btrim("a"),
+            new: || btrim("a", None),
         },
         Case {
             name: "cardinality",
@@ -571,7 +571,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "ceiling",
             old: || old::ceiling(oc("a")),
-            new: || ceiling("a"),
+            new: || ceiling("a", None),
         },
         Case {
             name: "char",
@@ -731,12 +731,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "first",
             old: || old::first(oc("a")),
-            new: || first("a"),
+            new: || first("a", None),
         },
         Case {
             name: "first_value",
             old: || old::first_value(oc("a")),
-            new: || first_value("a"),
+            new: || first_value("a", None),
         },
         Case {
             name: "flatten",
@@ -761,7 +761,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "from_unixtime",
             old: || old::from_unixtime(oc("a")),
-            new: || from_unixtime("a"),
+            new: || from_unixtime("a", None),
         },
         Case {
             name: "grouping",
@@ -776,7 +776,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "hll_sketch_agg",
             old: || old::hll_sketch_agg(oc("a")),
-            new: || hll_sketch_agg("a"),
+            new: || hll_sketch_agg("a", None),
         },
         Case {
             name: "hll_sketch_estimate",
@@ -786,7 +786,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "hll_union_agg",
             old: || old::hll_union_agg(oc("a")),
-            new: || hll_union_agg("a"),
+            new: || hll_union_agg("a", None),
         },
         Case {
             name: "hour",
@@ -871,7 +871,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "last",
             old: || old::last(oc("a")),
-            new: || last("a"),
+            new: || last("a", None),
         },
         Case {
             name: "last_day",
@@ -881,7 +881,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "last_value",
             old: || old::last_value(oc("a")),
-            new: || last_value("a"),
+            new: || last_value("a", None),
         },
         Case {
             name: "lcase",
@@ -921,7 +921,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "log",
             old: || old::log(oc("a")),
-            new: || log("a"),
+            new: || log("a", None),
         },
         Case {
             name: "log10",
@@ -981,7 +981,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "mask",
             old: || old::mask(oc("a")),
-            new: || mask("a"),
+            new: || mask("a", None, None, None, None),
         },
         Case {
             name: "max",
@@ -1016,7 +1016,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "mode",
             old: || old::mode(oc("a")),
-            new: || mode("a"),
+            new: || mode("a", None),
         },
         Case {
             name: "month",
@@ -1105,8 +1105,8 @@ pub fn cases() -> Vec<Case> {
         },
         Case {
             name: "randstr",
-            old: || old::randstr(oint(5)),
-            new: || randstr(5, None),
+            old: || old::randstr(oint(3)),
+            new: || randstr(3, None),
         },
         Case {
             name: "reverse",
@@ -1141,12 +1141,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "schema_of_csv",
             old: || old::schema_of_csv(ostr("x")),
-            new: || schema_of_csv("x"),
+            new: || schema_of_csv("x", None),
         },
         Case {
             name: "schema_of_json",
             old: || old::schema_of_json(ostr("x")),
-            new: || schema_of_json("x"),
+            new: || schema_of_json("x", None),
         },
         Case {
             name: "schema_of_variant",
@@ -1161,7 +1161,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "schema_of_xml",
             old: || old::schema_of_xml(ostr("x")),
-            new: || schema_of_xml("x"),
+            new: || schema_of_xml("x", None),
         },
         Case {
             name: "sec",
@@ -1191,7 +1191,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "shuffle",
             old: || old::shuffle(oc("a")),
-            new: || shuffle("a"),
+            new: || shuffle("a", None),
         },
         Case {
             name: "sign",
@@ -1346,37 +1346,37 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "to_csv",
             old: || old::to_csv(oc("a")),
-            new: || to_csv("a"),
+            new: || to_csv("a", None),
         },
         Case {
             name: "to_date",
             old: || old::to_date(oc("a")),
-            new: || to_date("a"),
+            new: || to_date("a", None),
         },
         Case {
             name: "to_json",
             old: || old::to_json(oc("a")),
-            new: || to_json("a"),
+            new: || to_json("a", None),
         },
         Case {
             name: "to_timestamp",
             old: || old::to_timestamp(oc("a")),
-            new: || to_timestamp("a"),
+            new: || to_timestamp("a", None),
         },
         Case {
             name: "to_timestamp_ltz",
             old: || old::to_timestamp_ltz(oc("a")),
-            new: || to_timestamp_ltz("a"),
+            new: || to_timestamp_ltz("a", None),
         },
         Case {
             name: "to_timestamp_ntz",
             old: || old::to_timestamp_ntz(oc("a")),
-            new: || to_timestamp_ntz("a"),
+            new: || to_timestamp_ntz("a", None),
         },
         Case {
             name: "to_unix_timestamp",
             old: || old::to_unix_timestamp(oc("a")),
-            new: || to_unix_timestamp("a"),
+            new: || to_unix_timestamp("a", None),
         },
         Case {
             name: "to_variant_object",
@@ -1386,7 +1386,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "to_xml",
             old: || old::to_xml(oc("a")),
-            new: || to_xml("a"),
+            new: || to_xml("a", None),
         },
         Case {
             name: "trim",
@@ -1416,12 +1416,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "try_to_binary",
             old: || old::try_to_binary(oc("a")),
-            new: || try_to_binary("a"),
+            new: || try_to_binary("a", None),
         },
         Case {
             name: "try_to_timestamp",
             old: || old::try_to_timestamp(oc("a")),
-            new: || try_to_timestamp("a"),
+            new: || try_to_timestamp("a", None),
         },
         Case {
             name: "try_url_decode",
@@ -1551,17 +1551,17 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "aes_decrypt",
             old: || old::aes_decrypt(oc("a"), oc("b")),
-            new: || aes_decrypt("a", "b"),
+            new: || aes_decrypt("a", "b", None, None, None),
         },
         Case {
             name: "aes_encrypt",
             old: || old::aes_encrypt(oc("a"), oc("b")),
-            new: || aes_encrypt("a", "b"),
+            new: || aes_encrypt("a", "b", None, None, None, None),
         },
         Case {
             name: "approx_percentile",
             old: || old::approx_percentile(oc("a"), odouble(0.5)),
-            new: || approx_percentile("a", 0.5),
+            new: || approx_percentile("a", 0.5, None),
         },
         Case {
             name: "array_append",
@@ -1586,7 +1586,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "array_join",
             old: || old::array_join(oc("a"), ostr("x")),
-            new: || array_join("a", "x"),
+            new: || array_join("a", "x", None),
         },
         Case {
             name: "array_position",
@@ -1746,12 +1746,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "from_csv",
             old: || old::from_csv(oc("a"), ostr("x")),
-            new: || from_csv("a", "x"),
+            new: || from_csv("a", "x", None),
         },
         Case {
             name: "from_json",
             old: || old::from_json(oc("a"), ostr("x")),
-            new: || from_json("a", "x"),
+            new: || from_json("a", "x", None),
         },
         Case {
             name: "from_utc_timestamp",
@@ -1761,7 +1761,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "from_xml",
             old: || old::from_xml(oc("a"), ostr("x")),
-            new: || from_xml("a", "x"),
+            new: || from_xml("a", "x", None),
         },
         Case {
             name: "get",
@@ -1791,7 +1791,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "hll_union",
             old: || old::hll_union(oc("a"), oc("b")),
-            new: || hll_union("a", "b"),
+            new: || hll_union("a", "b", None),
         },
         Case {
             name: "hypot",
@@ -1806,7 +1806,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "ilike",
             old: || old::ilike(oc("a"), oc("b")),
-            new: || ilike("a", "b"),
+            new: || ilike("a", "b", None),
         },
         Case {
             name: "instr",
@@ -1841,17 +1841,17 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "levenshtein",
             old: || old::levenshtein(oc("a"), oc("b")),
-            new: || levenshtein("a", "b"),
+            new: || levenshtein("a", "b", None),
         },
         Case {
             name: "like",
             old: || old::like(oc("a"), oc("b")),
-            new: || like("a", "b"),
+            new: || like("a", "b", None),
         },
         Case {
             name: "locate",
             old: || old::locate(ostr("x"), oc("a")),
-            new: || locate("x", "a"),
+            new: || locate("x", "a", None),
         },
         Case {
             name: "map_contains_key",
@@ -1866,17 +1866,17 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "max_by",
             old: || old::max_by(oc("a"), oc("b")),
-            new: || max_by("a", "b"),
+            new: || max_by("a", "b", None),
         },
         Case {
             name: "min_by",
             old: || old::min_by(oc("a"), oc("b")),
-            new: || min_by("a", "b"),
+            new: || min_by("a", "b", None),
         },
         Case {
             name: "months_between",
             old: || old::months_between(oc("a"), oc("b")),
-            new: || months_between("a", "b"),
+            new: || months_between("a", "b", None),
         },
         Case {
             name: "nanvl",
@@ -1891,7 +1891,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "nth_value",
             old: || old::nth_value(oc("a"), oint(3)),
-            new: || nth_value("a", 3),
+            new: || nth_value("a", 3, None),
         },
         Case {
             name: "nullif",
@@ -1906,17 +1906,17 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "parse_url",
             old: || old::parse_url(oc("a"), oc("b")),
-            new: || parse_url("a", "b"),
+            new: || parse_url("a", "b", None),
         },
         Case {
             name: "percentile",
             old: || old::percentile(oc("a"), odouble(0.5)),
-            new: || percentile("a", 0.5),
+            new: || percentile("a", 0.5, None),
         },
         Case {
             name: "percentile_approx",
             old: || old::percentile_approx(oc("a"), odouble(0.5)),
-            new: || percentile_approx("a", 0.5),
+            new: || percentile_approx("a", 0.5, None),
         },
         Case {
             name: "pmod",
@@ -1926,7 +1926,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "position",
             old: || old::position(oc("a"), oc("b")),
-            new: || position("a", "b"),
+            new: || position("a", "b", None),
         },
         Case {
             name: "pow",
@@ -1951,12 +1951,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "regexp_extract_all",
             old: || old::regexp_extract_all(oc("a"), oc("b")),
-            new: || regexp_extract_all("a", "b"),
+            new: || regexp_extract_all("a", "b", None),
         },
         Case {
             name: "regexp_instr",
             old: || old::regexp_instr(oc("a"), oc("b")),
-            new: || regexp_instr("a", "b"),
+            new: || regexp_instr("a", "b", None),
         },
         Case {
             name: "regexp_like",
@@ -2021,7 +2021,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "replace",
             old: || old::replace(oc("a"), oc("b")),
-            new: || replace("a", "b"),
+            new: || replace("a", "b", None),
         },
         Case {
             name: "right",
@@ -2036,7 +2036,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "sequence",
             old: || old::sequence(oc("a"), oc("b")),
-            new: || sequence("a", "b"),
+            new: || sequence("a", "b", None),
         },
         Case {
             name: "session_window",
@@ -2076,7 +2076,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "split",
             old: || old::split(oc("a"), ostr("x")),
-            new: || split("a", "x"),
+            new: || split("a", "x", None),
         },
         Case {
             name: "startswith",
@@ -2086,7 +2086,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "substr",
             old: || old::substr(oc("a"), oc("b")),
-            new: || substr("a", "b"),
+            new: || substr("a", "b", None),
         },
         Case {
             name: "to_char",
@@ -2121,7 +2121,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "try_aes_decrypt",
             old: || old::try_aes_decrypt(oc("a"), oc("b")),
-            new: || try_aes_decrypt("a", "b"),
+            new: || try_aes_decrypt("a", "b", None, None, None),
         },
         Case {
             name: "try_divide",
@@ -2146,7 +2146,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "try_parse_url",
             old: || old::try_parse_url(oc("a"), oc("b")),
-            new: || try_parse_url("a", "b"),
+            new: || try_parse_url("a", "b", None),
         },
         Case {
             name: "try_subtract",
@@ -2161,7 +2161,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "uniform",
             old: || old::uniform(oint(3), oint(4)),
-            new: || uniform(3, 4),
+            new: || uniform(3, 4, None),
         },
         Case {
             name: "when",
@@ -2231,7 +2231,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "count_min_sketch",
             old: || old::count_min_sketch(oc("a"), odouble(0.5), odouble(0.25)),
-            new: || count_min_sketch("a", 0.5, 0.25),
+            new: || count_min_sketch("a", 0.5, 0.25, None),
         },
         Case {
             name: "lpad",
@@ -2251,7 +2251,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "overlay",
             old: || old::overlay(oc("a"), oc("b"), oc("c")),
-            new: || overlay("a", "b", "c"),
+            new: || overlay("a", "b", "c", None),
         },
         Case {
             name: "regexp_extract",
@@ -2400,7 +2400,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "reduce",
             old: || old::reduce(oc("a"), oc("b"), |v: Vec<OldColumn>| old::array(v)),
-            new: || reduce("a", "b", |x, y| array([x, y])),
+            new: || reduce("a", "b", |x, y| array([x, y]), None),
         },
         Case {
             name: "from_protobuf",
@@ -2492,7 +2492,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "current_time",
             old: || old::current_time(),
-            new: || current_time(),
+            new: || current_time(None),
         },
         Case {
             name: "hmac",
@@ -2517,32 +2517,32 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "kll_merge_agg_bigint",
             old: || old::kll_merge_agg_bigint(oc("a")),
-            new: || kll_merge_agg_bigint("a"),
+            new: || kll_merge_agg_bigint("a", None),
         },
         Case {
             name: "kll_merge_agg_double",
             old: || old::kll_merge_agg_double(oc("a")),
-            new: || kll_merge_agg_double("a"),
+            new: || kll_merge_agg_double("a", None),
         },
         Case {
             name: "kll_merge_agg_float",
             old: || old::kll_merge_agg_float(oc("a")),
-            new: || kll_merge_agg_float("a"),
+            new: || kll_merge_agg_float("a", None),
         },
         Case {
             name: "kll_sketch_agg_bigint",
             old: || old::kll_sketch_agg_bigint(oc("a")),
-            new: || kll_sketch_agg_bigint("a"),
+            new: || kll_sketch_agg_bigint("a", None),
         },
         Case {
             name: "kll_sketch_agg_double",
             old: || old::kll_sketch_agg_double(oc("a")),
-            new: || kll_sketch_agg_double("a"),
+            new: || kll_sketch_agg_double("a", None),
         },
         Case {
             name: "kll_sketch_agg_float",
             old: || old::kll_sketch_agg_float(oc("a")),
-            new: || kll_sketch_agg_float("a"),
+            new: || kll_sketch_agg_float("a", None),
         },
         Case {
             name: "kll_sketch_get_n_bigint",
@@ -2627,12 +2627,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "make_timestamp",
             old: || old::make_timestamp(oc("a"), oc("b"), oc("c"), oc("d"), oc("e"), oc("f")),
-            new: || make_timestamp("a", "b", "c", "d", "e", "f"),
+            new: || make_timestamp("a", "b", "c", "d", "e", "f", None),
         },
         Case {
             name: "make_timestamp_ltz",
             old: || old::make_timestamp_ltz(oc("a"), oc("b"), oc("c"), oc("d"), oc("e"), oc("f")),
-            new: || make_timestamp_ltz("a", "b", "c", "d", "e", "f"),
+            new: || make_timestamp_ltz("a", "b", "c", "d", "e", "f", None),
         },
         Case {
             name: "make_timestamp_ntz",
@@ -2652,7 +2652,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "st_asbinary",
             old: || old::st_asbinary(oc("a")),
-            new: || st_asbinary("a"),
+            new: || st_asbinary("a", None),
         },
         Case {
             name: "st_geogfromwkb",
@@ -2662,7 +2662,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "st_geomfromwkb",
             old: || old::st_geomfromwkb(oc("a")),
-            new: || st_geomfromwkb("a"),
+            new: || st_geomfromwkb("a", None),
         },
         Case {
             name: "st_setsrid",
@@ -2692,7 +2692,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "theta_sketch_agg",
             old: || old::theta_sketch_agg(oc("a")),
-            new: || theta_sketch_agg("a"),
+            new: || theta_sketch_agg("a", None),
         },
         Case {
             name: "theta_sketch_estimate",
@@ -2702,17 +2702,17 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "theta_union",
             old: || old::theta_union(oc("a"), oc("b")),
-            new: || theta_union("a", "b"),
+            new: || theta_union("a", "b", None),
         },
         Case {
             name: "theta_union_agg",
             old: || old::theta_union_agg(oc("a")),
-            new: || theta_union_agg("a"),
+            new: || theta_union_agg("a", None),
         },
         Case {
             name: "time_bucket",
             old: || old::time_bucket(oc("a"), oc("b")),
-            new: || time_bucket("a", "b"),
+            new: || time_bucket("a", "b", None),
         },
         Case {
             name: "time_diff",
@@ -2762,19 +2762,19 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "to_time",
             old: || old::to_time(oc("a")),
-            new: || to_time("a"),
+            new: || to_time("a", None),
         },
         Case {
             name: "try_make_timestamp",
             old: || old::try_make_timestamp(oc("a"), oc("b"), oc("c"), oc("d"), oc("e"), oc("f")),
-            new: || try_make_timestamp("a", "b", "c", "d", "e", "f"),
+            new: || try_make_timestamp("a", "b", "c", "d", "e", "f", None),
         },
         Case {
             name: "try_make_timestamp_ltz",
             old: || {
                 old::try_make_timestamp_ltz(oc("a"), oc("b"), oc("c"), oc("d"), oc("e"), oc("f"))
             },
-            new: || try_make_timestamp_ltz("a", "b", "c", "d", "e", "f"),
+            new: || try_make_timestamp_ltz("a", "b", "c", "d", "e", "f", None),
         },
         Case {
             name: "try_make_timestamp_ntz",
@@ -2786,12 +2786,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "try_to_date",
             old: || old::try_to_date(oc("a")),
-            new: || try_to_date("a"),
+            new: || try_to_date("a", None),
         },
         Case {
             name: "try_to_time",
             old: || old::try_to_time(oc("a")),
-            new: || try_to_time("a"),
+            new: || try_to_time("a", None),
         },
         Case {
             name: "try_variant_array_append",
@@ -2828,7 +2828,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "uuid",
             old: || old::uuid(),
-            new: || uuid(),
+            new: || uuid(None),
         },
         Case {
             name: "variant_array_append",
@@ -2925,42 +2925,42 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "tuple_intersection_agg_double",
             old: || old::tuple_intersection_agg_double(oc("a")),
-            new: || tuple_intersection_agg_double("a"),
+            new: || tuple_intersection_agg_double("a", None),
         },
         Case {
             name: "tuple_intersection_agg_integer",
             old: || old::tuple_intersection_agg_integer(oc("a")),
-            new: || tuple_intersection_agg_integer("a"),
+            new: || tuple_intersection_agg_integer("a", None),
         },
         Case {
             name: "tuple_intersection_double",
             old: || old::tuple_intersection_double(oc("a"), oc("b")),
-            new: || tuple_intersection_double("a", "b"),
+            new: || tuple_intersection_double("a", "b", None),
         },
         Case {
             name: "tuple_intersection_integer",
             old: || old::tuple_intersection_integer(oc("a"), oc("b")),
-            new: || tuple_intersection_integer("a", "b"),
+            new: || tuple_intersection_integer("a", "b", None),
         },
         Case {
             name: "tuple_intersection_theta_double",
             old: || old::tuple_intersection_theta_double(oc("a"), oc("b")),
-            new: || tuple_intersection_theta_double("a", "b"),
+            new: || tuple_intersection_theta_double("a", "b", None),
         },
         Case {
             name: "tuple_intersection_theta_integer",
             old: || old::tuple_intersection_theta_integer(oc("a"), oc("b")),
-            new: || tuple_intersection_theta_integer("a", "b"),
+            new: || tuple_intersection_theta_integer("a", "b", None),
         },
         Case {
             name: "tuple_sketch_agg_double",
             old: || old::tuple_sketch_agg_double(oc("a"), oc("b")),
-            new: || tuple_sketch_agg_double("a", "b"),
+            new: || tuple_sketch_agg_double("a", "b", None, None),
         },
         Case {
             name: "tuple_sketch_agg_integer",
             old: || old::tuple_sketch_agg_integer(oc("a"), oc("b")),
-            new: || tuple_sketch_agg_integer("a", "b"),
+            new: || tuple_sketch_agg_integer("a", "b", None, None),
         },
         Case {
             name: "tuple_sketch_estimate_double",
@@ -2975,12 +2975,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "tuple_sketch_summary_double",
             old: || old::tuple_sketch_summary_double(oc("a")),
-            new: || tuple_sketch_summary_double("a"),
+            new: || tuple_sketch_summary_double("a", None),
         },
         Case {
             name: "tuple_sketch_summary_integer",
             old: || old::tuple_sketch_summary_integer(oc("a")),
-            new: || tuple_sketch_summary_integer("a"),
+            new: || tuple_sketch_summary_integer("a", None),
         },
         Case {
             name: "tuple_sketch_theta_double",
@@ -2995,32 +2995,779 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "tuple_union_agg_double",
             old: || old::tuple_union_agg_double(oc("a")),
-            new: || tuple_union_agg_double("a"),
+            new: || tuple_union_agg_double("a", None, None),
         },
         Case {
             name: "tuple_union_agg_integer",
             old: || old::tuple_union_agg_integer(oc("a")),
-            new: || tuple_union_agg_integer("a"),
+            new: || tuple_union_agg_integer("a", None, None),
         },
         Case {
             name: "tuple_union_double",
             old: || old::tuple_union_double(oc("a"), oc("b")),
-            new: || tuple_union_double("a", "b"),
+            new: || tuple_union_double("a", "b", None, None),
         },
         Case {
             name: "tuple_union_integer",
             old: || old::tuple_union_integer(oc("a"), oc("b")),
-            new: || tuple_union_integer("a", "b"),
+            new: || tuple_union_integer("a", "b", None, None),
         },
         Case {
             name: "tuple_union_theta_double",
             old: || old::tuple_union_theta_double(oc("a"), oc("b")),
-            new: || tuple_union_theta_double("a", "b"),
+            new: || tuple_union_theta_double("a", "b", None, None),
         },
         Case {
             name: "tuple_union_theta_integer",
             old: || old::tuple_union_theta_integer(oc("a"), oc("b")),
-            new: || tuple_union_theta_integer("a", "b"),
+            new: || tuple_union_theta_integer("a", "b", None, None),
+        },
+    ]
+}
+
+pub fn forms() -> Vec<Case> {
+    vec![
+        Case {
+            name: "window with every argument",
+            old: || call("window", vec![oc("a"), ostr("x"), ostr("y"), ostr("z")]),
+            new: || window("a", "x", Some("y"), Some("z")),
+        },
+        Case {
+            name: "make_dt_interval with every argument",
+            old: || call("make_dt_interval", vec![oc("a"), oc("b"), oc("c"), oc("d")]),
+            new: || {
+                make_dt_interval(
+                    Some(col("a")),
+                    Some(col("b")),
+                    Some(col("c")),
+                    Some(col("d")),
+                )
+            },
+        },
+        Case {
+            name: "make_interval with every argument",
+            old: || {
+                call(
+                    "make_interval",
+                    vec![
+                        oc("a"),
+                        oc("b"),
+                        oc("c"),
+                        oc("d"),
+                        oc("e"),
+                        oc("f"),
+                        oc("g"),
+                    ],
+                )
+            },
+            new: || {
+                make_interval(
+                    Some(col("a")),
+                    Some(col("b")),
+                    Some(col("c")),
+                    Some(col("d")),
+                    Some(col("e")),
+                    Some(col("f")),
+                    Some(col("g")),
+                )
+            },
+        },
+        Case {
+            name: "make_ym_interval with every argument",
+            old: || call("make_ym_interval", vec![oc("a"), oc("b")]),
+            new: || make_ym_interval(Some(col("a")), Some(col("b"))),
+        },
+        Case {
+            name: "rand with every argument",
+            old: || call("rand", vec![olong(3_000_000_000)]),
+            new: || rand(Some(3_000_000_000)),
+        },
+        Case {
+            name: "randn with every argument",
+            old: || call("randn", vec![olong(3_000_000_000)]),
+            new: || randn(Some(3_000_000_000)),
+        },
+        Case {
+            name: "try_make_interval with every argument",
+            old: || {
+                call(
+                    "try_make_interval",
+                    vec![
+                        oc("a"),
+                        oc("b"),
+                        oc("c"),
+                        oc("d"),
+                        oc("e"),
+                        oc("f"),
+                        oc("g"),
+                    ],
+                )
+            },
+            new: || {
+                try_make_interval(
+                    Some(col("a")),
+                    Some(col("b")),
+                    Some(col("c")),
+                    Some(col("d")),
+                    Some(col("e")),
+                    Some(col("f")),
+                    Some(col("g")),
+                )
+            },
+        },
+        Case {
+            name: "unix_timestamp with every argument",
+            old: || call("unix_timestamp", vec![oc("a"), ostr("x")]),
+            new: || unix_timestamp(Some(col("a")), Some("x")),
+        },
+        Case {
+            name: "any_value with every argument",
+            old: || call("any_value", vec![oc("a"), obool(false)]),
+            new: || any_value("a", Some(false)),
+        },
+        Case {
+            name: "assert_true with every argument",
+            old: || call("assert_true", vec![oc("a"), ostr("x")]),
+            new: || assert_true("a", Some("x")),
+        },
+        Case {
+            name: "btrim with every argument",
+            old: || call("btrim", vec![oc("a"), oc("b")]),
+            new: || btrim("a", Some(col("b"))),
+        },
+        Case {
+            name: "ceiling with every argument",
+            old: || call("ceiling", vec![oc("a"), oint(3)]),
+            new: || ceiling("a", Some(3)),
+        },
+        Case {
+            name: "first with every argument",
+            old: || call("first", vec![oc("a"), obool(false)]),
+            new: || first("a", Some(false)),
+        },
+        Case {
+            name: "first_value with every argument",
+            old: || call("first_value", vec![oc("a"), obool(false)]),
+            new: || first_value("a", Some(false)),
+        },
+        Case {
+            name: "from_unixtime with every argument",
+            old: || call("from_unixtime", vec![oc("a"), ostr("x")]),
+            new: || from_unixtime("a", Some("x")),
+        },
+        Case {
+            name: "hll_sketch_agg with every argument",
+            old: || call("hll_sketch_agg", vec![oc("a"), oint(3)]),
+            new: || hll_sketch_agg("a", Some(3)),
+        },
+        Case {
+            name: "hll_union_agg with every argument",
+            old: || call("hll_union_agg", vec![oc("a"), obool(false)]),
+            new: || hll_union_agg("a", Some(false)),
+        },
+        Case {
+            name: "last with every argument",
+            old: || call("last", vec![oc("a"), obool(false)]),
+            new: || last("a", Some(false)),
+        },
+        Case {
+            name: "last_value with every argument",
+            old: || call("last_value", vec![oc("a"), obool(false)]),
+            new: || last_value("a", Some(false)),
+        },
+        Case {
+            name: "listagg with every argument",
+            old: || call("listagg", vec![oc("a"), ostr("x")]),
+            new: || listagg("a", Some("x")),
+        },
+        Case {
+            name: "mask with every argument",
+            old: || call("mask", vec![oc("a"), oc("b"), oc("c"), oc("d"), oc("e")]),
+            new: || {
+                mask(
+                    "a",
+                    Some(col("b")),
+                    Some(col("c")),
+                    Some(col("d")),
+                    Some(col("e")),
+                )
+            },
+        },
+        Case {
+            name: "mode with every argument",
+            old: || call("mode", vec![oc("a"), obool(false)]),
+            new: || mode("a", Some(false)),
+        },
+        Case {
+            name: "randstr with every argument",
+            old: || call("randstr", vec![oint(3), olong(3_000_000_000)]),
+            new: || randstr(3, Some(3_000_000_000)),
+        },
+        Case {
+            name: "schema_of_csv with every argument",
+            old: || call("schema_of_csv", vec![ostr("x"), oc("a")]),
+            new: || schema_of_csv("x", Some(col("a"))),
+        },
+        Case {
+            name: "schema_of_json with every argument",
+            old: || call("schema_of_json", vec![ostr("x"), oc("a")]),
+            new: || schema_of_json("x", Some(col("a"))),
+        },
+        Case {
+            name: "schema_of_xml with every argument",
+            old: || call("schema_of_xml", vec![ostr("x"), oc("a")]),
+            new: || schema_of_xml("x", Some(col("a"))),
+        },
+        Case {
+            name: "sentences with every argument",
+            old: || call("sentences", vec![oc("a"), oc("b"), oc("c")]),
+            new: || sentences("a", Some(col("b")), Some(col("c"))),
+        },
+        Case {
+            name: "shuffle with every argument",
+            old: || call("shuffle", vec![oc("a"), olong(3_000_000_000)]),
+            new: || shuffle("a", Some(3_000_000_000)),
+        },
+        Case {
+            name: "sort_array with every argument",
+            old: || call("sort_array", vec![oc("a"), obool(false)]),
+            new: || sort_array("a", Some(false)),
+        },
+        Case {
+            name: "str_to_map with every argument",
+            old: || call("str_to_map", vec![oc("a"), oc("b"), oc("c")]),
+            new: || str_to_map("a", Some(col("b")), Some(col("c"))),
+        },
+        Case {
+            name: "string_agg with every argument",
+            old: || call("string_agg", vec![oc("a"), ostr("x")]),
+            new: || string_agg("a", Some("x")),
+        },
+        Case {
+            name: "to_csv with every argument",
+            old: || call("to_csv", vec![oc("a"), oc("b")]),
+            new: || to_csv("a", Some(col("b"))),
+        },
+        Case {
+            name: "to_date with every argument",
+            old: || call("to_date", vec![oc("a"), ostr("x")]),
+            new: || to_date("a", Some("x")),
+        },
+        Case {
+            name: "to_json with every argument",
+            old: || call("to_json", vec![oc("a"), oc("b")]),
+            new: || to_json("a", Some(col("b"))),
+        },
+        Case {
+            name: "to_timestamp with every argument",
+            old: || call("to_timestamp", vec![oc("a"), ostr("x")]),
+            new: || to_timestamp("a", Some("x")),
+        },
+        Case {
+            name: "to_timestamp_ltz with every argument",
+            old: || call("to_timestamp_ltz", vec![oc("a"), oc("b")]),
+            new: || to_timestamp_ltz("a", Some(col("b"))),
+        },
+        Case {
+            name: "to_timestamp_ntz with every argument",
+            old: || call("to_timestamp_ntz", vec![oc("a"), oc("b")]),
+            new: || to_timestamp_ntz("a", Some(col("b"))),
+        },
+        Case {
+            name: "to_unix_timestamp with every argument",
+            old: || call("to_unix_timestamp", vec![oc("a"), oc("b")]),
+            new: || to_unix_timestamp("a", Some(col("b"))),
+        },
+        Case {
+            name: "to_xml with every argument",
+            old: || call("to_xml", vec![oc("a"), oc("b")]),
+            new: || to_xml("a", Some(col("b"))),
+        },
+        Case {
+            name: "try_to_binary with every argument",
+            old: || call("try_to_binary", vec![oc("a"), oc("b")]),
+            new: || try_to_binary("a", Some(col("b"))),
+        },
+        Case {
+            name: "try_to_timestamp with every argument",
+            old: || call("try_to_timestamp", vec![oc("a"), oc("b")]),
+            new: || try_to_timestamp("a", Some(col("b"))),
+        },
+        Case {
+            name: "aes_decrypt with every argument",
+            old: || {
+                call(
+                    "aes_decrypt",
+                    vec![oc("a"), oc("b"), oc("c"), oc("d"), oc("e")],
+                )
+            },
+            new: || aes_decrypt("a", "b", Some(col("c")), Some(col("d")), Some(col("e"))),
+        },
+        Case {
+            name: "aes_encrypt with every argument",
+            old: || {
+                call(
+                    "aes_encrypt",
+                    vec![oc("a"), oc("b"), oc("c"), oc("d"), oc("e"), oc("f")],
+                )
+            },
+            new: || {
+                aes_encrypt(
+                    "a",
+                    "b",
+                    Some(col("c")),
+                    Some(col("d")),
+                    Some(col("e")),
+                    Some(col("f")),
+                )
+            },
+        },
+        Case {
+            name: "approx_percentile with every argument",
+            old: || call("approx_percentile", vec![oc("a"), odouble(0.5), oint(3)]),
+            new: || approx_percentile("a", 0.5, Some(3)),
+        },
+        Case {
+            name: "array_join with every argument",
+            old: || call("array_join", vec![oc("a"), ostr("x"), ostr("y")]),
+            new: || array_join("a", "x", Some("y")),
+        },
+        Case {
+            name: "from_csv with every argument",
+            old: || call("from_csv", vec![oc("a"), ostr("x"), oc("b")]),
+            new: || from_csv("a", "x", Some(col("b"))),
+        },
+        Case {
+            name: "from_json with every argument",
+            old: || call("from_json", vec![oc("a"), ostr("x"), oc("b")]),
+            new: || from_json("a", "x", Some(col("b"))),
+        },
+        Case {
+            name: "from_xml with every argument",
+            old: || call("from_xml", vec![oc("a"), ostr("x"), oc("b")]),
+            new: || from_xml("a", "x", Some(col("b"))),
+        },
+        Case {
+            name: "hll_union with every argument",
+            old: || call("hll_union", vec![oc("a"), oc("b"), obool(false)]),
+            new: || hll_union("a", "b", Some(false)),
+        },
+        Case {
+            name: "ilike with every argument",
+            old: || call("ilike", vec![oc("a"), oc("b"), oc("c")]),
+            new: || ilike("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "instr with every argument",
+            old: || call("instr", vec![oc("a"), ostr("x"), oint(3), oint(4)]),
+            new: || instr("a", "x", Some(3), Some(4)),
+        },
+        Case {
+            name: "levenshtein with every argument",
+            old: || call("levenshtein", vec![oc("a"), oc("b"), oint(3)]),
+            new: || levenshtein("a", "b", Some(3)),
+        },
+        Case {
+            name: "like with every argument",
+            old: || call("like", vec![oc("a"), oc("b"), oc("c")]),
+            new: || like("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "locate with every argument",
+            old: || call("locate", vec![ostr("x"), oc("a"), oint(3)]),
+            new: || locate("x", "a", Some(3)),
+        },
+        Case {
+            name: "max_by with every argument",
+            old: || call("max_by", vec![oc("a"), oc("b"), oint(3)]),
+            new: || max_by("a", "b", Some(3)),
+        },
+        Case {
+            name: "min_by with every argument",
+            old: || call("min_by", vec![oc("a"), oc("b"), oint(3)]),
+            new: || min_by("a", "b", Some(3)),
+        },
+        Case {
+            name: "months_between with every argument",
+            old: || call("months_between", vec![oc("a"), oc("b"), obool(false)]),
+            new: || months_between("a", "b", Some(false)),
+        },
+        Case {
+            name: "nth_value with every argument",
+            old: || call("nth_value", vec![oc("a"), oint(3), obool(false)]),
+            new: || nth_value("a", 3, Some(false)),
+        },
+        Case {
+            name: "parse_url with every argument",
+            old: || call("parse_url", vec![oc("a"), oc("b"), oc("c")]),
+            new: || parse_url("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "percentile with every argument",
+            old: || call("percentile", vec![oc("a"), odouble(0.5), oint(3)]),
+            new: || percentile("a", 0.5, Some(3)),
+        },
+        Case {
+            name: "percentile_approx with every argument",
+            old: || call("percentile_approx", vec![oc("a"), odouble(0.5), oint(3)]),
+            new: || percentile_approx("a", 0.5, Some(3)),
+        },
+        Case {
+            name: "position with every argument",
+            old: || call("position", vec![oc("a"), oc("b"), oc("c")]),
+            new: || position("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "regexp_extract_all with every argument",
+            old: || call("regexp_extract_all", vec![oc("a"), oc("b"), oint(3)]),
+            new: || regexp_extract_all("a", "b", Some(3)),
+        },
+        Case {
+            name: "regexp_instr with every argument",
+            old: || call("regexp_instr", vec![oc("a"), oc("b"), oint(3)]),
+            new: || regexp_instr("a", "b", Some(3)),
+        },
+        Case {
+            name: "replace with every argument",
+            old: || call("replace", vec![oc("a"), oc("b"), oc("c")]),
+            new: || replace("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "sequence with every argument",
+            old: || call("sequence", vec![oc("a"), oc("b"), oc("c")]),
+            new: || sequence("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "split with every argument",
+            old: || call("split", vec![oc("a"), ostr("x"), oc("b")]),
+            new: || split("a", "x", Some(col("b"))),
+        },
+        Case {
+            name: "substr with every argument",
+            old: || call("substr", vec![oc("a"), oc("b"), oc("c")]),
+            new: || substr("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "try_aes_decrypt with every argument",
+            old: || {
+                call(
+                    "try_aes_decrypt",
+                    vec![oc("a"), oc("b"), oc("c"), oc("d"), oc("e")],
+                )
+            },
+            new: || try_aes_decrypt("a", "b", Some(col("c")), Some(col("d")), Some(col("e"))),
+        },
+        Case {
+            name: "try_parse_url with every argument",
+            old: || call("try_parse_url", vec![oc("a"), oc("b"), oc("c")]),
+            new: || try_parse_url("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "uniform with every argument",
+            old: || call("uniform", vec![oint(3), oint(4), olong(3_000_000_000)]),
+            new: || uniform(3, 4, Some(3_000_000_000)),
+        },
+        Case {
+            name: "count_min_sketch with every argument",
+            old: || {
+                call(
+                    "count_min_sketch",
+                    vec![oc("a"), odouble(0.5), odouble(0.25), olong(3_000_000_000)],
+                )
+            },
+            new: || count_min_sketch("a", 0.5, 0.25, Some(3_000_000_000)),
+        },
+        Case {
+            name: "overlay with every argument",
+            old: || call("overlay", vec![oc("a"), oc("b"), oc("c"), oc("d")]),
+            new: || overlay("a", "b", "c", Some(col("d"))),
+        },
+        Case {
+            name: "current_time with every argument",
+            old: || call("current_time", vec![oint(3)]),
+            new: || current_time(Some(3)),
+        },
+        Case {
+            name: "kll_merge_agg_bigint with every argument",
+            old: || call("kll_merge_agg_bigint", vec![oc("a"), oint(3)]),
+            new: || kll_merge_agg_bigint("a", Some(3)),
+        },
+        Case {
+            name: "kll_merge_agg_double with every argument",
+            old: || call("kll_merge_agg_double", vec![oc("a"), oint(3)]),
+            new: || kll_merge_agg_double("a", Some(3)),
+        },
+        Case {
+            name: "kll_merge_agg_float with every argument",
+            old: || call("kll_merge_agg_float", vec![oc("a"), oint(3)]),
+            new: || kll_merge_agg_float("a", Some(3)),
+        },
+        Case {
+            name: "kll_sketch_agg_bigint with every argument",
+            old: || call("kll_sketch_agg_bigint", vec![oc("a"), oint(3)]),
+            new: || kll_sketch_agg_bigint("a", Some(3)),
+        },
+        Case {
+            name: "kll_sketch_agg_double with every argument",
+            old: || call("kll_sketch_agg_double", vec![oc("a"), oint(3)]),
+            new: || kll_sketch_agg_double("a", Some(3)),
+        },
+        Case {
+            name: "kll_sketch_agg_float with every argument",
+            old: || call("kll_sketch_agg_float", vec![oc("a"), oint(3)]),
+            new: || kll_sketch_agg_float("a", Some(3)),
+        },
+        Case {
+            name: "make_timestamp with every argument",
+            old: || {
+                call(
+                    "make_timestamp",
+                    vec![
+                        oc("a"),
+                        oc("b"),
+                        oc("c"),
+                        oc("d"),
+                        oc("e"),
+                        oc("f"),
+                        oc("g"),
+                    ],
+                )
+            },
+            new: || make_timestamp("a", "b", "c", "d", "e", "f", Some(col("g"))),
+        },
+        Case {
+            name: "make_timestamp_ltz with every argument",
+            old: || {
+                call(
+                    "make_timestamp_ltz",
+                    vec![
+                        oc("a"),
+                        oc("b"),
+                        oc("c"),
+                        oc("d"),
+                        oc("e"),
+                        oc("f"),
+                        oc("g"),
+                    ],
+                )
+            },
+            new: || make_timestamp_ltz("a", "b", "c", "d", "e", "f", Some(col("g"))),
+        },
+        Case {
+            name: "st_asbinary with every argument",
+            old: || call("st_asbinary", vec![oc("a"), oc("b")]),
+            new: || st_asbinary("a", Some(col("b"))),
+        },
+        Case {
+            name: "st_geomfromwkb with every argument",
+            old: || call("st_geomfromwkb", vec![oc("a"), oc("b")]),
+            new: || st_geomfromwkb("a", Some(col("b"))),
+        },
+        Case {
+            name: "theta_sketch_agg with every argument",
+            old: || call("theta_sketch_agg", vec![oc("a"), oint(3)]),
+            new: || theta_sketch_agg("a", Some(3)),
+        },
+        Case {
+            name: "theta_union with every argument",
+            old: || call("theta_union", vec![oc("a"), oc("b"), oint(3)]),
+            new: || theta_union("a", "b", Some(3)),
+        },
+        Case {
+            name: "theta_union_agg with every argument",
+            old: || call("theta_union_agg", vec![oc("a"), oint(3)]),
+            new: || theta_union_agg("a", Some(3)),
+        },
+        Case {
+            name: "time_bucket with every argument",
+            old: || call("time_bucket", vec![oc("a"), oc("b"), oc("c")]),
+            new: || time_bucket("a", "b", Some(col("c"))),
+        },
+        Case {
+            name: "to_time with every argument",
+            old: || call("to_time", vec![oc("a"), oc("b")]),
+            new: || to_time("a", Some(col("b"))),
+        },
+        Case {
+            name: "try_make_timestamp with every argument",
+            old: || {
+                call(
+                    "try_make_timestamp",
+                    vec![
+                        oc("a"),
+                        oc("b"),
+                        oc("c"),
+                        oc("d"),
+                        oc("e"),
+                        oc("f"),
+                        oc("g"),
+                    ],
+                )
+            },
+            new: || try_make_timestamp("a", "b", "c", "d", "e", "f", Some(col("g"))),
+        },
+        Case {
+            name: "try_make_timestamp_ltz with every argument",
+            old: || {
+                call(
+                    "try_make_timestamp_ltz",
+                    vec![
+                        oc("a"),
+                        oc("b"),
+                        oc("c"),
+                        oc("d"),
+                        oc("e"),
+                        oc("f"),
+                        oc("g"),
+                    ],
+                )
+            },
+            new: || try_make_timestamp_ltz("a", "b", "c", "d", "e", "f", Some(col("g"))),
+        },
+        Case {
+            name: "try_to_date with every argument",
+            old: || call("try_to_date", vec![oc("a"), ostr("x")]),
+            new: || try_to_date("a", Some("x")),
+        },
+        Case {
+            name: "try_to_time with every argument",
+            old: || call("try_to_time", vec![oc("a"), oc("b")]),
+            new: || try_to_time("a", Some(col("b"))),
+        },
+        Case {
+            name: "uuid with every argument",
+            old: || call("uuid", vec![olong(3_000_000_000)]),
+            new: || uuid(Some(3_000_000_000)),
+        },
+        Case {
+            name: "tuple_intersection_agg_double with every argument",
+            old: || call("tuple_intersection_agg_double", vec![oc("a"), ostr("x")]),
+            new: || tuple_intersection_agg_double("a", Some("x")),
+        },
+        Case {
+            name: "tuple_intersection_agg_integer with every argument",
+            old: || call("tuple_intersection_agg_integer", vec![oc("a"), ostr("x")]),
+            new: || tuple_intersection_agg_integer("a", Some("x")),
+        },
+        Case {
+            name: "tuple_intersection_double with every argument",
+            old: || {
+                call(
+                    "tuple_intersection_double",
+                    vec![oc("a"), oc("b"), ostr("x")],
+                )
+            },
+            new: || tuple_intersection_double("a", "b", Some("x")),
+        },
+        Case {
+            name: "tuple_intersection_integer with every argument",
+            old: || {
+                call(
+                    "tuple_intersection_integer",
+                    vec![oc("a"), oc("b"), ostr("x")],
+                )
+            },
+            new: || tuple_intersection_integer("a", "b", Some("x")),
+        },
+        Case {
+            name: "tuple_intersection_theta_double with every argument",
+            old: || {
+                call(
+                    "tuple_intersection_theta_double",
+                    vec![oc("a"), oc("b"), ostr("x")],
+                )
+            },
+            new: || tuple_intersection_theta_double("a", "b", Some("x")),
+        },
+        Case {
+            name: "tuple_intersection_theta_integer with every argument",
+            old: || {
+                call(
+                    "tuple_intersection_theta_integer",
+                    vec![oc("a"), oc("b"), ostr("x")],
+                )
+            },
+            new: || tuple_intersection_theta_integer("a", "b", Some("x")),
+        },
+        Case {
+            name: "tuple_sketch_agg_double with every argument",
+            old: || {
+                call(
+                    "tuple_sketch_agg_double",
+                    vec![oc("a"), oc("b"), oint(3), ostr("x")],
+                )
+            },
+            new: || tuple_sketch_agg_double("a", "b", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_sketch_agg_integer with every argument",
+            old: || {
+                call(
+                    "tuple_sketch_agg_integer",
+                    vec![oc("a"), oc("b"), oint(3), ostr("x")],
+                )
+            },
+            new: || tuple_sketch_agg_integer("a", "b", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_sketch_summary_double with every argument",
+            old: || call("tuple_sketch_summary_double", vec![oc("a"), ostr("x")]),
+            new: || tuple_sketch_summary_double("a", Some("x")),
+        },
+        Case {
+            name: "tuple_sketch_summary_integer with every argument",
+            old: || call("tuple_sketch_summary_integer", vec![oc("a"), ostr("x")]),
+            new: || tuple_sketch_summary_integer("a", Some("x")),
+        },
+        Case {
+            name: "tuple_union_agg_double with every argument",
+            old: || call("tuple_union_agg_double", vec![oc("a"), oint(3), ostr("x")]),
+            new: || tuple_union_agg_double("a", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_union_agg_integer with every argument",
+            old: || call("tuple_union_agg_integer", vec![oc("a"), oint(3), ostr("x")]),
+            new: || tuple_union_agg_integer("a", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_union_double with every argument",
+            old: || {
+                call(
+                    "tuple_union_double",
+                    vec![oc("a"), oc("b"), oint(3), ostr("x")],
+                )
+            },
+            new: || tuple_union_double("a", "b", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_union_integer with every argument",
+            old: || {
+                call(
+                    "tuple_union_integer",
+                    vec![oc("a"), oc("b"), oint(3), ostr("x")],
+                )
+            },
+            new: || tuple_union_integer("a", "b", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_union_theta_double with every argument",
+            old: || {
+                call(
+                    "tuple_union_theta_double",
+                    vec![oc("a"), oc("b"), oint(3), ostr("x")],
+                )
+            },
+            new: || tuple_union_theta_double("a", "b", Some(3), Some("x")),
+        },
+        Case {
+            name: "tuple_union_theta_integer with every argument",
+            old: || {
+                call(
+                    "tuple_union_theta_integer",
+                    vec![oc("a"), oc("b"), oint(3), ostr("x")],
+                )
+            },
+            new: || tuple_union_theta_integer("a", "b", Some(3), Some("x")),
         },
     ]
 }

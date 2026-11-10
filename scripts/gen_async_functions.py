@@ -71,7 +71,9 @@ HEADER = f"""\
 #                columns);
 #                ?type is an Option.
 #              Builders of one function with different options are one function that calls
-#              the builder of the options given. Derived from the parameter types of
+#              the builder of the options given. A row with more arguments than its builder
+#              has parameters calls the form of that name in function_forms.rs, which takes
+#              the further ones as options. Derived from the parameter types of
 #              pyspark {PYSPARK_VERSION} (--derive); `!` marks a row set by hand.
 #              `hand`: hand-written; `same`: the function of another row.
 #   doc        the rustdoc of a generated function whose SQL function has no description
@@ -102,7 +104,7 @@ SAMPLE_VALUES = {
     "bytes": ["vec![1, 2]", "vec![3]"],
 }
 OLD_LITERALS = {"str": "ostr", "i32": "oint", "i64": "olong", "f64": "odouble", "bool": "obool"}
-NATIVE = {"&str": "str", "i32": "i32", "bool": "bool", "Vec<u8>": "bytes"}
+NATIVE = {"&str": "str", "i32": "i32", "i64": "i64", "bool": "bool", "Vec<u8>": "bytes"}
 
 
 # --- core -------------------------------------------------------------------------------------
@@ -155,6 +157,12 @@ def form_sql_names(text: str) -> dict[str, str]:
     return out
 
 
+def form_functions(text: str | None = None) -> dict[str, CoreFunction]:
+    """The forms of core's function_forms module that take optional arguments, by name."""
+    text = FORMS.read_text() if text is None else text
+    return {f.name: f for f in core_functions(text, text)}
+
+
 def core_functions(text: str | None = None, forms: str | None = None) -> list[CoreFunction]:
     """The public builders of core's functions module, in the order of the file."""
     text = CORE.read_text() if text is None else text
@@ -172,8 +180,12 @@ def core_functions(text: str | None = None, forms: str | None = None) -> list[Co
                 name=name,
                 raw=bool(raw),
                 params=typed,
-                sql=re.findall(r'func(?:_distinct)?\(\s*"([^"]+)"', body)
-                + [forms_sql[n] for n in re.findall(r"function_forms::(\w+)\(", body)],
+                sql=re.findall(r'(?:func(?:_distinct)?|with_options)\(\s*"([^"]+)"', body)
+                + [
+                    forms_sql[n]
+                    for n in re.findall(r"function_forms::(\w+)\(", body)
+                    if n in forms_sql
+                ],
                 lambdas=[int(n) for n in re.findall(r"make_lambda\((\d+),", body)],
                 calls=re.findall(r"\b(\w+)\(", body),
             )
@@ -307,9 +319,11 @@ def derived_kind(annotation: str, core_type: str, optional: bool, arity: int = 0
         literal = "ColumnOrName" not in members and any(m in LITERALS for m in members)
         kind = "args" if literal else "cols"
     elif core_type in ("F", "G"):
-        kind = f"fn{arity}"
+        kind = f"fn{arity or callable_arity(annotation)}"
     else:
         members = union_members(annotation)
+        if any(m.startswith(("Mapping[", "Dict[")) for m in members):
+            members = ["Column"]
         literals = [LITERALS[m] for m in members if m in LITERALS]
         if "ColumnOrName" in members or not literals and "Column" in members:
             kind = "col"
@@ -328,12 +342,28 @@ def derived_kind(annotation: str, core_type: str, optional: bool, arity: int = 0
     return ("?" if optional else "") + kind
 
 
+def callable_arity(annotation: str) -> int:
+    """The number of columns that a pyspark `Callable[[Column, ...], Column]` takes."""
+    match = re.search(r"Callable\[\[([^\]]*)\]", annotation)
+    return len(split_params(match.group(1))) if match else 0
+
+
+def option_type(form_type: str) -> str:
+    """The core type inside a form's `Option<..>` parameter type."""
+    match = re.fullmatch(r"Option<(.*)>", form_type)
+    return match.group(1) if match else form_type
+
+
 def annotation_text(annotation) -> str:
     return annotation if isinstance(annotation, str) else inspect.formatannotation(annotation)
 
 
-def derive(rows: list[Row], functions: list[CoreFunction]) -> list[Row]:
-    """The table with the derived rows' parameter types recomputed from pyspark."""
+def derive(
+    rows: list[Row], functions: list[CoreFunction], forms: dict[str, CoreFunction]
+) -> list[Row]:
+    """The table with the derived rows' parameter types recomputed from pyspark: one per core
+    parameter, then, where a core form takes more, one optional argument per further parameter
+    of the form."""
     import pyspark
     import pyspark.sql.functions as reference
 
@@ -360,7 +390,7 @@ def derive(rows: list[Row], functions: list[CoreFunction]) -> list[Row]:
         for i, (core_param, core_type) in enumerate(core.params):
             parameter = parameters[i] if i < len(parameters) else None
             optional = row is not base and i >= base_count
-            arity = next(lambdas) if core_type in ("F", "G") else 0
+            arity = next(lambdas, 0) if core_type in ("F", "G") else 0
             kind = derived_kind(
                 annotation_text(parameter.annotation) if parameter else "",
                 core_type,
@@ -368,6 +398,10 @@ def derive(rows: list[Row], functions: list[CoreFunction]) -> list[Row]:
                 arity,
             )
             arguments.append(Argument(snake(parameter.name if parameter else core_param), kind))
+        further = forms[row.core].params[len(core.params) :] if row.core in forms else []
+        for parameter, (_, form_type) in zip(parameters[len(core.params) :], further):
+            kind = derived_kind(annotation_text(parameter.annotation), option_type(form_type), True)
+            arguments.append(Argument(snake(parameter.name), kind))
         out.append(Row(row.core, row.function, "derived", arguments, row.doc))
     return out
 
@@ -380,13 +414,22 @@ class Function:
     name: str
     rows: list[Row]
     arguments: list[Argument]
+    form: CoreFunction | None
 
     @property
     def options(self) -> list[Argument]:
         return [a for a in self.arguments if a.optional]
 
 
-def functions_of(rows: list[Row]) -> list[Function]:
+def functions_of(
+    rows: list[Row],
+    functions: list[CoreFunction] | None = None,
+    forms: dict[str, CoreFunction] | None = None,
+) -> list[Function]:
+    """The generated functions. One whose row has more arguments than its builder has
+    parameters calls the core form of that name, which takes them all."""
+    by_name = {f.name: f for f in functions or []}
+    forms = forms or {}
     groups: dict[str, list[Row]] = {}
     for row in rows:
         if row.form in ("derived", "pinned"):
@@ -401,7 +444,11 @@ def functions_of(rows: list[Row]) -> list[Function]:
                     arguments.append(argument)
                 elif known.kind != argument.kind:
                     raise ValueError(f"{name}: {argument.name} has two types")
-        out.append(Function(name, group, arguments))
+        core = by_name.get(group[0].core)
+        takes_more = len(group) == 1 and core and len(arguments) > len(core.params)
+        out.append(
+            Function(name, group, arguments, forms.get(group[0].core) if takes_more else None)
+        )
     return out
 
 
@@ -464,7 +511,26 @@ def call(row: Row, by_name: dict[str, CoreFunction]) -> str:
     return f"sql::{core.path}({', '.join(arguments)})"
 
 
+def form_argument(argument: Argument, form_type: str) -> str:
+    """The expression that passes `argument` to a core form's parameter of type `form_type`."""
+    if not argument.optional:
+        return core_argument(argument.name, argument.kind, form_type)
+    if form_type != "Option<Column>" and not argument.base.startswith("fn"):
+        return argument.name
+    if argument.base == "col":
+        return f"{argument.name}.map(to_core)"
+    if argument.base.startswith("fn"):
+        return f"{argument.name}.map(lambda{argument.base[2:]})"
+    return f"{argument.name}.map(literal)"
+
+
 def body(function: Function, by_name: dict[str, CoreFunction]) -> str:
+    if function.form is not None:
+        arguments = ", ".join(
+            form_argument(a, form_type)
+            for a, (_, form_type) in zip(function.arguments, function.form.params)
+        )
+        return f"Column::from(function_forms::{function.form.name}({arguments}))"
     options = function.options
     if not options:
         return f"Column::from({call(function.rows[0], by_name)})"
@@ -507,7 +573,7 @@ def doc_lines(function: Function, sql: str | None, descriptions: dict) -> list[s
     if options:
         names = " and ".join(f"`{o.name}`" for o in options)
         verb = "is" if len(options) == 1 else "are"
-        lines += ["", f"{names} {verb} optional: `None` leaves an argument out of the call."]
+        lines += ["", f"{names} {verb} optional: `None` takes the default of the SQL function."]
     out = []
     for line in "\n".join(lines).expandtabs(4).split("\n"):
         if "```" in line and not line.startswith("```"):
@@ -538,22 +604,27 @@ GENERATED_HEADER = """\
 """
 
 
-def generate(rows: list[Row], functions: list[CoreFunction], descriptions: dict) -> tuple[str, str]:
+def generate(
+    rows: list[Row],
+    functions: list[CoreFunction],
+    forms: dict[str, CoreFunction],
+    descriptions: dict,
+) -> tuple[str, str]:
     by_name = {f.name: f for f in functions}
     out = [
         GENERATED_HEADER,
-        "use spark_connect_core::functions as sql;\n",
-        "use super::{lambda1, lambda2, lambda3};",
+        "use spark_connect_core::{function_forms, functions as sql};\n",
+        "use super::{lambda1, lambda2, lambda3, literal};",
         "use crate::column::{lit, to_core, Column, IntoArgument};\n",
     ]
-    for function in functions_of(rows):
+    for function in functions_of(rows, functions, forms):
         params = ", ".join(f"{a.name}: {rust_type(a.kind)}" for a in function.arguments)
         sql = sql_name(by_name[function.rows[0].core], by_name)
         out += doc_lines(function, sql, descriptions)
         out.append(
             f"pub fn {rust_name(function.name)}({params}) -> Column {{ {body(function, by_name)} }}\n"
         )
-    return rustfmt("\n".join(out)), rustfmt(cases(rows, by_name))
+    return rustfmt("\n".join(out)), rustfmt(cases(rows, functions, forms))
 
 
 def rust_name(name: str) -> str:
@@ -599,7 +670,7 @@ def case(function: Function, row: Row, core: CoreFunction) -> str:
     """The test case that calls `function` with the options of `row`'s builder."""
     names = iter("abcdefghijklmnopqrstuvwxyz")
     used: dict[str, int] = {}
-    given = {a.name for a in row.arguments if a.optional}
+    given = {a.name for a in row.arguments[: len(core.params)] if a.optional}
     new, old, raw = {}, {}, {}
     for argument in function.arguments:
         if argument.optional and argument.name not in given:
@@ -619,14 +690,36 @@ def case(function: Function, row: Row, core: CoreFunction) -> str:
     )
 
 
-def cases(rows: list[Row], by_name: dict[str, CoreFunction]) -> str:
+def form_case(function: Function, sql: str) -> str:
+    """The test case that gives every argument of a function whose core form sends them in
+    order through `with_options`, with the expected call written out."""
+    names = iter("abcdefghijklmnopqrstuvwxyz")
+    used: dict[str, int] = {}
+    new, old = [], []
+    for argument in function.arguments:
+        value, previous = sample(argument.kind, names, used)
+        new.append(f"Some({value})" if argument.optional else value)
+        old.append(previous)
+    return (
+        f'Case {{ name: "{function.name} with every argument", '
+        f'old: || call("{sql}", vec![{", ".join(old)}]), '
+        f"new: || {rust_name(function.name)}({', '.join(new)}) }},"
+    )
+
+
+def cases(rows: list[Row], functions: list[CoreFunction], forms: dict[str, CoreFunction]) -> str:
+    by_name = {f.name: f for f in functions}
     out = [GENERATED_HEADER, "use super::*;\n", "pub fn cases() -> Vec<Case> {", "vec!["]
-    functions = {f.name: f for f in functions_of(rows)}
+    generated = {f.name: f for f in functions_of(rows, functions, forms)}
     for row in rows:
         if row.form in ("hand", "same"):
             out.append(f'Case {{ name: "{row.core}", old: || {row.old}, new: || {row.new} }},')
         else:
-            out.append(case(functions[row.function], row, by_name[row.core]))
+            out.append(case(generated[row.function], row, by_name[row.core]))
+    out += ["]", "}", "", "pub fn forms() -> Vec<Case> {", "vec!["]
+    for function in generated.values():
+        if function.form is not None and "with_options" in function.form.calls:
+            out.append(form_case(function, function.form.sql[0]))
     out += ["]", "}"]
     return "\n".join(out) + "\n"
 
@@ -653,7 +746,11 @@ def hand_written_names(text: str) -> set[str]:
 
 
 def problems(
-    rows: list[Row], functions: list[CoreFunction], descriptions: dict, hand_written: set[str]
+    rows: list[Row],
+    functions: list[CoreFunction],
+    forms: dict[str, CoreFunction],
+    descriptions: dict,
+    hand_written: set[str],
 ) -> list[str]:
     """What makes the table or the descriptions stale for the core builders."""
     out = []
@@ -665,17 +762,22 @@ def problems(
         out.append(f"the table's row {name} has no builder")
     for name in sorted({n for n in names if names.count(n) > 1}):
         out.append(f"the table has two rows for {name}")
-    made = {f.name for f in functions_of(rows)}
+    generated = functions_of(rows, functions, forms)
+    made = {f.name for f in generated}
+    takes_form = {f.rows[0].core for f in generated if f.form is not None}
     for name in sorted(made & hand_written):
         out.append(f"{name} is both generated and hand-written")
     for row in rows:
         if row.core not in by_name:
             continue
         core = by_name[row.core]
-        if row.form in ("derived", "pinned") and len(row.arguments) != len(core.params):
-            out.append(
-                f"{row.core}: {len(row.arguments)} arguments for {len(core.params)} parameters"
-            )
+        expected = forms[row.core].params if row.core in takes_form else core.params
+        if row.form in ("derived", "pinned") and len(row.arguments) != len(expected):
+            out.append(f"{row.core}: {len(row.arguments)} arguments for {len(expected)} parameters")
+        if row.core in takes_form and not all(
+            a.optional for a in row.arguments[len(core.params) :]
+        ):
+            out.append(f"{row.core}: the arguments the builder does not take must be optional")
         if row.form in ("hand", "same") and not (row.old and row.new):
             out.append(f"{row.core}: a {row.form} row needs its old and new calls")
         if row.form == "hand" and row.function not in hand_written:
@@ -683,7 +785,7 @@ def problems(
         if row.form == "same" and row.function not in made | hand_written:
             out.append(f"{row.core}: no row makes {row.function}")
     wanted = set()
-    for function in functions_of(rows):
+    for function in generated:
         if function.rows[0].core in by_name and not function.rows[0].doc:
             sql = sql_name(by_name[function.rows[0].core], by_name)
             if sql is None:
@@ -705,16 +807,21 @@ def main() -> int:
     parser.add_argument("--derive", action="store_true", help="rederive the table from pyspark")
     args = parser.parse_args()
     functions = core_functions()
+    forms = form_functions()
     rows = read_table()
     if args.derive:
-        TABLE.write_text(render_table(derive(rows, functions)))
+        TABLE.write_text(render_table(derive(rows, functions, forms)))
         rows = read_table()
     descriptions = json.loads(DESCRIPTIONS.read_text())
-    found = problems(rows, functions, descriptions, hand_written_names(HAND_WRITTEN.read_text()))
+    found = problems(
+        rows, functions, forms, descriptions, hand_written_names(HAND_WRITTEN.read_text())
+    )
+    if render_table(rows) != TABLE.read_text():
+        found.append(f"{TABLE.relative_to(REPO)} is not in the form the generator writes")
     if found:
         print("\n".join(found), file=sys.stderr)
         return 1
-    generated, test_cases = generate(rows, functions, descriptions["functions"])
+    generated, test_cases = generate(rows, functions, forms, descriptions["functions"])
     if args.check:
         stale = [
             p for p, text in ((GENERATED, generated), (CASES, test_cases)) if p.read_text() != text

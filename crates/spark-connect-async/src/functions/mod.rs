@@ -27,7 +27,7 @@
 //! use spark_connect_async::functions::{concat_ws, lit, round, split, upper, when};
 //!
 //! let label = concat_ws("-", ["first", "last"]);
-//! let words = split("text", " ");
+//! let words = split("text", " ", None);
 //! let price = round("price", Some(2));
 //! let size = when(lit(true), upper("name"));
 //! ```
@@ -197,24 +197,6 @@ pub fn create_map<K: Into<Column>, V: Into<Column>>(
     Column::from(sql::create_map(entries))
 }
 
-/// The 1-based position of the `occurrence`-th match of `substr` in `str`, searching from the
-/// position `start`, or 0 when there is none: the SQL function `instr`. `start` and
-/// `occurrence` are optional: `None` leaves an argument out of the call, and `start` is 1 when
-/// only `occurrence` is given.
-pub fn instr(
-    str: impl Into<Column>,
-    substr: impl IntoArgument,
-    start: Option<i32>,
-    occurrence: Option<i32>,
-) -> Column {
-    Column::from(function_forms::instr(
-        to_core(str),
-        to_core(substr.into_argument()),
-        start.map(literal),
-        occurrence.map(literal),
-    ))
-}
-
 /// The greatest value of `cols`, skipping NULLs: the SQL function `greatest`.
 pub fn greatest(cols: impl IntoIterator<Item = impl Into<Column>>) -> Column {
     Column::from(function_forms::greatest(columns(cols)))
@@ -229,86 +211,6 @@ pub fn least(cols: impl IntoIterator<Item = impl Into<Column>>) -> Column {
 /// aggregate `count(DISTINCT ...)`.
 pub fn count_distinct(cols: impl IntoIterator<Item = impl Into<Column>>) -> Column {
     Column::from(function_forms::count_distinct(columns(cols)))
-}
-
-/// The values of `col` that are not NULL, concatenated with `delimiter` between them, or with
-/// nothing between them when it is `None`: the SQL aggregate `listagg`.
-pub fn listagg(col: impl Into<Column>, delimiter: Option<&str>) -> Column {
-    Column::from(function_forms::listagg(
-        to_core(col),
-        delimiter.map(literal),
-    ))
-}
-
-/// The values of `col` that are not NULL, concatenated with `delimiter` between them, or with
-/// nothing between them when it is `None`: the SQL aggregate `string_agg`.
-pub fn string_agg(col: impl Into<Column>, delimiter: Option<&str>) -> Column {
-    Column::from(function_forms::string_agg(
-        to_core(col),
-        delimiter.map(literal),
-    ))
-}
-
-/// The array `col` sorted in ascending order, or in descending order when `asc` is
-/// `Some(false)`: the SQL function `sort_array`.
-pub fn sort_array(col: impl Into<Column>, asc: Option<bool>) -> Column {
-    Column::from(function_forms::sort_array(to_core(col), asc.map(literal)))
-}
-
-/// The map of the text `text`, split into entries by `pair_delim` and into keys and values
-/// by `key_value_delim`, `,` and `:` when they are `None`: the SQL function `str_to_map`.
-pub fn str_to_map(
-    text: impl Into<Column>,
-    pair_delim: Option<Column>,
-    key_value_delim: Option<Column>,
-) -> Column {
-    Column::from(function_forms::str_to_map(
-        to_core(text),
-        pair_delim.map(to_core),
-        key_value_delim.map(to_core),
-    ))
-}
-
-/// The sentences of `string`, each an array of words, split by the rules of the locale of
-/// `language` and `country`, or of the default locale when they are `None`: the SQL function
-/// `sentences`.
-pub fn sentences(
-    string: impl Into<Column>,
-    language: Option<Column>,
-    country: Option<Column>,
-) -> Column {
-    Column::from(function_forms::sentences(
-        to_core(string),
-        language.map(to_core),
-        country.map(to_core),
-    ))
-}
-
-/// A random string of `length` characters, from `seed`, or from a fixed seed when it is
-/// `None`: the SQL function `randstr`.
-pub fn randstr(length: impl IntoArgument, seed: Option<i64>) -> Column {
-    Column::from(function_forms::randstr(
-        to_core(length.into_argument()),
-        seed.map(literal),
-    ))
-}
-
-/// The time window of `window_duration` that holds the timestamp `time_column`: windows
-/// start every `slide_duration`, or every `window_duration` when it is `None`, shifted by
-/// `start_time`. Durations are interval strings, such as `"10 minutes"`. The SQL function
-/// `window`.
-pub fn window(
-    time_column: impl Into<Column>,
-    window_duration: &str,
-    slide_duration: Option<&str>,
-    start_time: Option<&str>,
-) -> Column {
-    Column::from(function_forms::window(
-        to_core(time_column),
-        window_duration,
-        slide_duration,
-        start_time,
-    ))
 }
 
 /// The value of `col` `offset` rows (1 when it is `None`) before the current row of the
