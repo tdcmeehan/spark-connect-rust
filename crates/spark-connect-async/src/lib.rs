@@ -25,6 +25,7 @@ pub mod column;
 pub mod dataframe;
 pub mod de;
 pub mod error;
+pub mod functions;
 pub mod group;
 pub mod observation;
 pub mod options;

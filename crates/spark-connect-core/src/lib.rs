@@ -14,6 +14,8 @@ pub mod decode;
 pub mod error;
 pub mod execution;
 pub mod expression;
+#[doc(hidden)]
+pub mod function_forms;
 pub mod functions;
 #[doc(hidden)]
 pub mod group;

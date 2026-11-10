@@ -1,0 +1,612 @@
+# What each builder of crates/spark-connect-core/src/functions.rs becomes in the async crate.
+# Read by scripts/gen_async_functions.py; one row per builder, tab-separated.
+#   core       the core builder
+#   function   the async function: generated from this row, or hand-written in
+#              crates/spark-connect-async/src/functions/mod.rs, or one that another row makes
+#   arguments  for a generated function, `name:type` per core parameter, in order. Types:
+#                col (impl Into<Column>), cols (columns), str, i32, i64, f64, bool,
+#                bytes (Vec<u8>), arg (impl IntoArgument; arg-str and arg-float test with
+#                a string or a double), args (arguments), fn1..fn3 (closures over 1..3
+#                columns);
+#                ?type is an Option, `=value` its value when only a later option is given.
+#              Builders of one function with different options are one function that calls
+#              the builder of the options given. Derived from the parameter types of
+#              pyspark 4.3.0 (--derive); `!` marks a row set by hand.
+#              `hand`: hand-written; `same`: the function of another row.
+#   doc        the rustdoc of a generated function whose SQL function has no description
+#   old, new   for hand and same rows, the calls of the plan-equality test
+core	function	arguments	doc	old	new
+col	col	same		old::col("a")	col("a")
+column	col	same		old::column("a")	col("a")
+lit	lit	same		old::lit(spark_connect::lit(3))	lit(3)
+expr	expr	!expression:str	The column of the SQL expression `expression`, which the server parses.		
+cast	col	same		old::cast(oc("a"), oc("b"))	col("b")
+call_function	call_function	func_name:str, cols:cols	A call of the SQL function `func_name`, a built-in or one in the catalog, with `cols` as its arguments.		
+call_udf	call_udf	udf_name:str, cols:cols	A call of the user-defined function `udf_name` that the session registered, with `cols` as its arguments.		
+asc	asc	col:col	The ascending sort order of `col`.		
+asc_nulls_first	asc_nulls_first	col:col	The ascending sort order of `col`, with NULLs first.		
+asc_nulls_last	asc_nulls_last	col:col	The ascending sort order of `col`, with NULLs last.		
+desc	desc	col:col	The descending sort order of `col`.		
+desc_nulls_first	desc_nulls_first	col:col	The descending sort order of `col`, with NULLs first.		
+desc_nulls_last	desc_nulls_last	col:col	The descending sort order of `col`, with NULLs last.		
+array	array	cols:cols			
+concat	concat	cols:cols			
+coalesce	coalesce	cols:cols			
+arrays_zip	arrays_zip	cols:cols			
+create_map	create_map	hand		old::create_map([oc("k"), oc("v"), oc("l"), oc("w")])	create_map([("k", "v"), ("l", "w")])
+window	window	hand		old::window(oc("t"), "10 minutes")	window("t", "10 minutes", None, None)
+window_with_slide_and_start	window	hand		old::window_with_slide_and_start(oc("t"), "10 minutes", "5 minutes", "1 minute")	window("t", "10 minutes", Some("5 minutes"), Some("1 minute"))
+cume_dist	cume_dist				
+curdate	curdate				
+current_catalog	current_catalog				
+current_database	current_database				
+current_date	current_date				
+current_schema	current_schema				
+current_timestamp	current_timestamp				
+current_timezone	current_timezone				
+current_user	current_user				
+dense_rank	dense_rank				
+e	e				
+elt	elt	hand		old::elt([oc("i"), oc("a"), oc("b")])	elt("i", ["a", "b"])
+grouping_id	grouping_id	cols:cols			
+hash	hash	cols:cols			
+input_file_block_length	input_file_block_length				
+input_file_block_start	input_file_block_start				
+input_file_name	input_file_name				
+java_method	java_method	hand		old::java_method([ostr("java.util.UUID"), ostr("fromString"), oc("a")])	java_method("java.util.UUID", "fromString", ["a"])
+localtimestamp	localtimestamp				
+make_dt_interval	make_dt_interval				
+make_interval	make_interval				
+make_ym_interval	make_ym_interval				
+map_concat	map_concat	cols:cols			
+monotonically_increasing_id	monotonically_increasing_id				
+named_struct	named_struct	hand		old::named_struct([ostr("x"), oc("a"), ostr("y"), oc("b")])	named_struct([("x", "a"), ("y", "b")])
+now	now				
+percent_rank	percent_rank				
+pi	pi				
+rand	rand				
+randn	randn				
+rank	rank				
+reflect	reflect	hand		old::reflect([ostr("java.util.UUID"), ostr("fromString"), oc("a")])	reflect("java.util.UUID", "fromString", ["a"])
+row_number	row_number				
+session_user	session_user				
+spark_partition_id	spark_partition_id				
+stack	stack	hand		old::stack([oint(2), oc("a"), oc("b")])	stack(2, ["a", "b"])
+struct	struct	cols:cols	A struct of `cols`, whose fields have the names of the columns.		
+try_make_interval	try_make_interval				
+try_reflect	try_reflect	hand		old::try_reflect([ostr("java.util.UUID"), ostr("fromString"), oc("a")])	try_reflect("java.util.UUID", "fromString", ["a"])
+unix_timestamp	unix_timestamp				
+user	user				
+version	version				
+xxhash64	xxhash64	cols:cols			
+abs	abs	col:col			
+acos	acos	col:col			
+acosh	acosh	col:col			
+any_value	any_value	col:col			
+approxCountDistinct	approx_count_distinct	same		old::approxCountDistinct(oc("a"))	approx_count_distinct("a", None)
+approx_count_distinct	approx_count_distinct	col:col			
+approx_count_distinct_rsd	approx_count_distinct	col:col, rsd:?f64			
+array_agg	array_agg	col:col			
+array_compact	array_compact	col:col			
+array_distinct	array_distinct	col:col			
+array_max	array_max	col:col			
+array_min	array_min	col:col			
+array_size	array_size	col:col			
+array_sort	array_sort	col:col			
+ascii	ascii	col:col			
+asin	asin	col:col			
+asinh	asinh	col:col			
+assert_true	assert_true	col:col			
+atan	atan	col:col			
+atanh	atanh	col:col			
+avg	avg	col:col			
+base64	base64	col:col			
+to_base32	to_base32	col:col			
+from_base32	from_base32	col:col			
+bin	bin	col:col			
+bit_and	bit_and	col:col			
+bit_count	bit_count	col:col			
+bit_length	bit_length	col:col			
+bit_or	bit_or	col:col			
+bit_xor	bit_xor	col:col			
+bitmap_bit_position	bitmap_bit_position	col:col			
+bitmap_bucket_number	bitmap_bucket_number	col:col			
+bitmap_construct_agg	bitmap_construct_agg	col:col			
+bitmap_count	bitmap_count	col:col			
+bitmap_or_agg	bitmap_or_agg	col:col			
+bitwiseNOT	bitwise_not	same		old::bitwiseNOT(oc("a"))	bitwise_not("a")
+bitwise_not	bitwise_not	col:col			
+bool_and	bool_and	col:col			
+bool_or	bool_or	col:col			
+bround	bround	col:col			
+bround_scale	bround	col:col, scale:?i32			
+btrim	btrim	str:col			
+cardinality	cardinality	col:col			
+cbrt	cbrt	col:col			
+ceil	ceil	col:col			
+ceil_scale	ceil	col:col, scale:?i32			
+ceiling	ceiling	col:col			
+char	char	col:col			
+char_length	char_length	str:col			
+character_length	character_length	str:col			
+collation	collation	col:col			
+collect_list	collect_list	col:col			
+collect_set	collect_set	col:col			
+concat_ws	concat_ws	hand		old::concat_ws([ostr("-"), oc("a"), oc("b")])	concat_ws("-", ["a", "b"])
+cos	cos	col:col			
+cosh	cosh	col:col			
+cot	cot	col:col			
+count	count	col:col			
+countDistinct	count_distinct	same		old::countDistinct(oc("a"))	count_distinct(["a"])
+count_distinct	count_distinct	hand		old::count_distinct(oc("a"))	count_distinct(["a"])
+count_distinct_columns	count_distinct	hand		old::count_distinct_columns(oc("a"), [oc("b")])	count_distinct(["a", "b"])
+count_if	count_if	col:col			
+crc32	crc32	col:col			
+csc	csc	col:col			
+date_from_unix_date	date_from_unix_date	days:col			
+day	day	col:col			
+dayname	dayname	col:col			
+dayofmonth	dayofmonth	col:col			
+dayofweek	dayofweek	col:col			
+dayofyear	dayofyear	col:col			
+days	days	col:col	The partition transform of `col`, a date or timestamp, into days, for the partitioning of a table that a writer creates.		
+degrees	degrees	col:col			
+every	every	col:col			
+exp	exp	col:col			
+explode	explode	col:col			
+explode_outer	explode_outer	col:col			
+expm1	expm1	col:col			
+factorial	factorial	col:col			
+first	first	col:col			
+first_value	first_value	col:col			
+flatten	flatten	col:col			
+floor	floor	col:col			
+floor_scale	floor	col:col, scale:?i32			
+format_string	format_string	hand		old::format_string([ostr("%s %s"), oc("a"), oc("b")])	format_string("%s %s", ["a", "b"])
+from_unixtime	from_unixtime	timestamp:col			
+grouping	grouping	col:col			
+hex	hex	col:col			
+hll_sketch_agg	hll_sketch_agg	col:col			
+hll_sketch_estimate	hll_sketch_estimate	col:col			
+hll_union_agg	hll_union_agg	col:col			
+hour	hour	col:col			
+hours	hours	col:col	The partition transform of `col`, a timestamp, into hours, for the partitioning of a table that a writer creates.		
+initcap	initcap	col:col			
+inline	inline	col:col			
+inline_outer	inline_outer	col:col			
+is_valid_utf8	is_valid_utf8	str:col			
+is_variant_null	is_variant_null	v:col			
+collect_union	collect_union	col:col			
+variant_strip_nulls	variant_strip_nulls	v:col, include_arrays:bool			
+isnan	isnan	col:col			
+isnotnull	isnotnull	col:col			
+isnull	isnull	col:col			
+json_array_length	json_array_length	col:col			
+json_object_keys	json_object_keys	col:col			
+kurtosis	kurtosis	col:col			
+lag	lag	hand		old::lag([oc("a")])	lag("a", None, None)
+last	last	col:col			
+last_day	last_day	date:col			
+last_value	last_value	col:col			
+lcase	lcase	str:col			
+lead	lead	hand		old::lead([oc("a")])	lead("a", None, None)
+length	length	col:col			
+listagg	listagg	hand		old::listagg(oc("a"))	listagg("a", None)
+listagg_distinct	listagg_distinct	col:col			
+listagg_distinct_with_delimiter	listagg_distinct	col:col, delimiter:?str			
+ln	ln	col:col			
+log	log	arg1:col			
+log10	log10	col:col			
+log1p	log1p	col:col			
+log2	log2	col:col			
+lower	lower	col:col			
+ltrim	ltrim	col:col			
+ltrim_with	ltrim	col:col, trim:?col			
+make_valid_utf8	make_valid_utf8	str:col			
+map_entries	map_entries	col:col			
+map_from_entries	map_from_entries	col:col			
+map_keys	map_keys	col:col			
+map_values	map_values	col:col			
+mask	mask	col:col			
+max	max	col:col			
+md5	md5	col:col			
+mean	mean	col:col			
+median	median	col:col			
+min	min	col:col			
+minute	minute	col:col			
+mode	mode	col:col			
+month	month	col:col			
+monthname	monthname	col:col			
+months	months	col:col	The partition transform of `col`, a date or timestamp, into months, for the partitioning of a table that a writer creates.		
+negate	negate	col:col			
+negative	negative	col:col			
+ntile	ntile	n:i32			
+nullifzero	nullifzero	col:col			
+octet_length	octet_length	col:col			
+parse_json	parse_json	col:col			
+posexplode	posexplode	col:col			
+posexplode_outer	posexplode_outer	col:col			
+positive	positive	col:col			
+printf	printf	hand		old::printf(oc("f"))	printf("f", Vec::<Column>::new())
+product	product	col:col	The product of the values of `col` in a group.		
+quarter	quarter	col:col			
+radians	radians	col:col			
+raise_error	raise_error	err_msg:arg-str			
+randstr	randstr	hand		old::randstr(oint(5))	randstr(5, None)
+reverse	reverse	col:col			
+rint	rint	col:col			
+round	round	col:col			
+round_scale	round	col:col, scale:?i32			
+rtrim	rtrim	col:col			
+rtrim_with	rtrim	col:col, trim:?col			
+schema_of_csv	schema_of_csv	csv:arg-str			
+schema_of_json	schema_of_json	json:arg-str			
+schema_of_variant	schema_of_variant	v:col			
+schema_of_variant_agg	schema_of_variant_agg	v:col			
+schema_of_xml	schema_of_xml	xml:arg-str			
+sec	sec	col:col			
+second	second	col:col			
+sentences	sentences	hand		old::sentences(oc("a"))	sentences("a", None, None)
+sha	sha	col:col			
+sha1	sha1	col:col			
+shuffle	shuffle	col:col			
+sign	sign	col:col			
+signum	signum	col:col			
+sin	sin	col:col			
+sinh	sinh	col:col			
+size	size	col:col			
+skewness	skewness	col:col			
+some	some	col:col			
+sort_array	sort_array	hand		old::sort_array(oc("a"))	sort_array("a", None)
+soundex	soundex	col:col			
+sqrt	sqrt	col:col			
+std	std	col:col			
+stddev	stddev	col:col			
+stddev_pop	stddev_pop	col:col			
+stddev_samp	stddev_samp	col:col			
+str_to_map	str_to_map	hand		old::str_to_map(oc("a"))	str_to_map("a", None, None)
+string_agg	string_agg	hand		old::string_agg(oc("a"))	string_agg("a", None)
+string_agg_distinct	string_agg_distinct	col:col			
+string_agg_distinct_with_delimiter	string_agg_distinct	col:col, delimiter:?str			
+sum	sum	col:col			
+sumDistinct	sum_distinct	same		old::sumDistinct(oc("a"))	sum_distinct("a")
+sum_distinct	sum_distinct	col:col			
+tan	tan	col:col			
+tanh	tanh	col:col			
+timestamp_micros	timestamp_micros	col:col			
+timestamp_millis	timestamp_millis	col:col			
+timestamp_seconds	timestamp_seconds	col:col			
+toDegrees	degrees	same		old::toDegrees(oc("a"))	degrees("a")
+toRadians	radians	same		old::toRadians(oc("a"))	radians("a")
+to_binary	to_binary	col:col			
+to_binary_format	to_binary	col:col, format:?col			
+to_csv	to_csv	col:col			
+to_date	to_date	col:col			
+to_json	to_json	col:col			
+to_timestamp	to_timestamp	col:col			
+to_timestamp_ltz	to_timestamp_ltz	timestamp:col			
+to_timestamp_ntz	to_timestamp_ntz	timestamp:col			
+to_unix_timestamp	to_unix_timestamp	timestamp:col			
+to_variant_object	to_variant_object	col:col			
+to_xml	to_xml	col:col			
+trim	trim	col:col			
+trim_with	trim	col:col, trim:?col			
+try_avg	try_avg	col:col			
+try_parse_json	try_parse_json	col:col			
+try_sum	try_sum	col:col			
+try_to_binary	try_to_binary	col:col			
+try_to_timestamp	try_to_timestamp	col:col			
+try_url_decode	try_url_decode	str:col			
+try_validate_utf8	try_validate_utf8	str:col			
+typeof	typeof	col:col			
+ucase	ucase	str:col			
+unbase64	unbase64	col:col			
+unhex	unhex	col:col			
+unix_date	unix_date	col:col			
+unix_micros	unix_micros	col:col			
+unix_millis	unix_millis	col:col			
+unix_seconds	unix_seconds	col:col			
+unwrap_udt	unwrap_udt	col:col	The value of `col`, of a user-defined type, as the value of its underlying SQL type.		
+upper	upper	col:col			
+url_decode	url_decode	str:col			
+url_encode	url_encode	str:col			
+validate_utf8	validate_utf8	str:col			
+var_pop	var_pop	col:col			
+var_samp	var_samp	col:col			
+variance	variance	col:col			
+weekday	weekday	col:col			
+weekofyear	weekofyear	col:col			
+window_time	window_time	window_column:col			
+year	year	col:col			
+years	years	col:col	The partition transform of `col`, a date or timestamp, into years, for the partitioning of a table that a writer creates.		
+zeroifnull	zeroifnull	col:col			
+add_months	add_months	start:col, months:col			
+aes_decrypt	aes_decrypt	input:col, key:col			
+aes_encrypt	aes_encrypt	input:col, key:col			
+approx_percentile	approx_percentile	col:col, percentage:arg-float			
+array_append	array_append	col:col, value:arg			
+array_contains	array_contains	col:col, value:arg			
+array_except	array_except	col1:col, col2:col			
+array_intersect	array_intersect	col1:col, col2:col			
+array_join	array_join	col:col, delimiter:str			
+array_position	array_position	col:col, value:arg			
+array_prepend	array_prepend	col:col, value:arg			
+array_remove	array_remove	col:col, element:arg			
+array_repeat	array_repeat	col:col, count:col			
+array_union	array_union	col1:col, col2:col			
+arrays_overlap	arrays_overlap	a1:col, a2:col			
+atan2	atan2	col1:col, col2:col			
+bit_get	bit_get	col:col, pos:col			
+bucket	bucket	num_buckets:arg, col:col	The partition transform that hashes `col` into `num_buckets` buckets, for the partitioning of a table that a writer creates.		
+collate	collate	col:col, collation:str			
+contains	contains	left:col, right:col			
+corr	corr	col1:col, col2:col			
+covar_pop	covar_pop	col1:col, col2:col			
+covar_samp	covar_samp	col1:col, col2:col			
+date_add	date_add	start:col, days:col			
+date_diff	date_diff	end:col, start:col			
+date_format	date_format	date:col, format:str			
+date_part	date_part	field:col, source:col			
+date_sub	date_sub	start:col, days:col			
+date_trunc	date_trunc	format:str, timestamp:col			
+dateadd	dateadd	start:col, days:col			
+datediff	datediff	end:col, start:col			
+datepart	datepart	field:col, source:col			
+decode	decode	col:col, charset:str			
+element_at	element_at	col:col, extraction:arg			
+encode	encode	col:col, charset:str			
+endswith	endswith	str:col, suffix:col			
+equal_null	equal_null	col1:col, col2:col			
+extract	extract	field:col, source:col			
+find_in_set	find_in_set	str:col, str_array:col			
+format_number	format_number	col:col, d:i32			
+from_csv	from_csv	col:col, schema:arg-str			
+from_json	from_json	col:col, schema:arg-str			
+from_utc_timestamp	from_utc_timestamp	timestamp:col, tz:arg-str			
+from_xml	from_xml	col:col, schema:arg-str			
+get	get	col:col, index:col			
+get_json_object	get_json_object	col:col, path:str			
+getbit	getbit	col:col, pos:col			
+greatest	greatest	hand		old::greatest(oc("a"), oc("b"))	greatest(["a", "b"])
+histogram_numeric	histogram_numeric	col:col, n_bins:col			
+hll_union	hll_union	col1:col, col2:col			
+hypot	hypot	col1:col, col2:col			
+ifnull	ifnull	col1:col, col2:col			
+ilike	ilike	str:col, pattern:col			
+instr	instr	hand		old::instr(oc("a"), ostr("x"))	instr("a", "x", None, None)
+instr_with_start	instr	hand		old::instr_with_start(oc("a"), ostr("x"), oint(3))	instr("a", "x", Some(3), None)
+instr_with_start_and_occurrence	instr	hand		old::instr_with_start_and_occurrence(oc("a"), ostr("x"), oint(3), oint(4))	instr("a", "x", Some(3), Some(4))
+json_tuple	json_tuple	hand		old::json_tuple([oc("a"), ostr("f1"), ostr("f2")])	json_tuple("a", ["f1", "f2"])
+least	least	hand		old::least(oc("a"), oc("b"))	least(["a", "b"])
+left	left	str:col, len:col			
+levenshtein	levenshtein	left:col, right:col			
+like	like	str:col, pattern:col			
+locate	locate	substr:str, str:col			
+map_contains_key	map_contains_key	col:col, value:arg			
+map_from_arrays	map_from_arrays	col1:col, col2:col			
+max_by	max_by	col:col, ord:col			
+min_by	min_by	col:col, ord:col			
+months_between	months_between	date1:col, date2:col			
+nanvl	nanvl	col1:col, col2:col			
+next_day	next_day	date:col, day_of_week:str			
+nth_value	nth_value	col:col, offset:i32			
+nullif	nullif	col1:col, col2:col			
+nvl	nvl	col1:col, col2:col			
+parse_url	parse_url	url:col, part_to_extract:col			
+percentile	percentile	col:col, percentage:arg-float			
+percentile_approx	percentile_approx	col:col, percentage:arg-float			
+pmod	pmod	dividend:col, divisor:col			
+position	position	substr:col, str:col			
+pow	pow	col1:col, col2:col			
+power	power	col1:col, col2:col			
+regexp	regexp	str:col, regexp:col			
+regexp_count	regexp_count	str:col, regexp:col			
+regexp_extract_all	regexp_extract_all	str:col, regexp:col			
+regexp_instr	regexp_instr	str:col, regexp:col			
+regexp_like	regexp_like	str:col, regexp:col			
+regexp_substr	regexp_substr	str:col, regexp:col			
+regr_avgx	regr_avgx	y:col, x:col			
+regr_avgy	regr_avgy	y:col, x:col			
+regr_count	regr_count	y:col, x:col			
+regr_intercept	regr_intercept	y:col, x:col			
+regr_r2	regr_r2	y:col, x:col			
+regr_slope	regr_slope	y:col, x:col			
+regr_sxx	regr_sxx	y:col, x:col			
+regr_sxy	regr_sxy	y:col, x:col			
+regr_syy	regr_syy	y:col, x:col			
+repeat	repeat	col:col, n:col			
+replace	replace	src:col, search:col			
+right	right	str:col, len:col			
+rlike	rlike	str:col, regexp:col			
+sequence	sequence	start:col, stop:col			
+session_window	session_window	time_column:col, gap_duration:arg-str			
+shiftLeft	shiftleft	same		old::shiftLeft(oc("a"), oint(3))	shiftleft("a", 3)
+shiftRight	shiftright	same		old::shiftRight(oc("a"), oint(3))	shiftright("a", 3)
+shiftRightUnsigned	shiftrightunsigned	same		old::shiftRightUnsigned(oc("a"), oint(3))	shiftrightunsigned("a", 3)
+shiftleft	shiftleft	col:col, num_bits:i32			
+shiftright	shiftright	col:col, num_bits:i32			
+shiftrightunsigned	shiftrightunsigned	col:col, num_bits:i32			
+split	split	str:col, pattern:arg-str			
+startswith	startswith	str:col, prefix:col			
+substr	substr	str:col, pos:col			
+to_char	to_char	col:col, format:col			
+to_number	to_number	col:col, format:col			
+to_utc_timestamp	to_utc_timestamp	timestamp:col, tz:arg-str			
+to_varchar	to_varchar	col:col, format:col			
+trunc	trunc	date:col, format:str			
+try_add	try_add	left:col, right:col			
+try_aes_decrypt	try_aes_decrypt	input:col, key:col			
+try_divide	try_divide	left:col, right:col			
+try_element_at	try_element_at	col:col, extraction:col			
+try_mod	try_mod	left:col, right:col			
+try_multiply	try_multiply	left:col, right:col			
+try_parse_url	try_parse_url	url:col, part_to_extract:col			
+try_subtract	try_subtract	left:col, right:col			
+try_to_number	try_to_number	col:col, format:col			
+uniform	uniform	min:arg, max:arg			
+when	when	same		old::when(oc("a"), oc("b"))	when("a", "b")
+xpath	xpath	xml:col, path:col			
+xpath_boolean	xpath_boolean	xml:col, path:col			
+xpath_double	xpath_double	xml:col, path:col			
+xpath_float	xpath_float	xml:col, path:col			
+xpath_int	xpath_int	xml:col, path:col			
+xpath_long	xpath_long	xml:col, path:col			
+xpath_number	xpath_number	xml:col, path:col			
+xpath_short	xpath_short	xml:col, path:col			
+xpath_string	xpath_string	xml:col, path:col			
+array_insert	array_insert	arr:col, pos:col, value:arg			
+conv	conv	col:col, from_base:i32, to_base:i32			
+convert_timezone	convert_timezone	source_tz:col, target_tz:col, source_ts:col			
+count_min_sketch	count_min_sketch	col:col, eps:arg-float, confidence:arg-float			
+lpad	lpad	col:col, len:arg, pad:arg-str			
+make_date	make_date	year:col, month:col, day:col			
+nvl2	nvl2	col1:col, col2:col, col3:col			
+overlay	overlay	src:col, replace:col, pos:col			
+regexp_extract	regexp_extract	str:col, pattern:str, idx:i32			
+regexp_replace	regexp_replace	string:col, pattern:arg-str, replacement:arg-str			
+regexp_replace_with_position	regexp_replace	string:col, pattern:arg-str, replacement:arg-str, position:?i32			
+rpad	rpad	col:col, len:arg, pad:arg-str			
+slice	slice	x:col, start:col, length:col			
+split_part	split_part	src:col, delimiter:col, part_num:col			
+substring	substring	str:col, pos:col, len:col			
+substring_index	substring_index	str:col, delim:str, count:i32			
+timestamp_add	timestamp_add	unit:str, quantity:col, ts:col			
+timestamp_diff	timestamp_diff	unit:str, start:col, end:col			
+translate	translate	src_col:col, matching:str, replace:str			
+try_variant_get	try_variant_get	v:col, path:arg-str, target_type:str			
+variant_get	variant_get	v:col, path:arg-str, target_type:str			
+width_bucket	width_bucket	v:col, min:col, max:col, num_bucket:col			
+transform	transform	col:col, f:fn1			
+transform_idx	transform_idx	!col:col, f:fn2			
+filter	filter	col:col, f:fn1			
+exists	exists	col:col, f:fn1			
+forall	forall	col:col, f:fn1			
+aggregate	aggregate	col:col, initial_value:col, merge:fn2			
+aggregate_with_finish	aggregate	col:col, initial_value:col, merge:fn2, finish:?fn1			
+zip_with	zip_with	left:col, right:col, f:fn2			
+transform_keys	transform_keys	col:col, f:fn2			
+transform_values	transform_values	col:col, f:fn2			
+map_filter	map_filter	col:col, f:fn2			
+map_zip_with	map_zip_with	col1:col, col2:col, f:fn3			
+reduce	reduce	!col:col, initial_value:col, merge:fn2			
+from_protobuf	from_protobuf	!data:col, message_name:str			
+from_protobuf_with_descriptor	from_protobuf	!data:col, message_name:str, descriptor:?bytes			
+from_protobuf_with_descriptor_and_options	from_protobuf	!data:col, message_name:str, descriptor:?bytes, options:?col			
+from_protobuf_with_options	from_protobuf	!data:col, message_name:str, options:?col			
+to_protobuf	to_protobuf	!data:col, message_name:str			
+to_protobuf_with_descriptor	to_protobuf	!data:col, message_name:str, descriptor:?bytes			
+to_protobuf_with_descriptor_and_options	to_protobuf	!data:col, message_name:str, descriptor:?bytes, options:?col			
+to_protobuf_with_options	to_protobuf	!data:col, message_name:str, options:?col			
+from_avro	from_avro	!data:col, json_format_schema:str			
+from_avro_with_options	from_avro	!data:col, json_format_schema:str, options:?col			
+to_avro	to_avro	!data:col			
+to_avro_with_schema	to_avro	!data:col, json_format_schema:?str			
+bitmap_and_agg	bitmap_and_agg	col:col			
+chr	chr	n:col			
+counter_diff	counter_diff	value:col			
+counter_diff_with_start_time	counter_diff	value:col, start_time:?col			
+current_path	current_path				
+current_time	current_time				
+hmac	hmac	key:col, message:col			
+hmac_with_algorithm	hmac	key:col, message:col, algorithm:?col			
+is_valid_variant	is_valid_variant	v:col			
+jaro_winkler_similarity	jaro_winkler_similarity	left:col, right:col			
+kll_merge_agg_bigint	kll_merge_agg_bigint	col:col			
+kll_merge_agg_double	kll_merge_agg_double	col:col			
+kll_merge_agg_float	kll_merge_agg_float	col:col			
+kll_sketch_agg_bigint	kll_sketch_agg_bigint	col:col			
+kll_sketch_agg_double	kll_sketch_agg_double	col:col			
+kll_sketch_agg_float	kll_sketch_agg_float	col:col			
+kll_sketch_get_n_bigint	kll_sketch_get_n_bigint	col:col			
+kll_sketch_get_n_double	kll_sketch_get_n_double	col:col			
+kll_sketch_get_n_float	kll_sketch_get_n_float	col:col			
+kll_sketch_get_quantile_bigint	kll_sketch_get_quantile_bigint	sketch:col, rank:col			
+kll_sketch_get_quantile_double	kll_sketch_get_quantile_double	sketch:col, rank:col			
+kll_sketch_get_quantile_float	kll_sketch_get_quantile_float	sketch:col, rank:col			
+kll_sketch_get_rank_bigint	kll_sketch_get_rank_bigint	sketch:col, quantile:col			
+kll_sketch_get_rank_double	kll_sketch_get_rank_double	sketch:col, quantile:col			
+kll_sketch_get_rank_float	kll_sketch_get_rank_float	sketch:col, quantile:col			
+kll_sketch_merge_bigint	kll_sketch_merge_bigint	left:col, right:col			
+kll_sketch_merge_double	kll_sketch_merge_double	left:col, right:col			
+kll_sketch_merge_float	kll_sketch_merge_float	left:col, right:col			
+kll_sketch_to_string_bigint	kll_sketch_to_string_bigint	col:col			
+kll_sketch_to_string_double	kll_sketch_to_string_double	col:col			
+kll_sketch_to_string_float	kll_sketch_to_string_float	col:col			
+make_time	make_time	hour:col, minute:col, second:col			
+make_timestamp	make_timestamp	years:col, months:col, days:col, hours:col, mins:col, secs:col			
+make_timestamp_ltz	make_timestamp_ltz	years:col, months:col, days:col, hours:col, mins:col, secs:col			
+make_timestamp_ntz	make_timestamp_ntz	years:col, months:col, days:col, hours:col, mins:col, secs:col			
+quote	quote	col:col			
+sha2	sha2	col:col, num_bits:i32			
+st_asbinary	st_asbinary	geo:col			
+st_geogfromwkb	st_geogfromwkb	wkb:col			
+st_geomfromwkb	st_geomfromwkb	wkb:col			
+st_setsrid	st_setsrid	geo:col, srid:col			
+st_srid	st_srid	geo:col			
+theta_difference	theta_difference	col1:col, col2:col			
+theta_intersection	theta_intersection	col1:col, col2:col			
+theta_intersection_agg	theta_intersection_agg	col:col			
+theta_sketch_agg	theta_sketch_agg	col:col			
+theta_sketch_estimate	theta_sketch_estimate	col:col			
+theta_union	theta_union	col1:col, col2:col			
+theta_union_agg	theta_union_agg	col:col			
+time_bucket	time_bucket	bucket_size:col, ts:col			
+time_diff	time_diff	unit:col, start:col, end:col			
+time_from_micros	time_from_micros	col:col			
+time_from_millis	time_from_millis	col:col			
+time_from_seconds	time_from_seconds	col:col			
+time_to_micros	time_to_micros	col:col			
+time_to_millis	time_to_millis	col:col			
+time_to_seconds	time_to_seconds	col:col			
+time_trunc	time_trunc	unit:col, time:col			
+timestamp_nanos	timestamp_nanos	col:col			
+to_time	to_time	str:col			
+try_make_timestamp	try_make_timestamp	years:col, months:col, days:col, hours:col, mins:col, secs:col			
+try_make_timestamp_ltz	try_make_timestamp_ltz	years:col, months:col, days:col, hours:col, mins:col, secs:col			
+try_make_timestamp_ntz	try_make_timestamp_ntz	years:col, months:col, days:col, hours:col, mins:col, secs:col			
+try_to_date	try_to_date	col:col			
+try_to_time	try_to_time	str:col			
+try_variant_array_append	try_variant_array_append	v:col, path:arg-str, value:col			
+try_variant_insert	try_variant_insert	v:col, path:arg-str, value:col			
+try_variant_set	try_variant_set	v:col, path:arg-str, value:col			
+try_variant_set_with_create_if_missing	try_variant_set	v:col, path:arg-str, value:col, create_if_missing:?bool			
+unix_nanos	unix_nanos	col:col			
+uuid	uuid				
+variant_array_append	variant_array_append	v:col, path:arg-str, value:col			
+variant_delete	variant_delete	v:col, paths:args			
+variant_insert	variant_insert	v:col, path:arg-str, value:col			
+variant_set	variant_set	v:col, path:arg-str, value:col			
+variant_set_with_create_if_missing	variant_set	v:col, path:arg-str, value:col, create_if_missing:?bool			
+vector_avg	vector_avg	col:col			
+vector_cosine_similarity	vector_cosine_similarity	left:col, right:col			
+vector_inner_product	vector_inner_product	left:col, right:col			
+vector_l2_distance	vector_l2_distance	left:col, right:col			
+vector_norm	vector_norm	vector:col			
+vector_norm_with_degree	vector_norm	vector:col, degree:?col			
+vector_normalize	vector_normalize	vector:col			
+vector_normalize_with_degree	vector_normalize	vector:col, degree:?col			
+vector_sum	vector_sum	col:col			
+tuple_difference_double	tuple_difference_double	col1:col, col2:col			
+tuple_difference_integer	tuple_difference_integer	col1:col, col2:col			
+tuple_difference_theta_double	tuple_difference_theta_double	col1:col, col2:col			
+tuple_difference_theta_integer	tuple_difference_theta_integer	col1:col, col2:col			
+tuple_intersection_agg_double	tuple_intersection_agg_double	col:col			
+tuple_intersection_agg_integer	tuple_intersection_agg_integer	col:col			
+tuple_intersection_double	tuple_intersection_double	col1:col, col2:col			
+tuple_intersection_integer	tuple_intersection_integer	col1:col, col2:col			
+tuple_intersection_theta_double	tuple_intersection_theta_double	col1:col, col2:col			
+tuple_intersection_theta_integer	tuple_intersection_theta_integer	col1:col, col2:col			
+tuple_sketch_agg_double	tuple_sketch_agg_double	key:col, summary:col			
+tuple_sketch_agg_integer	tuple_sketch_agg_integer	key:col, summary:col			
+tuple_sketch_estimate_double	tuple_sketch_estimate_double	col:col			
+tuple_sketch_estimate_integer	tuple_sketch_estimate_integer	col:col			
+tuple_sketch_summary_double	tuple_sketch_summary_double	col:col			
+tuple_sketch_summary_integer	tuple_sketch_summary_integer	col:col			
+tuple_sketch_theta_double	tuple_sketch_theta_double	col:col			
+tuple_sketch_theta_integer	tuple_sketch_theta_integer	col:col			
+tuple_union_agg_double	tuple_union_agg_double	col:col			
+tuple_union_agg_integer	tuple_union_agg_integer	col:col			
+tuple_union_double	tuple_union_double	col1:col, col2:col			
+tuple_union_integer	tuple_union_integer	col1:col, col2:col			
+tuple_union_theta_double	tuple_union_theta_double	col1:col, col2:col			
+tuple_union_theta_integer	tuple_union_theta_integer	col1:col, col2:col			

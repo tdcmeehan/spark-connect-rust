@@ -281,6 +281,12 @@ public function gets a case: rerun `scripts/gen_request_snapshot_functions.py` f
 function, or add one under `cases/`. `scripts/check_request_snapshot_coverage.py` lists the
 functions of `tests/golden/rust_api_inventory.tsv` without one.
 
+A new builder in `crates/spark-connect-core/src/functions.rs` also gets a row in
+`scripts/async_functions/functions.tsv`, which says what it becomes in the async crate; then
+`python3 scripts/gen_async_functions.py` rewrites the async crate's generated functions and their
+plan-equality cases. CI runs it with `--check`. A new SQL function needs its description:
+rerun `scripts/extract_spark_function_descriptions.py --spark-src <checkout of the Spark tag>`.
+
 **Run the NEW version's own official test cases — they change every release.**
 Do not rely on the previous version's suite. When bumping to vX.Y.Z:
 - Pull vX.Y.Z's official Python connect tests from `apache/spark` at the tag —

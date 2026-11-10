@@ -12,14 +12,15 @@ use crate::column::Column;
 use crate::expression::{
     CallFunctionWrapper, Expression, ExpressionNode, LiteralExpression, UnresolvedFunction,
 };
+use crate::function_forms;
 
 /// Build an `UnresolvedFunction` Column from a proto function name and args.
-fn func(name: &str, args: Vec<Expression>) -> Column {
+pub(crate) fn func(name: &str, args: Vec<Expression>) -> Column {
     Column::new(Expression::function(name, args))
 }
 
 /// Build an `UnresolvedFunction` Column with the `is_distinct` flag set.
-fn func_distinct(name: &str, args: Vec<Expression>) -> Column {
+pub(crate) fn func_distinct(name: &str, args: Vec<Expression>) -> Column {
     Column::new(
         ExpressionNode::UnresolvedFunction(UnresolvedFunction::new_distinct(name, args)).into(),
     )
@@ -32,22 +33,22 @@ fn col_arg(name: &str) -> Expression {
 }
 
 /// A string-literal argument expression.
-fn lit_str(s: &str) -> Expression {
+pub(crate) fn lit_str(s: &str) -> Expression {
     Expression::literal(LiteralExpression::string(s))
 }
 
 /// A 32-bit integer-literal argument expression.
-fn lit_int(v: i32) -> Expression {
+pub(crate) fn lit_int(v: i32) -> Expression {
     Expression::literal(LiteralExpression::int(v))
 }
 
 /// A 64-bit long-literal argument expression.
-fn lit_long(v: i64) -> Expression {
+pub(crate) fn lit_long(v: i64) -> Expression {
     Expression::literal(LiteralExpression::long(v))
 }
 
 /// A boolean-literal argument expression.
-fn lit_bool(b: bool) -> Expression {
+pub(crate) fn lit_bool(b: bool) -> Expression {
     Expression::literal(LiteralExpression::boolean(b))
 }
 
@@ -176,10 +177,7 @@ pub fn create_map<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column 
 
 /// Mirrors `pyspark.sql.functions.window` (column + interval string).
 pub fn window(col: Column, window_duration: &str) -> Column {
-    func(
-        "window",
-        vec![col.expression().clone(), lit_str(window_duration)],
-    )
+    function_forms::window(col, window_duration, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.window` with an explicit slide duration and
@@ -191,15 +189,7 @@ pub fn window_with_slide_and_start(
     slide_duration: &str,
     start_time: &str,
 ) -> Column {
-    func(
-        "window",
-        vec![
-            col.expression().clone(),
-            lit_str(window_duration),
-            lit_str(slide_duration),
-            lit_str(start_time),
-        ],
-    )
+    function_forms::window(col, window_duration, Some(slide_duration), Some(start_time))
 }
 
 // ============================================================================
@@ -813,20 +803,18 @@ pub fn count(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.countDistinct`.
 pub fn countDistinct(col1: Column) -> Column {
-    func_distinct("count", vec![col1.expression().clone()])
+    count_distinct(col1)
 }
 
 /// Mirrors `pyspark.sql.functions.count_distinct`.
 pub fn count_distinct(col1: Column) -> Column {
-    func_distinct("count", vec![col1.expression().clone()])
+    function_forms::count_distinct([col1])
 }
 
 /// Mirrors `pyspark.sql.functions.count_distinct(col, *cols)`: the number of distinct
 /// combinations of the columns.
 pub fn count_distinct_columns(col1: Column, cols: impl IntoIterator<Item = Column>) -> Column {
-    let mut args = vec![col1.expression().clone()];
-    args.extend(cols.into_iter().map(|c| c.expression().clone()));
-    func_distinct("count", args)
+    function_forms::count_distinct(std::iter::once(col1).chain(cols))
 }
 
 /// Mirrors `pyspark.sql.functions.count_if`.
@@ -1065,13 +1053,10 @@ pub fn kurtosis(col1: Column) -> Column {
 /// Mirrors `pyspark.sql.functions.lag`.
 pub fn lag<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column {
     let cols: Vec<Column> = cols.into_iter().map(Into::into).collect();
-    let mut args: Vec<Expression> = cols.iter().map(|c| c.expression().clone()).collect();
-    // PySpark's lag(col) defaults the offset to 1 (lag(col, 1)); append it only for the
-    // bare single-column form -- callers passing offset/default already include them.
-    if args.len() == 1 {
-        args.push(lit_int(1));
+    match <[Column; 1]>::try_from(cols) {
+        Ok([col]) => function_forms::lag(col, None, None),
+        Err(cols) => func("lag", cols.iter().map(|c| c.expression().clone()).collect()),
     }
-    func("lag", args)
 }
 
 /// Mirrors `pyspark.sql.functions.last`.
@@ -1097,13 +1082,13 @@ pub fn lcase(col1: Column) -> Column {
 /// Mirrors `pyspark.sql.functions.lead`.
 pub fn lead<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column {
     let cols: Vec<Column> = cols.into_iter().map(Into::into).collect();
-    let mut args: Vec<Expression> = cols.iter().map(|c| c.expression().clone()).collect();
-    // PySpark's lead(col) defaults the offset to 1; append it only for the bare
-    // single-column form -- callers passing offset/default already include them.
-    if args.len() == 1 {
-        args.push(lit_int(1));
+    match <[Column; 1]>::try_from(cols) {
+        Ok([col]) => function_forms::lead(col, None, None),
+        Err(cols) => func(
+            "lead",
+            cols.iter().map(|c| c.expression().clone()).collect(),
+        ),
     }
-    func("lead", args)
 }
 
 /// Mirrors `pyspark.sql.functions.length`.
@@ -1113,7 +1098,7 @@ pub fn length(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.listagg`.
 pub fn listagg(col1: Column) -> Column {
-    func("listagg", vec![col1.expression().clone()])
+    function_forms::listagg(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.listagg_distinct`.
@@ -1308,7 +1293,7 @@ pub fn positive(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.printf`.
 pub fn printf(col1: Column) -> Column {
-    func("printf", vec![col1.expression().clone()])
+    function_forms::printf(col1, [])
 }
 
 /// Mirrors `pyspark.sql.functions.product`.
@@ -1333,10 +1318,7 @@ pub fn raise_error(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.randstr`.
 pub fn randstr(col1: Column) -> Column {
-    func(
-        "randstr",
-        vec![col1.expression().clone(), lit_long(1000462829105445681)],
-    )
+    function_forms::randstr(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.reverse`.
@@ -1412,10 +1394,7 @@ pub fn second(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.sentences`.
 pub fn sentences(col1: Column) -> Column {
-    func(
-        "sentences",
-        vec![col1.expression().clone(), lit_str(""), lit_str("")],
-    )
+    function_forms::sentences(col1, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.sha`.
@@ -1473,10 +1452,7 @@ pub fn some(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.sort_array`.
 pub fn sort_array(col1: Column) -> Column {
-    func(
-        "sort_array",
-        vec![col1.expression().clone(), lit_bool(true)],
-    )
+    function_forms::sort_array(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.soundex`.
@@ -1511,15 +1487,12 @@ pub fn stddev_samp(col1: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.str_to_map`.
 pub fn str_to_map(col1: Column) -> Column {
-    func(
-        "str_to_map",
-        vec![col1.expression().clone(), lit_str(","), lit_str(":")],
-    )
+    function_forms::str_to_map(col1, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.string_agg`.
 pub fn string_agg(col1: Column) -> Column {
-    func("string_agg", vec![col1.expression().clone()])
+    function_forms::string_agg(col1, None)
 }
 
 /// Mirrors `pyspark.sql.functions.string_agg_distinct`.
@@ -2201,10 +2174,7 @@ pub fn getbit(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.greatest`.
 pub fn greatest(col1: Column, col2: Column) -> Column {
-    func(
-        "greatest",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::greatest([col1, col2])
 }
 
 /// Mirrors `pyspark.sql.functions.histogram_numeric`.
@@ -2249,23 +2219,13 @@ pub fn ilike(col1: Column, col2: Column) -> Column {
 
 /// Mirrors `pyspark.sql.functions.instr`.
 pub fn instr(col1: Column, col2: Column) -> Column {
-    func(
-        "instr",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::instr(col1, col2, None, None)
 }
 
 /// Mirrors `pyspark.sql.functions.instr(str, substr, start)`: searches from the
 /// 1-based position `start`.
 pub fn instr_with_start(col1: Column, col2: Column, start: Column) -> Column {
-    func(
-        "instr",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            start.expression().clone(),
-        ],
-    )
+    function_forms::instr(col1, col2, Some(start), None)
 }
 
 /// Mirrors `pyspark.sql.functions.instr(str, substr, start, occurrence)`: the
@@ -2276,15 +2236,7 @@ pub fn instr_with_start_and_occurrence(
     start: Column,
     occurrence: Column,
 ) -> Column {
-    func(
-        "instr",
-        vec![
-            col1.expression().clone(),
-            col2.expression().clone(),
-            start.expression().clone(),
-            occurrence.expression().clone(),
-        ],
-    )
+    function_forms::instr(col1, col2, Some(start), Some(occurrence))
 }
 
 /// Mirrors `pyspark.sql.functions.json_tuple`.
@@ -2298,10 +2250,7 @@ pub fn json_tuple<C: Into<Column>>(cols: impl IntoIterator<Item = C>) -> Column 
 
 /// Mirrors `pyspark.sql.functions.least`.
 pub fn least(col1: Column, col2: Column) -> Column {
-    func(
-        "least",
-        vec![col1.expression().clone(), col2.expression().clone()],
-    )
+    function_forms::least([col1, col2])
 }
 
 /// Mirrors `pyspark.sql.functions.left`.

@@ -64,6 +64,8 @@ jobs:
         run: cargo clippy --workspace --all-targets || true
       - name: Tooling unit tests
         run: python3 -m unittest discover -s scripts/tests
+      - name: Generated functions of the async crate (check) - blocking
+        run: python3 scripts/gen_async_functions.py --check
 
   python-ruff:
     name: ruff (our scripts and embedded Row)
