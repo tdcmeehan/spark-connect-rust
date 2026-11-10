@@ -22,6 +22,7 @@ mod support;
 
 use std::collections::HashMap;
 
+use spark_connect::col as old_col;
 use spark_connect::dataframe::AsOfJoinOptions;
 use spark_connect::plan::JoinType as OldJoinType;
 use spark_connect::table_arg::TableArg as OldTableArg;
@@ -78,7 +79,10 @@ fn assert_same_plans(cases: Vec<Case>) {
 }
 
 fn exprs(columns: &[Column]) -> Vec<spark_connect::Expression> {
-    columns.iter().map(|c| c.expression().clone()).collect()
+    columns
+        .iter()
+        .map(|c| spark_connect::Column::from(c.clone()).expression().clone())
+        .collect()
 }
 
 #[tokio::test]
@@ -99,7 +103,7 @@ async fn projections_have_the_plans_of_the_old_api() {
         (
             "select of expressions",
             s.old_df()
-                .select([col("id").alias("a"), spark_connect::lit(1)]),
+                .select([old_col("id").alias("a"), spark_connect::lit(1)]),
             s.new_df().select([col("id").alias("a"), lit(1)]),
         ),
         (
@@ -109,13 +113,13 @@ async fn projections_have_the_plans_of_the_old_api() {
         ),
         (
             "with_column",
-            s.old_df().with_column("x", col("id")),
+            s.old_df().with_column("x", old_col("id")),
             s.new_df().with_column("x", "id"),
         ),
         (
             "with_columns",
             s.old_df().with_columns(vec![
-                ("a".into(), col("id")),
+                ("a".into(), old_col("id")),
                 ("b".into(), spark_connect::lit(2)),
             ]),
             s.new_df().with_columns([("a", col("id")), ("b", lit(2))]),
@@ -143,7 +147,7 @@ async fn projections_have_the_plans_of_the_old_api() {
         ),
         (
             "drop of columns and names",
-            s.old_df().drop_columns(vec![col("a")], vec!["b"]),
+            s.old_df().drop_columns(vec![old_col("a")], vec!["b"]),
             s.new_df().drop([ColumnOrName::from(col("a")), "b".into()]),
         ),
         (
@@ -188,12 +192,12 @@ async fn filters_orders_and_limits_have_the_plans_of_the_old_api() {
     assert_same_plans(vec![
         (
             "filter",
-            s.old_df().filter(col("id").gt(spark_connect::lit(1))),
+            s.old_df().filter(old_col("id").gt(spark_connect::lit(1))),
             s.new_df().filter(col("id").gt(lit(1))),
         ),
         (
             "where_",
-            s.old_df().where_(col("ok")),
+            s.old_df().where_(old_col("ok")),
             s.new_df().filter("ok"),
         ),
         (
@@ -271,12 +275,12 @@ async fn joins_have_the_plans_of_the_old_api() {
         })
         .collect();
     let old_as_of = AsOfJoinOptions {
-        on: Some(col("ok")),
+        on: Some(old_col("ok")),
         join_type: "leftouter".to_string(),
         tolerance: Some(spark_connect::lit(5)),
         allow_exact_matches: false,
         direction: "forward".to_string(),
-        ..AsOfJoinOptions::new(col("t"), col("u"))
+        ..AsOfJoinOptions::new(old_col("t"), old_col("u"))
     };
     let new_as_of = AsOfJoin::new("t", "u")
         .on("ok")
@@ -287,13 +291,13 @@ async fn joins_have_the_plans_of_the_old_api() {
     let old_using = AsOfJoinOptions {
         using_columns: vec!["k".to_string()],
         direction: "nearest".to_string(),
-        ..AsOfJoinOptions::new(col("t"), col("u"))
+        ..AsOfJoinOptions::new(old_col("t"), old_col("u"))
     };
     let new_using = AsOfJoin::new("t", "u")
         .using(["k"])
         .direction(AsOfDirection::Nearest);
     let old_nearest = |d: &Old, r: &Old, mode, direction, join_type| {
-        d.nearest_by_join(r, col("distance"), 3, mode, direction, join_type)
+        d.nearest_by_join(r, old_col("distance"), 3, mode, direction, join_type)
     };
     cases.extend([
         (
@@ -317,7 +321,7 @@ async fn joins_have_the_plans_of_the_old_api() {
         (
             "lateral_join on a condition",
             s.old_df()
-                .lateral_join(&s.old_right(), Some(col("ok")), OldJoinType::LeftOuter),
+                .lateral_join(&s.old_right(), Some(old_col("ok")), OldJoinType::LeftOuter),
             s.new_df()
                 .lateral_join(&s.new_right(), Some(col("ok")), JoinType::LeftOuter),
         ),
@@ -331,7 +335,10 @@ async fn joins_have_the_plans_of_the_old_api() {
         (
             "as_of_join by default",
             s.old_df()
-                .as_of_join(&s.old_right(), AsOfJoinOptions::new(col("t"), col("u")))
+                .as_of_join(
+                    &s.old_right(),
+                    AsOfJoinOptions::new(old_col("t"), old_col("u")),
+                )
                 .unwrap(),
             s.new_df()
                 .as_of_join(&s.new_right(), AsOfJoin::new("t", "u")),
@@ -426,7 +433,7 @@ async fn set_operations_have_the_plans_of_the_old_api() {
 #[tokio::test]
 async fn reshaping_and_statistics_have_the_plans_of_the_old_api() {
     let s = Sessions::connect().await;
-    let metrics = [spark_connect::functions::count(col("id"))];
+    let metrics = [Column::from(spark_connect::functions::count(old_col("id")))];
     assert_same_plans(vec![
         (
             "unpivot of values",
@@ -454,7 +461,7 @@ async fn reshaping_and_statistics_have_the_plans_of_the_old_api() {
         ),
         (
             "transpose of an index",
-            s.old_df().transpose_with_index(col("k")).unwrap(),
+            s.old_df().transpose_with_index(old_col("k")).unwrap(),
             s.new_df().transpose(Some(col("k"))),
         ),
         (
@@ -534,7 +541,7 @@ async fn samples_partitionings_and_hints_have_the_plans_of_the_old_api() {
         ),
         (
             "repartition by id",
-            s.old_df().repartition_by_id(5, col("p")),
+            s.old_df().repartition_by_id(5, old_col("p")),
             s.new_df()
                 .repartition(Partitioning::by_id("p").partitions(5)),
         ),
@@ -577,8 +584,8 @@ async fn subqueries_and_table_arguments_have_the_plans_of_the_old_api() {
         ),
         (
             "isin of a DataFrame",
-            s.old_df().filter(col("id").isin_subquery(&old)),
-            s.new_df().filter(col("id").isin_subquery(&new)),
+            s.old_df().filter(old_col("id").isin_subquery(&old)),
+            s.new_df().filter(col("id").is_in_subquery(&new)),
         ),
         (
             "a table argument",
@@ -629,7 +636,7 @@ async fn ranges_tables_and_table_functions_have_the_plans_of_the_old_api() {
     let (old, new) = (&s.old, &s.new);
     let old_tvf = old.tvf();
     let new_tvf = new.tvf();
-    let a = col("a");
+    let a = old_col("a");
     let fields = [
         spark_connect::lit_string("x"),
         spark_connect::lit_string("y"),
@@ -660,7 +667,7 @@ async fn ranges_tables_and_table_functions_have_the_plans_of_the_old_api() {
         (
             "call",
             old_tvf.explode(&a).unwrap(),
-            new_tvf.call("explode", [a.clone()]),
+            new_tvf.call("explode", [Column::from(a.clone())]),
         ),
         (
             "explode",

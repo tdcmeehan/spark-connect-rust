@@ -68,7 +68,9 @@ fn cases() -> Vec<Case> {
             },
             new: |s| {
                 Box::pin(async move {
-                    let array = spark_connect::functions::array(vec![lit(1)]);
+                    let array =
+                        spark_connect::functions::array(vec![spark_connect::Column::from(lit(1))]);
+                    let array = spark_connect_async::Column::from(array);
                     s.sql(QUERY).named_arg("ages", array).await.unwrap()
                 })
             },

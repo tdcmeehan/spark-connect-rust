@@ -10,12 +10,10 @@ use arrow::record_batch::RecordBatch;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
 use serde::de::DeserializeOwned;
 use spark_connect_core::actions::dataframe as core_actions;
-use spark_connect_core::expression::{Expression, LiteralExpression};
 use spark_connect_core::plan::{self, AggregateGroupType, LogicalPlan, RelationOwner};
 use spark_connect_core::types::DataType;
 use spark_connect_proto as proto;
 
-use crate::column::Column;
 use crate::dataframe::DataFrame;
 use crate::error::{Error, Result};
 use crate::session::Session;
@@ -331,8 +329,7 @@ impl DataFrame {
 
     /// The number of rows.
     pub fn count(&self) -> impl Future<Output = Result<i64>> + Send + 'static {
-        let one = Column::new(Expression::literal(LiteralExpression::int(1)));
-        let count = spark_connect_core::functions::count(one)
+        let count = spark_connect_core::functions::count(spark_connect_core::column::lit(1))
             .expression()
             .clone();
         let counted = self.with_plan(plan::aggregate(

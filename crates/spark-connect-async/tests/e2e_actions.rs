@@ -23,7 +23,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use spark_connect::functions::count;
 use spark_connect_async::actions::{Checkpoint, ExplainMode, TempView};
-use spark_connect_async::{col, lit, Observation, Session};
+use spark_connect_async::{col, lit, Column, Observation, Session};
 
 async fn session() -> Option<Session> {
     let remote = std::env::var("SPARK_REMOTE").ok()?;
@@ -89,7 +89,10 @@ async fn checkpoints_views_and_observations_work_on_the_server() {
     let viewed = session.sql("SELECT * FROM b7_numbers").await.unwrap();
     assert_eq!(viewed.count().await.unwrap(), 5);
     let observation = Observation::new("b7_metrics");
-    let observed = df.observe(&observation, [count(lit(1)).alias("rows")]);
+    let observed = df.observe(
+        &observation,
+        [Column::from(count(lit(1).into())).alias("rows")],
+    );
     observed.collect().await.unwrap();
     let metrics = observation.get().unwrap();
     assert_eq!(
