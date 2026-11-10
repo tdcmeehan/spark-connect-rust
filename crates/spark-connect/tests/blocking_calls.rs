@@ -126,10 +126,11 @@ fn the_progress_of_a_command_and_of_a_pipeline_run_reaches_the_handlers() {
     let sql_command = |spark: &SparkSession| drop(spark.sql(server::REPORTS_PROGRESS).unwrap());
     let pipeline_run =
         |spark: &SparkSession| run_pipeline_of(spark, server::GRAPH_REPORTING_PROGRESS);
+    type Run = fn(&SparkSession);
     // A pipeline run records no execution, and its responses update no accumulator.
-    let runs: [(&str, &dyn Fn(&SparkSession), bool); 2] = [
-        ("a SQL command", &sql_command, true),
-        ("a pipeline run", &pipeline_run, false),
+    let runs: [(&str, Run, bool); 2] = [
+        ("a SQL command", sql_command, true),
+        ("a pipeline run", pipeline_run, false),
     ];
     for (what, run, records) in runs {
         let before = spark.last_execution_info().map(|info| info.operation_id);
