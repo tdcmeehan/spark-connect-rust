@@ -4,8 +4,9 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike, Utc};
 use serde::de::{self, Deserialize, Deserializer, SeqAccess, Visitor};
+use spark_connect_core::row::{StructValue, Value as CoreValue};
 
 use crate::error::{Error, Result};
 
@@ -281,6 +282,83 @@ impl Row {
     pub fn into_values(self) -> Vec<Value> {
         self.values
     }
+}
+
+/// A row of the named values, such as a value of a `STRUCT` to send in local rows.
+impl<N: Into<String>> FromIterator<(N, Value)> for Row {
+    fn from_iter<I: IntoIterator<Item = (N, Value)>>(fields: I) -> Row {
+        let (names, values): (Vec<String>, Vec<Value>) = fields
+            .into_iter()
+            .map(|(name, value)| (name.into(), value))
+            .unzip();
+        Row::new(names.into(), values)
+    }
+}
+
+/// The values of the row, by position.
+impl IntoIterator for Row {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
+impl Value {
+    /// The value as the encoder of local rows that the crates share takes it.
+    pub(crate) fn into_core(self) -> Result<CoreValue> {
+        let unsupported = |kind: &str| {
+            Error::invalid_argument(format!("{kind} values cannot be sent in local rows"))
+        };
+        Ok(match self {
+            Value::Null => CoreValue::Null,
+            Value::Boolean(value) => CoreValue::Bool(value),
+            Value::Byte(value) => CoreValue::Byte(value),
+            Value::Short(value) => CoreValue::Short(value),
+            Value::Int(value) => CoreValue::Integer(value),
+            Value::Long(value) => CoreValue::Long(value),
+            Value::Float(value) => CoreValue::Float(value),
+            Value::Double(value) => CoreValue::Double(value),
+            Value::Decimal(decimal) => CoreValue::Decimal {
+                value: decimal.to_string(),
+                precision: Some(decimal.precision().into()),
+                scale: Some(decimal.scale().into()),
+            },
+            Value::String(value) => CoreValue::String(value),
+            Value::Binary(value) => CoreValue::Binary(value),
+            Value::Date(date) => CoreValue::Date(date.to_epoch_days()),
+            Value::Timestamp(instant) => CoreValue::Timestamp(instant.timestamp_micros()),
+            Value::TimestampNtz(time) => CoreValue::TimestampNtz(time.and_utc().timestamp_micros()),
+            Value::Time(time) => CoreValue::Time(nanos_of_day(time)),
+            Value::DayTimeInterval(interval) => CoreValue::DayTimeInterval(
+                interval
+                    .num_microseconds()
+                    .ok_or_else(|| unsupported("Out-of-range INTERVAL DAY TO SECOND"))?,
+            ),
+            Value::YearMonthInterval(_) => return Err(unsupported("INTERVAL YEAR TO MONTH")),
+            Value::Variant { value, metadata } => CoreValue::Variant { value, metadata },
+            Value::Array(values) => CoreValue::List(into_core_values(values)?),
+            Value::Map(entries) => CoreValue::Map(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| Ok((key.into_core()?, value.into_core()?)))
+                    .collect::<Result<_>>()?,
+            ),
+            Value::Struct(row) => {
+                CoreValue::Struct(StructValue::new(row.names, into_core_values(row.values)?))
+            }
+        })
+    }
+}
+
+/// The nanoseconds of `time` since midnight, as Spark holds a `TIME`.
+pub(crate) fn nanos_of_day(time: NaiveTime) -> i64 {
+    i64::from(time.num_seconds_from_midnight()) * 1_000_000_000 + i64::from(time.nanosecond())
+}
+
+fn into_core_values(values: Vec<Value>) -> Result<Vec<CoreValue>> {
+    values.into_iter().map(Value::into_core).collect()
 }
 
 /// The row of the metrics that the server observed for an observation.

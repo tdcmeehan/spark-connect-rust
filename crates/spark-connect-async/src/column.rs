@@ -2,7 +2,7 @@
 
 use std::ops::{Add, BitAnd, BitOr, Div, Mul, Neg, Not, Rem, Sub};
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use spark_connect_core::column::Column as CoreColumn;
 use spark_connect_core::expression::{
     Alias, Expression, ExpressionNode, LiteralExpression, SubqueryExpression,
@@ -10,7 +10,7 @@ use spark_connect_core::expression::{
 use spark_connect_core::types::{DataType, DayTimeIntervalType};
 
 use crate::dataframe::DataFrame;
-use crate::value::Decimal;
+use crate::value::{nanos_of_day, Decimal};
 use crate::window::Window;
 
 /// An expression over the columns of a DataFrame: a column, a literal, or an operation on
@@ -101,13 +101,13 @@ impl Column {
     /// such as `"int"` or `"array<string>"`. A value that does not convert fails the query,
     /// unless the session is not in ANSI mode, where it is `NULL`.
     pub fn cast(self, data_type: impl IntoDataType) -> Column {
-        Column(data_type.cast_column(self.0))
+        Column(data_type.into_type_or_ddl().cast(self.0))
     }
 
     /// The column converted to `data_type`, as [`cast`](Self::cast) converts it, but `NULL`
     /// where a value does not convert.
     pub fn try_cast(self, data_type: impl IntoDataType) -> Column {
-        Column(data_type.try_cast_column(self.0))
+        Column(data_type.into_type_or_ddl().try_cast(self.0))
     }
 
     /// Whether the value is `NULL`.
@@ -423,15 +423,37 @@ impl<S: Into<String>> From<Vec<S>> for AliasSpec {
     }
 }
 
-/// A type that [`Column::cast`] and [`Column::try_cast`] take: a [`DataType`], or a type in
-/// Spark SQL's syntax as a `&str` or `String`, such as `"decimal(10, 2)"`, which the server
-/// parses.
+/// A type that [`Column::cast`], [`Column::try_cast`] and
+/// [`DataFrameReader::schema`](crate::readwriter::DataFrameReader::schema) take: a [`DataType`],
+/// or a type in Spark SQL's syntax as a `&str` or `String`, such as `"decimal(10, 2)"`, which
+/// the server parses.
 pub trait IntoDataType: sealed::Sealed {
     #[doc(hidden)]
-    fn cast_column(self, column: CoreColumn) -> CoreColumn;
+    fn into_type_or_ddl(self) -> TypeOrDdl;
+}
 
-    #[doc(hidden)]
-    fn try_cast_column(self, column: CoreColumn) -> CoreColumn;
+/// A [`DataType`], or a type as text.
+#[doc(hidden)]
+#[derive(Clone)]
+pub enum TypeOrDdl {
+    Type(DataType),
+    Text(String),
+}
+
+impl TypeOrDdl {
+    fn cast(self, column: CoreColumn) -> CoreColumn {
+        match self {
+            TypeOrDdl::Type(data_type) => column.cast(data_type),
+            TypeOrDdl::Text(text) => column.cast_str(&text),
+        }
+    }
+
+    fn try_cast(self, column: CoreColumn) -> CoreColumn {
+        match self {
+            TypeOrDdl::Type(data_type) => column.try_cast(data_type),
+            TypeOrDdl::Text(text) => column.try_cast_str(&text),
+        }
+    }
 }
 
 mod sealed {
@@ -443,32 +465,20 @@ mod sealed {
 }
 
 impl IntoDataType for DataType {
-    fn cast_column(self, column: CoreColumn) -> CoreColumn {
-        column.cast(self)
-    }
-
-    fn try_cast_column(self, column: CoreColumn) -> CoreColumn {
-        column.try_cast(self)
+    fn into_type_or_ddl(self) -> TypeOrDdl {
+        TypeOrDdl::Type(self)
     }
 }
 
 impl IntoDataType for &str {
-    fn cast_column(self, column: CoreColumn) -> CoreColumn {
-        column.cast_str(self)
-    }
-
-    fn try_cast_column(self, column: CoreColumn) -> CoreColumn {
-        column.try_cast_str(self)
+    fn into_type_or_ddl(self) -> TypeOrDdl {
+        TypeOrDdl::Text(self.to_string())
     }
 }
 
 impl IntoDataType for String {
-    fn cast_column(self, column: CoreColumn) -> CoreColumn {
-        column.cast_str(&self)
-    }
-
-    fn try_cast_column(self, column: CoreColumn) -> CoreColumn {
-        column.try_cast_str(&self)
+    fn into_type_or_ddl(self) -> TypeOrDdl {
+        TypeOrDdl::Text(self)
     }
 }
 
@@ -589,7 +599,7 @@ into_literal! {
     NaiveDateTime => |v| LiteralExpression::TimestampNtz(v.and_utc().timestamp_micros()),
         DataType::TimestampNtz;
     NaiveTime => |v| LiteralExpression::Time {
-        nano: i64::from(v.num_seconds_from_midnight()) * 1_000_000_000 + i64::from(v.nanosecond()),
+        nano: nanos_of_day(v),
         precision: TIME_PRECISION,
     }, DataType::Time { precision: TIME_PRECISION };
     TimeDelta => |v| LiteralExpression::DayTimeInterval(microseconds(v)), DataType::DayTimeInterval {

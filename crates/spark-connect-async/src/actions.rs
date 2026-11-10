@@ -197,7 +197,7 @@ impl Drop for CachedRelation {
         );
         let session = self.session.clone();
         self.runtime.spawn(async move {
-            let _ = stream::command_result(session, command, |_| None::<()>).await;
+            let _ = stream::command(session, command).await;
         });
     }
 }
@@ -448,8 +448,7 @@ impl DataFrame {
                 is_global: view.global,
                 replace: view.replace,
             });
-        let created = stream::command_result(self.session().clone(), command, |_| None::<()>);
-        async move { created.await.map(drop) }
+        stream::command(self.session().clone(), command)
     }
 
     /// A DataFrame of the rows of this one as the server keeps them, whose plan does not

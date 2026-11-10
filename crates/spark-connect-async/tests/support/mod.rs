@@ -24,7 +24,73 @@ use std::fmt::Debug;
 /// they first appear. Plan ids come from one counter of the process, so two plans built apart
 /// never share them; what is compared is which nodes and references share an id.
 pub fn renumbered(message: &impl Debug) -> String {
-    numbered_after(&format!("{message:?}"), "plan_id: ")
+    numbered_after(&sorted_string_maps(&format!("{message:?}")), "plan_id: ")
+}
+
+/// `text` with the entries of each map of strings to strings in order: `Debug` prints those of a
+/// `HashMap`, such as the options of a message, in no fixed order.
+pub fn sorted_string_maps(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("{\"") {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        match string_map(rest) {
+            Some((mut entries, len)) => {
+                entries.sort();
+                let entries: Vec<String> = entries
+                    .into_iter()
+                    .map(|(key, value)| format!("{key}: {value}"))
+                    .collect();
+                out.push_str(&format!("{{{}}}", entries.join(", ")));
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('{');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The entries of the map of strings to strings that `text` starts with, as their quoted
+/// texts, and the length of the map's text.
+fn string_map(text: &str) -> Option<(Vec<(&str, &str)>, usize)> {
+    let mut entries = Vec::new();
+    let mut at = 1;
+    loop {
+        let key = quoted(&text[at..])?;
+        at += key.len();
+        if !text[at..].starts_with(": ") {
+            return None;
+        }
+        at += 2;
+        let value = quoted(&text[at..])?;
+        at += value.len();
+        entries.push((key, value));
+        match text.as_bytes()[at..].first()? {
+            b'}' => return Some((entries, at + 1)),
+            b',' if text[at..].starts_with(", ") => at += 2,
+            _ => return None,
+        }
+    }
+}
+
+/// The quoted string, with its quotes, that `text` starts with.
+fn quoted(text: &str) -> Option<&str> {
+    let body = text.strip_prefix('"')?;
+    let mut escaped = false;
+    for (i, c) in body.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return Some(&text[..i + 2]),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `text` with the number after each `marker`, bare or in `Some(..)`, numbered 1, 2, ... in the

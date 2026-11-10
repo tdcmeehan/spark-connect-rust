@@ -14,7 +14,6 @@ use spark_connect_core::client::SparkConnectClient;
 use spark_connect_core::error::SparkError;
 use spark_connect_core::execution::check_tag;
 use spark_connect_core::plan::{LogicalPlan, PlanIds};
-use spark_connect_core::readwriter::ReadType;
 use spark_connect_proto::ExecutePlanRequest;
 use tokio::sync::OnceCell;
 
@@ -157,16 +156,7 @@ impl Session {
     /// A DataFrame of the table or view `name`, which may be qualified by its catalog and
     /// schema.
     pub fn table(&self, name: impl Into<String>) -> DataFrame {
-        DataFrame::new(
-            self.clone(),
-            LogicalPlan::Read {
-                read_type: ReadType::NamedTable {
-                    table_name: name.into(),
-                    options: Default::default(),
-                },
-                is_streaming: false,
-            },
-        )
+        self.read().table(name)
     }
 
     /// A SQL statement, with the arguments and DataFrames that [`Sql`] adds. Awaiting it sends
@@ -541,6 +531,14 @@ mod tests {
         assert_send_sync::<crate::options::Pivot>();
         assert_send_sync::<crate::options::FillValue>();
         assert_send_sync::<crate::options::Replace>();
+        assert_send_sync::<crate::readwriter::DataFrameReader>();
+        assert_send_sync::<crate::readwriter::DataFrameWriter>();
+        assert_send_sync::<crate::readwriter::DataFrameWriterV2>();
+        assert_send_sync::<crate::readwriter::FromArrow>();
+        assert_send_sync::<crate::merge::MergeIntoWriter>();
+        assert_send_sync::<crate::merge::WhenMatched>();
+        assert_send_sync::<crate::merge::WhenNotMatched>();
+        assert_send_sync::<crate::merge::WhenNotMatchedBySource>();
         fn assert_send<T: Send>() {}
         assert_send::<crate::RecordBatchStream>();
         // Type-checked, never called: it would need a server.
@@ -568,6 +566,15 @@ mod tests {
             assert_send_static(df.group_by(["id"]).sum(["id"]));
             assert_send_static(df.stat().corr("a", "b"));
             assert_send_static(df.stat().approx_quantile(["a"], [0.5], 0.1));
+            let reader = session.read();
+            assert_send_static(reader.parse(crate::readwriter::ParseFormat::Csv, &df));
+            assert_send_static(df.write().save("p"));
+            assert_send_static(df.write_to("t").overwrite(crate::col("a")));
+            assert_send_static(df.merge_into("t", crate::col("a")).into_future());
+            assert_send_static(
+                session.create_dataframe([[crate::Value::Null]], crate::types::DataType::Null),
+            );
+            assert_send_static(session.create_dataframe_from_arrow([]).into_future());
             assert_send_static(conf.set("k", "v"));
             assert_send_static(conf.get("k"));
             assert_send_static(conf.get_all());
