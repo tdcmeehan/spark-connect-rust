@@ -100,9 +100,56 @@ fn the_hook_of_a_command_or_a_pipeline_run_runs_on_the_calling_thread() {
 
 /// Starts a run of a pipeline and reads its responses to the end.
 fn run_pipeline(spark: &SparkSession) {
-    let mut run =
-        pipelines::start_run(spark, "graph-id", vec![], true, vec![], false, None).unwrap();
+    run_pipeline_of(spark, "graph-id");
+}
+
+/// Starts a run of the pipeline of `graph` and reads its responses to the end.
+fn run_pipeline_of(spark: &SparkSession, graph: &str) {
+    let mut run = pipelines::start_run(spark, graph, vec![], true, vec![], false, None).unwrap();
     while run.next_response().unwrap().is_some() {}
+}
+
+#[test]
+fn the_progress_of_a_command_and_of_a_pipeline_run_reaches_the_handlers() {
+    let recorder = Arc::new(server::Recorder::default());
+    let spark = session_recording(Arc::clone(&recorder));
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&progress);
+    spark.register_progress_handler(move |update| {
+        seen.lock()
+            .unwrap()
+            .push((update.done, update.operation_id.clone()));
+    });
+    let accumulated = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&accumulated);
+    spark.set_python_accumulator_handler(move |update| seen.lock().unwrap().push(update.to_vec()));
+    let sql_command = |spark: &SparkSession| drop(spark.sql(server::REPORTS_PROGRESS).unwrap());
+    let pipeline_run =
+        |spark: &SparkSession| run_pipeline_of(spark, server::GRAPH_REPORTING_PROGRESS);
+    // A pipeline run records no execution, and its responses update no accumulator.
+    let runs: [(&str, &dyn Fn(&SparkSession), bool); 2] = [
+        ("a SQL command", &sql_command, true),
+        ("a pipeline run", &pipeline_run, false),
+    ];
+    for (what, run, records) in runs {
+        let before = spark.last_execution_info().map(|info| info.operation_id);
+        run(&spark);
+        let operation_id = last_operation_id(&recorder);
+        assert_eq!(
+            std::mem::take(&mut *progress.lock().unwrap()),
+            vec![(false, operation_id.clone()), (true, operation_id.clone())],
+            "{what}"
+        );
+        let updates = std::mem::take(&mut *accumulated.lock().unwrap());
+        let recorded = spark.last_execution_info().map(|info| info.operation_id);
+        if records {
+            assert_eq!(updates, vec![b"update".to_vec()], "{what}");
+            assert_eq!(recorded, Some(operation_id), "{what}");
+        } else {
+            assert!(updates.is_empty(), "{what}: {updates:?}");
+            assert_eq!(recorded, before, "{what}");
+        }
+    }
 }
 
 #[test]

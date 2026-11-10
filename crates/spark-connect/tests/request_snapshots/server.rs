@@ -97,6 +97,12 @@ impl Recorder {
 pub const THREE_BATCHES: &str = "SELECT id FROM three_batches";
 /// A query whose execution fails after the schema and one Arrow batch.
 pub const A_BATCH_THEN_A_FAILURE: &str = "SELECT id FROM a_batch_then_a_failure";
+/// A SQL command whose execution reports its progress and an update of a Python accumulator
+/// before its result.
+pub const REPORTS_PROGRESS: &str = "SELECT 'reports progress'";
+/// A pipeline graph whose run reports its progress and an update of a Python accumulator before
+/// its result.
+pub const GRAPH_REPORTING_PROGRESS: &str = "graph-reporting-progress";
 
 /// Starts the server on its own runtime thread, as the client under test blocks on the
 /// shared runtime of the crate, and returns its address.
@@ -485,6 +491,10 @@ fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanR
             }
             _ => relation_results(&relation),
         },
+        Some(OpType::Command(command)) if reports_progress(&command) => {
+            let results = command_results(command);
+            return with_progress(complete(&request.session_id, &operation_id, results));
+        }
         Some(OpType::Command(command)) => command_results(command),
         _ => Vec::new(),
     };
@@ -492,6 +502,55 @@ fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanR
         .into_iter()
         .map(Ok)
         .collect()
+}
+
+fn reports_progress(command: &proto::Command) -> bool {
+    use proto::command::CommandType as C;
+    use proto::pipeline_command::CommandType as P;
+    match &command.command_type {
+        Some(C::SqlCommand(sql)) => {
+            sql.input.as_ref().and_then(sql_query) == Some(REPORTS_PROGRESS)
+        }
+        Some(C::PipelineCommand(pipeline)) => matches!(
+            &pipeline.command_type,
+            Some(P::StartRun(run)) if run.dataflow_graph_id.as_deref() == Some(GRAPH_REPORTING_PROGRESS)
+        ),
+        _ => false,
+    }
+}
+
+/// `responses` after a progress of one running task, which also carries an update of a Python
+/// accumulator.
+fn with_progress(
+    responses: Vec<proto::ExecutePlanResponse>,
+) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
+    use proto::execute_plan_response::{
+        execution_progress::StageInfo, ExecutionProgress, ObservedMetrics, ResponseType,
+    };
+    let progress = proto::ExecutePlanResponse {
+        session_id: responses[0].session_id.clone(),
+        operation_id: responses[0].operation_id.clone(),
+        response_id: "progress".to_string(),
+        response_type: Some(ResponseType::ExecutionProgress(ExecutionProgress {
+            stages: vec![StageInfo {
+                num_tasks: 1,
+                ..Default::default()
+            }],
+            num_inflight_tasks: 1,
+        })),
+        observed_metrics: vec![ObservedMetrics {
+            name: spark_connect::profiler::PYTHON_ACCUMULATOR_METRICS.to_string(),
+            values: vec![proto::expression::Literal {
+                literal_type: Some(proto::expression::literal::LiteralType::Binary(
+                    b"update".to_vec().into(),
+                )),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    std::iter::once(progress).chain(responses).map(Ok).collect()
 }
 
 fn sql_query(relation: &proto::Relation) -> Option<&str> {
