@@ -21,7 +21,7 @@ Rust CI and Python Connect Tests run on pushes and pull requests targeting `mast
 This workflow validates the pure-Rust implementation:
 
 - **Build**: Compiles `spark-connect`, `spark-connect-core`, and `spark-connect-proto` crates (pyspark-rs is excluded from default cargo operations because it requires maturin + Python environment)
-- **Test**: Runs `cargo test` on `spark-connect` and `spark-connect-core`
+- **Test**: Runs `cargo test` on `spark-connect`, `spark-connect-core` and `spark-connect-blocking`
 - **No-stub audit**: Runs `scripts/audit_no_stubs.sh` to enforce the "100% coverage, zero stubs" rule (see [Design notes](architecture.md))
 
 ### Key steps
@@ -30,7 +30,7 @@ This workflow validates the pure-Rust implementation:
 2. Install Rust (stable channel) with caching
 3. Install system dependencies (protobuf-compiler)
 4. Build workspace (excluding pyspark-rs)
-5. Test spark-connect and spark-connect-core crates
+5. Test spark-connect, spark-connect-core and spark-connect-blocking crates
 6. Audit for placeholder/deferred markers
 
 This job should always pass; failures indicate incomplete implementation or test regressions.
