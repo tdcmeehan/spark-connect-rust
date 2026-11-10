@@ -176,6 +176,59 @@ fn mask(mut entries: Vec<Entry>, masks: &[String]) -> Vec<Entry> {
     entries
 }
 
+/// The client type names the OS of the host (`os/<name>`); the snapshots name Linux, so that they
+/// hold on every host. A request is encoded again only when its client type changes.
+fn with_linux_client_type(mut entries: Vec<Entry>) -> Vec<Entry> {
+    macro_rules! with_linux_os {
+        ($entry:expr, $($kind:literal => $request:ty),* $(,)?) => {
+            match $entry.kind.as_str() {
+                $($kind => {
+                    let mut request = <$request>::decode(&$entry.bytes[..]).unwrap();
+                    if let Some(client_type) = request.client_type.as_mut() {
+                        let linux = linux_os(client_type);
+                        if linux != *client_type {
+                            *client_type = linux;
+                            $entry.bytes = request.encode_to_vec();
+                        }
+                    }
+                })*
+                _ => {}
+            }
+        };
+    }
+    for entry in &mut entries {
+        with_linux_os!(
+            entry,
+            "ExecutePlanRequest" => proto::ExecutePlanRequest,
+            "AnalyzePlanRequest" => proto::AnalyzePlanRequest,
+            "ConfigRequest" => proto::ConfigRequest,
+            "AddArtifactsRequest" => proto::AddArtifactsRequest,
+            "ArtifactStatusesRequest" => proto::ArtifactStatusesRequest,
+            "InterruptRequest" => proto::InterruptRequest,
+            "ReattachExecuteRequest" => proto::ReattachExecuteRequest,
+            "ReleaseExecuteRequest" => proto::ReleaseExecuteRequest,
+            "ReleaseSessionRequest" => proto::ReleaseSessionRequest,
+            "CloneSessionRequest" => proto::CloneSessionRequest,
+            "FetchErrorDetailsRequest" => proto::FetchErrorDetailsRequest,
+        );
+    }
+    entries
+}
+
+fn linux_os(client_type: &str) -> String {
+    client_type
+        .split(' ')
+        .map(|token| {
+            if token.starts_with("os/") {
+                "os/linux"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn run(
     case: &Case,
     first_plan_id: i64,
@@ -217,7 +270,7 @@ fn run(
                 .unwrap_or_default()
         ),
     };
-    let mut entries = mask(recorder.take(), &ctx.masks.borrow());
+    let mut entries = with_linux_client_type(mask(recorder.take(), &ctx.masks.borrow()));
     if ctx.unordered.get() {
         entries.sort_by(|a, b| (&a.kind, &a.bytes).cmp(&(&b.kind, &b.bytes)));
     }
@@ -263,7 +316,7 @@ fn from_json(line: &str) -> (String, Snapshot) {
         value["case"].as_str().unwrap().to_string(),
         Snapshot {
             outcome: value["outcome"].as_str().unwrap().to_string(),
-            entries,
+            entries: with_linux_client_type(entries),
         },
     )
 }
