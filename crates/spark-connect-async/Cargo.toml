@@ -17,13 +17,21 @@ spark-connect-core = { package = "apache-spark-connect-core", path = "../spark-c
 spark-connect-proto = { package = "apache-spark-connect-proto", path = "../spark-connect-proto", version = "4.3.0" }
 arrow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+futures.workspace = true
 serde = "1"
 tokio.workspace = true
 tonic.workspace = true
+datafusion = { workspace = true, optional = true }
+polars = { workspace = true, optional = true }
+
+[features]
+# DataFrame::to_datafusion, a datafusion::dataframe::DataFrame of the result.
+datafusion = ["dep:datafusion", "spark-connect-core/datafusion"]
+# DataFrame::to_polars, a polars::frame::DataFrame of the result.
+polars = ["dep:polars", "spark-connect-core/polars"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 spark-connect = { package = "apache-spark-connect", path = "../spark-connect", version = "4.3.0" }
-futures.workspace = true
 prost.workspace = true
 tempfile = "3"

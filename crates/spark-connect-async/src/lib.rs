@@ -20,13 +20,17 @@
 //! # }
 //! ```
 
+pub mod actions;
 pub mod column;
 pub mod dataframe;
 pub mod de;
 pub mod error;
+pub mod observation;
 pub mod options;
+pub mod progress;
 pub mod session;
 pub mod sql;
+pub mod stream;
 pub mod tvf;
 pub mod value;
 
@@ -39,5 +43,7 @@ pub mod types {
 pub use column::{col, lit, Column, IntoArgument, IntoLiteral};
 pub use dataframe::DataFrame;
 pub use error::{Error, ErrorKind, Result};
+pub use observation::Observation;
 pub use session::{Session, SessionBuilder};
+pub use stream::RecordBatchStream;
 pub use value::{Decimal, Row, Value};

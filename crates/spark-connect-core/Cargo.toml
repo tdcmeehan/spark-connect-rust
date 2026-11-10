@@ -34,6 +34,9 @@ sha2 = "0.10"
 base64 = { version = "0.21", optional = true }
 # Local time for the reprs of timestamp literals, as Python's `datetime.fromtimestamp`.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Optional conversions of collected batches (the `interop` module).
+datafusion = { workspace = true, optional = true }
+polars = { workspace = true, optional = true }
 
 [target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
 # sha2 0.10 requires this feature for ARM hardware acceleration; sha2-asm excludes Windows.
@@ -42,6 +45,10 @@ sha2 = { version = "0.10", features = ["asm"] }
 [features]
 # Build Rust UDFs that run on Spark via WebAssembly (the `wasm_udf` module).
 wasm-udf = ["dep:base64"]
+# Convert collected batches into a datafusion::dataframe::DataFrame.
+datafusion = ["dep:datafusion"]
+# Convert collected batches into a polars::frame::DataFrame.
+polars = ["dep:polars"]
 
 [dev-dependencies]
 tempfile = "3"

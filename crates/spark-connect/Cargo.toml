@@ -40,6 +40,6 @@ tonic.workspace = true
 # preconditions (a Python packer on the client, `wasmtime` on the executors).
 wasm-udf = ["spark-connect-core/wasm-udf"]
 # Convert a collected DataFrame into a datafusion::dataframe::DataFrame.
-datafusion = ["dep:datafusion"]
+datafusion = ["dep:datafusion", "spark-connect-core/datafusion"]
 # Convert a collected DataFrame into a polars::frame::DataFrame.
-polars = ["dep:polars"]
+polars = ["dep:polars", "spark-connect-core/polars"]

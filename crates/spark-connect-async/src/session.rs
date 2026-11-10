@@ -15,11 +15,13 @@ use spark_connect_core::error::SparkError;
 use spark_connect_core::execution::check_tag;
 use spark_connect_core::plan::{LogicalPlan, PlanIds};
 use spark_connect_core::readwriter::ReadType;
+use spark_connect_proto::ExecutePlanRequest;
 use tokio::sync::OnceCell;
 
 use crate::dataframe::DataFrame;
 use crate::error::{Error, Result};
 use crate::options::RangeSpec;
+use crate::progress::{Callback, ProgressHandler, ProgressUpdate};
 use crate::sql::Sql;
 use crate::tvf::TableFunctions;
 
@@ -37,6 +39,8 @@ pub struct Session {
 struct Shared {
     client: Arc<SparkConnectClient>,
     plan_ids: Arc<PlanIds>,
+    progress_handlers: Arc<[ProgressHandler]>,
+    hook: Option<ExecutePlanHook>,
     version: OnceCell<String>,
     stopped: AtomicBool,
 }
@@ -47,11 +51,17 @@ impl Session {
         SessionBuilder::default()
     }
 
-    fn new(client: SparkConnectClient) -> Self {
+    fn new(
+        client: SparkConnectClient,
+        progress_handlers: Vec<ProgressHandler>,
+        hook: Option<ExecutePlanHook>,
+    ) -> Self {
         Session {
             shared: Arc::new(Shared {
                 client: Arc::new(client),
                 plan_ids: Arc::new(PlanIds::new()),
+                progress_handlers: progress_handlers.into(),
+                hook,
                 version: OnceCell::new(),
                 stopped: AtomicBool::new(false),
             }),
@@ -65,6 +75,23 @@ impl Session {
 
     pub(crate) fn plan_ids(&self) -> &Arc<PlanIds> {
         &self.shared.plan_ids
+    }
+
+    pub(crate) fn progress_handlers(&self) -> Arc<[ProgressHandler]> {
+        Arc::clone(&self.shared.progress_handlers)
+    }
+
+    /// `request` as the hook of the session's executions returns it, with the operation id of
+    /// `request`.
+    pub(crate) fn hooked(&self, request: ExecutePlanRequest) -> Result<ExecutePlanRequest> {
+        let Some(hook) = &self.shared.hook else {
+            return Ok(request);
+        };
+        let operation_id = request.operation_id.clone();
+        let _callback = Callback::enter();
+        let mut request = hook(request)?;
+        request.operation_id = operation_id;
+        Ok(request)
     }
 
     /// The id of the session on the server.
@@ -260,7 +287,13 @@ pub struct SessionBuilder {
     remote: Option<String>,
     params: Vec<(&'static str, String)>,
     configs: Vec<(String, String)>,
+    progress_handlers: Vec<ProgressHandler>,
+    hook: Option<ExecutePlanHook>,
 }
+
+/// A hook of the executions of a session, which [`SessionBuilder::execute_plan_hook`] sets.
+pub type ExecutePlanHook =
+    Arc<dyn Fn(ExecutePlanRequest) -> Result<ExecutePlanRequest> + Send + Sync>;
 
 impl SessionBuilder {
     /// The connection string of the server.
@@ -300,12 +333,40 @@ impl SessionBuilder {
         self
     }
 
+    /// A handler of the progress of the session's executions. It is called with each update
+    /// of the server's progress of an execution that has tasks, and once more, done, when the
+    /// execution ends; it runs on the thread that polls the execution's future or stream.
+    ///
+    /// A handler that runs an execution of its own, which calls the handlers again, may nest
+    /// that way twice on a thread; a deeper execution fails with
+    /// [`ErrorKind::Internal`](crate::ErrorKind::Internal).
+    pub fn on_progress(
+        mut self,
+        handler: impl Fn(&ProgressUpdate) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress_handlers.push(Arc::new(handler));
+        self
+    }
+
+    /// A hook that gets each `ExecutePlanRequest` of the session before it is sent, and returns
+    /// the request to send instead; the request keeps its operation id. An error of the hook is
+    /// the error of the execution. The hook runs on the thread that polls the execution, and
+    /// nests as a progress handler does. A later call replaces the hook.
+    pub fn execute_plan_hook(
+        mut self,
+        hook: impl Fn(ExecutePlanRequest) -> Result<ExecutePlanRequest> + Send + Sync + 'static,
+    ) -> Self {
+        self.hook = Some(Arc::new(hook));
+        self
+    }
+
     fn param(mut self, key: &'static str, value: String) -> Self {
         self.params.push((key, value));
         self
     }
 
-    /// Connects to the server, and sets the configurations of [`SessionBuilder::config`].
+    /// Connects to the server, and sets the configurations of [`SessionBuilder::config`]. If the
+    /// server rejects one, the session is released on the server, and the error returned.
     pub async fn connect(self) -> Result<Session> {
         let url = self.remote.ok_or_else(|| {
             Error::from(SparkError::value_msg(
@@ -316,9 +377,13 @@ impl SessionBuilder {
         for (key, value) in &self.params {
             channel.set(key, value);
         }
-        let session = Session::new(SparkConnectClient::connect(&channel).await?);
+        let client = SparkConnectClient::connect(&channel).await?;
+        let session = Session::new(client, self.progress_handlers, self.hook);
         if !self.configs.is_empty() {
-            session.client().set_configs(&self.configs, false).await?;
+            if let Err(error) = session.client().set_configs(&self.configs, false).await {
+                let _ = session.stop().await;
+                return Err(error.into());
+            }
         }
         Ok(session)
     }
@@ -465,6 +530,11 @@ mod tests {
         assert_send_sync::<TableFunctions>();
         assert_send_sync::<crate::tvf::TableArg>();
         assert_send_sync::<crate::tvf::PartitionedTableArg>();
+        assert_send_sync::<crate::actions::Show>();
+        assert_send_sync::<crate::Observation>();
+        assert_send_sync::<crate::stream::ExecutionInfo>();
+        fn assert_send<T: Send>() {}
+        assert_send::<crate::RecordBatchStream>();
         // Type-checked, never called: it would need a server.
         let _ = |session: Session| {
             let conf = session.conf();
@@ -476,6 +546,17 @@ mod tests {
             assert_send_static(session.version());
             assert_send_static(session.stop());
             assert_send_static(session.sql("SELECT 1").arg(1).into_future());
+            let df = session.range(3);
+            assert_send_static(df.stream());
+            assert_send_static(df.stream_as::<i64>());
+            assert_send_static(df.collect());
+            assert_send_static(df.collect_as::<(i64,)>());
+            assert_send_static(df.count());
+            assert_send_static(df.show().into_future());
+            assert_send_static(df.schema());
+            assert_send_static(df.explain(Default::default()));
+            assert_send_static(df.checkpoint(Default::default()));
+            assert_send_static(df.create_temp_view("v", Default::default()));
             assert_send_static(conf.set("k", "v"));
             assert_send_static(conf.get("k"));
             assert_send_static(conf.get_all());

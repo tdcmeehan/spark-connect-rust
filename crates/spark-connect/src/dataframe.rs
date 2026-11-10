@@ -27,6 +27,11 @@ use spark_connect_core::decode::{
     decode_arrow_batch_of, decode_arrow_record_batches, i128_to_decimal_string, ArrowValueLayout,
 };
 use spark_connect_core::execution;
+#[cfg(feature = "datafusion")]
+use spark_connect_core::interop::record_batches_to_datafusion;
+use spark_connect_core::interop::record_batches_to_ipc;
+#[cfg(feature = "polars")]
+use spark_connect_core::interop::record_batches_to_polars;
 
 /// The server's checkpointed relation, shared by the plans of a checkpoint and of every DataFrame
 /// derived from it (through their [`RelationOwner`]). The last one to drop removes the relation
@@ -2201,66 +2206,6 @@ fn capture_execution(
 /// client chooses it, so that every execution of the sample returns the same rows.
 fn random_seed() -> i64 {
     (uuid::Uuid::new_v4().as_u128() >> 65) as i64
-}
-
-/// Serialize record batches to Arrow IPC (file format) bytes. Shared by
-/// [`DataFrame::to_arrow`] and [`DataFrame::to_polars`]; an empty input yields a
-/// valid empty-schema IPC file.
-fn record_batches_to_ipc(batches: &[arrow::record_batch::RecordBatch]) -> Result<Vec<u8>> {
-    use arrow::ipc::writer::FileWriter;
-    let schema = match batches.first() {
-        Some(b) => b.schema(),
-        None => std::sync::Arc::new(arrow::datatypes::Schema::empty()),
-    };
-    let mut buf: Vec<u8> = Vec::new();
-    {
-        let mut writer = FileWriter::try_new(&mut buf, schema.as_ref())
-            .map_err(|e| SparkError::connect_msg(format!("Arrow IPC writer init failed: {e}")))?;
-        for batch in batches {
-            writer
-                .write(batch)
-                .map_err(|e| SparkError::connect_msg(format!("Arrow IPC write failed: {e}")))?;
-        }
-        writer
-            .finish()
-            .map_err(|e| SparkError::connect_msg(format!("Arrow IPC finish failed: {e}")))?;
-    }
-    Ok(buf)
-}
-
-/// Build a DataFusion DataFrame from record batches (the conversion behind
-/// [`DataFrame::to_datafusion`], factored out so it is unit-testable without a
-/// live server).
-#[cfg(feature = "datafusion")]
-fn record_batches_to_datafusion(
-    ctx: &datafusion::prelude::SessionContext,
-    batches: Vec<arrow::record_batch::RecordBatch>,
-) -> Result<datafusion::dataframe::DataFrame> {
-    if batches.is_empty() {
-        return Err(SparkError::connect_msg(
-            "Cannot create DataFusion DataFrame from empty result",
-        ));
-    }
-    ctx.read_batches(batches)
-        .map_err(|e| SparkError::connect_msg(format!("Failed to create DataFusion DataFrame: {e}")))
-}
-
-/// Build a Polars DataFrame from record batches by bridging through Arrow IPC
-/// bytes (so polars' vendored arrow need not match this crate's arrow-rs). The
-/// conversion behind [`DataFrame::to_polars`], factored out for unit testing.
-#[cfg(feature = "polars")]
-fn record_batches_to_polars(
-    batches: &[arrow::record_batch::RecordBatch],
-) -> Result<polars::frame::DataFrame> {
-    use polars::prelude::{IpcReader, SerReader};
-    use std::io::Cursor;
-    if batches.is_empty() {
-        return Ok(polars::frame::DataFrame::empty());
-    }
-    let buf = record_batches_to_ipc(batches)?;
-    IpcReader::new(Cursor::new(buf))
-        .finish()
-        .map_err(|e| SparkError::connect_msg(format!("Failed to create Polars DataFrame: {e}")))
 }
 
 impl crate::expression::AsSubquery for DataFrame {

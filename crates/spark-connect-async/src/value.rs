@@ -283,10 +283,123 @@ impl Row {
     }
 }
 
+/// The row of the metrics that the server observed for an observation.
+pub(crate) fn row_of_metrics<'a>(
+    keys: impl IntoIterator<Item = &'a String>,
+    values: impl IntoIterator<Item = &'a spark_connect_proto::expression::Literal>,
+) -> Row {
+    let values = values.into_iter().map(value_of_literal).collect();
+    Row::new(keys.into_iter().cloned().collect(), values)
+}
+
+/// The value of a literal of the server. A literal of a type that results do not have here,
+/// such as a calendar interval, is `Value::Null`.
+fn value_of_literal(literal: &spark_connect_proto::expression::Literal) -> Value {
+    use spark_connect_proto::data_type::Kind;
+    use spark_connect_proto::expression::literal::LiteralType as L;
+    let data_type = literal
+        .data_type
+        .as_ref()
+        .and_then(|data_type| data_type.kind.as_ref());
+    let Some(literal) = &literal.literal_type else {
+        return Value::Null;
+    };
+    match literal {
+        L::Null(_) => Value::Null,
+        L::Binary(bytes) => Value::Binary(bytes.to_vec()),
+        L::Boolean(value) => Value::Boolean(*value),
+        L::Byte(value) => i8::try_from(*value).map_or(Value::Int(*value), Value::Byte),
+        L::Short(value) => i16::try_from(*value).map_or(Value::Int(*value), Value::Short),
+        L::Integer(value) => Value::Int(*value),
+        L::Long(value) => Value::Long(*value),
+        L::Float(value) => Value::Float(*value),
+        L::Double(value) => Value::Double(*value),
+        L::Decimal(decimal) => decimal
+            .value
+            .parse()
+            .map_or_else(|_| Value::String(decimal.value.clone()), Value::Decimal),
+        L::String(value) => Value::String(value.clone()),
+        L::Date(days) => NaiveDate::from_epoch_days(*days).map_or(Value::Null, Value::Date),
+        L::Timestamp(micros) => {
+            DateTime::from_timestamp_micros(*micros).map_or(Value::Null, Value::Timestamp)
+        }
+        L::TimestampNtz(micros) => DateTime::from_timestamp_micros(*micros)
+            .map_or(Value::Null, |value| Value::TimestampNtz(value.naive_utc())),
+        L::Time(time) => {
+            let seconds = u32::try_from(time.nano / 1_000_000_000).unwrap_or(u32::MAX);
+            let nanos = u32::try_from(time.nano % 1_000_000_000).unwrap_or(0);
+            NaiveTime::from_num_seconds_from_midnight_opt(seconds, nanos)
+                .map_or(Value::Null, Value::Time)
+        }
+        L::DayTimeInterval(micros) => Value::DayTimeInterval(TimeDelta::microseconds(*micros)),
+        L::YearMonthInterval(months) => Value::YearMonthInterval(*months),
+        L::Array(array) => Value::Array(array.elements.iter().map(value_of_literal).collect()),
+        L::Map(map) => Value::Map(
+            map.keys
+                .iter()
+                .zip(&map.values)
+                .map(|(key, value)| (value_of_literal(key), value_of_literal(value)))
+                .collect(),
+        ),
+        L::Struct(fields) => {
+            let names: Arc<[String]> = match data_type {
+                Some(Kind::Struct(struct_type)) => struct_type
+                    .fields
+                    .iter()
+                    .map(|field| field.name.clone())
+                    .collect(),
+                _ => (1..=fields.elements.len())
+                    .map(|i| format!("col{i}"))
+                    .collect(),
+            };
+            let values = fields.elements.iter().map(value_of_literal).collect();
+            Value::Struct(Row::new(names, values))
+        }
+        _ => Value::Null,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ErrorKind;
+
+    #[test]
+    fn observed_metrics_are_a_row_of_their_values() {
+        use spark_connect_proto::expression::literal::LiteralType as L;
+        let literal = |literal| spark_connect_proto::expression::Literal {
+            literal_type: Some(literal),
+            ..Default::default()
+        };
+        let observed = spark_connect_proto::execute_plan_response::ObservedMetrics {
+            keys: ["rows", "total", "first", "day"].map(String::from).to_vec(),
+            values: vec![
+                literal(L::Long(3)),
+                literal(L::Decimal(
+                    spark_connect_proto::expression::literal::Decimal {
+                        value: "1.50".to_string(),
+                        precision: Some(10),
+                        scale: Some(2),
+                    },
+                )),
+                literal(L::String("a".to_string())),
+                literal(L::Date(1)),
+            ],
+            ..Default::default()
+        };
+        let row = row_of_metrics(&observed.keys, &observed.values);
+        assert_eq!(row.names(), ["rows", "total", "first", "day"]);
+        assert_eq!(row.get(0), Some(&Value::Long(3)));
+        assert_eq!(row.get(1), Some(&Value::Decimal("1.50".parse().unwrap())));
+        assert_eq!(
+            row.get_by_name("first"),
+            Some(&Value::String("a".to_string()))
+        );
+        assert_eq!(
+            row.get(3),
+            Some(&Value::Date(NaiveDate::from_ymd_opt(1970, 1, 2).unwrap()))
+        );
+    }
 
     #[test]
     fn decimal_text_parses_into_its_parts_and_displays_exactly() {

@@ -8,8 +8,10 @@ use spark_connect_core::expression::{
 use spark_connect_core::plan::{relation_with_ids, LogicalPlan, SetOpType};
 use spark_connect_core::types::DataType;
 use spark_connect_proto as proto;
+use tokio::sync::OnceCell;
 
 use crate::column::{expressions, subquery_column, Column};
+use crate::observation::Observation;
 use crate::options::{
     AsOfJoin, JoinType, NearestByJoin, Partitioning, PartitioningKind, RandomSplit, Sample,
     UnionByName,
@@ -26,6 +28,7 @@ use crate::tvf::TableArg;
 pub struct DataFrame {
     session: Session,
     plan: Arc<LogicalPlan>,
+    schema: Arc<OnceCell<DataType>>,
 }
 
 /// A column given by its name, or as an expression, of [`DataFrame::drop`].
@@ -68,6 +71,7 @@ impl DataFrame {
         DataFrame {
             session,
             plan: plan.into(),
+            schema: Arc::default(),
         }
     }
 
@@ -79,7 +83,11 @@ impl DataFrame {
         Arc::clone(&self.plan)
     }
 
-    fn with_plan(&self, plan: LogicalPlan) -> DataFrame {
+    pub(crate) fn schema_cache(&self) -> Arc<OnceCell<DataType>> {
+        Arc::clone(&self.schema)
+    }
+
+    pub(crate) fn with_plan(&self, plan: LogicalPlan) -> DataFrame {
         DataFrame::new(self.session.clone(), plan)
     }
 
@@ -673,17 +681,24 @@ impl DataFrame {
     }
 
     /// This DataFrame, which collects the metrics `metrics`, aggregate expressions, of its
-    /// rows as `name` when an action runs it.
+    /// rows when an action runs it, into `observation`: an [`Observation`], or a name, whose
+    /// metrics a [`RecordBatchStream`](crate::stream::RecordBatchStream) reports in its
+    /// execution info. An observation has the metrics of the latest action that ran it.
     pub fn observe(
         &self,
-        name: impl Into<String>,
+        observation: impl Into<Observation>,
         metrics: impl IntoIterator<Item = impl Into<Column>>,
     ) -> DataFrame {
+        let observation = observation.into().into_core();
+        let name = observation
+            .name_to_observe()
+            .unwrap_or_else(|_| observation.name().unwrap_or_default());
+        observation.start();
         self.with_plan(LogicalPlan::Observe {
             input: self.input(),
-            name: name.into(),
+            name,
             exprs: expressions(metrics),
-            observation: None,
+            observation: Some(observation),
         })
     }
 

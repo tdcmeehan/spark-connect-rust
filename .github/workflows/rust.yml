@@ -84,6 +84,7 @@ jobs:
         run: |
           cargo build -p apache-spark-connect --features datafusion,polars --release
           cargo test -p apache-spark-connect --features datafusion,polars --release
+          cargo test -p apache-spark-connect-async --features datafusion,polars --release
 
       - name: No-stub audit
         # Enforce the "100% coverage, no followups" rule
