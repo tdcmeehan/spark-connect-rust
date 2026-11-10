@@ -183,14 +183,32 @@ fn last_operation_id(recorder: &server::Recorder) -> Option<String> {
 }
 
 #[test]
-fn a_prefetching_iterator_returns_the_failure_of_its_execution_and_records_it() {
-    let recorder = Arc::new(server::Recorder::default());
-    let spark = session_recording(Arc::clone(&recorder));
+fn a_failed_execution_is_recorded_by_the_iterators_and_not_by_collect() {
+    let spark = session();
     let df = spark.sql(server::A_BATCH_THEN_A_FAILURE).unwrap();
-    let rows: Vec<_> = df.to_local_iterator(true).unwrap().collect();
-    assert!(matches!(rows.as_slice(), [Ok(_), Err(_)]), "{rows:?}");
-    let info = spark.last_execution_info().unwrap();
-    assert_eq!(info.operation_id, last_operation_id(&recorder));
+    let recorded = spark.last_execution_info().map(|info| info.operation_id);
+    assert!(df.collect().is_err());
+    assert!(df.execution_info().is_err());
+    assert_eq!(
+        spark.last_execution_info().map(|info| info.operation_id),
+        recorded
+    );
+    for prefetch in [false, true] {
+        let recorder = Arc::new(server::Recorder::default());
+        let spark = session_recording(Arc::clone(&recorder));
+        let df = spark.sql(server::A_BATCH_THEN_A_FAILURE).unwrap();
+        let rows: Vec<_> = df.to_local_iterator(prefetch).unwrap().collect();
+        assert!(
+            matches!(rows.as_slice(), [Ok(_), Err(_)]),
+            "prefetch {prefetch}: {rows:?}"
+        );
+        let info = spark.last_execution_info().unwrap();
+        assert_eq!(
+            info.operation_id,
+            last_operation_id(&recorder),
+            "prefetch {prefetch}"
+        );
+    }
 }
 
 #[test]
