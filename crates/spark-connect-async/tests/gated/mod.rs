@@ -307,7 +307,10 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                 if wait == Wait::BeforeAccepting {
                     state.pass_the_gate().await;
                 }
-                let first = respond(0, ResponseType::ArrowBatch(arrow_batch(0)));
+                let first = proto::ExecutePlanResponse {
+                    schema: Some(schema()),
+                    ..respond(0, ResponseType::ArrowBatch(arrow_batch(0)))
+                };
                 match wait {
                     Wait::BeforeAccepting | Wait::Never => encoded(vec![
                         first,
@@ -342,6 +345,13 @@ fn encoded(responses: Vec<proto::ExecutePlanResponse>) -> ByteStream {
             .into_iter()
             .map(|response| Ok(response.encode_to_vec())),
     ))
+}
+
+/// The schema of the result, as the server sends it with the first batch.
+pub fn schema() -> proto::DataType {
+    spark_connect_core::types::DataType::from_ddl("id BIGINT NOT NULL")
+        .unwrap()
+        .to_proto()
 }
 
 /// An Arrow batch of one row of `id`.

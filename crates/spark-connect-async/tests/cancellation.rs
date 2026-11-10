@@ -27,6 +27,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use gated::{Received, Server, Wait, REJECTED_CONFIG};
 use spark_connect_async::Session;
+use spark_connect_core::types::DataType;
 
 async fn connect(server: &Server) -> Session {
     Session::builder()
@@ -170,6 +171,25 @@ fn dropping_an_action_at_each_point_stops_the_operation_once_in_either_runtime()
             }
         });
     }
+}
+
+#[tokio::test]
+async fn a_stream_keeps_its_schema_and_execution_info_while_a_dropped_read_is_pending() {
+    let server = Server::start();
+    server.wait_at(Wait::AfterTheFirstBatch);
+    let session = connect(&server).await;
+    let mut batches = session.range(3).stream().await.unwrap();
+    assert_eq!(batches.next().await.unwrap().unwrap().num_rows(), 1);
+    let pending = tokio::time::timeout(Duration::from_millis(100), batches.next()).await;
+    assert!(pending.is_err(), "the server sent past its gate");
+    let schema = DataType::from_proto(&gated::schema()).unwrap();
+    assert_eq!(batches.schema(), Some(&schema));
+    assert_eq!(
+        batches.execution_info().operation_id(),
+        Some(batches.operation_id())
+    );
+    server.open_gate();
+    assert_eq!(batches.next().await.unwrap().unwrap().num_rows(), 1);
 }
 
 #[tokio::test]

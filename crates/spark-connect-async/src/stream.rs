@@ -153,8 +153,7 @@ type Step = (
 enum State {
     Idle(Box<Execution<Observer>>),
     Reading(BoxFuture<'static, Step>),
-    Ended(Box<Execution<Observer>>),
-    Failed,
+    Done,
 }
 
 /// The record batches of the result of a query, as the server sends them.
@@ -166,6 +165,8 @@ pub struct RecordBatchStream {
     state: State,
     batches: VecDeque<RecordBatch>,
     operation_id: String,
+    schema: Option<DataType>,
+    info: ExecutionInfo,
 }
 
 impl RecordBatchStream {
@@ -174,6 +175,8 @@ impl RecordBatchStream {
             state: State::Idle(Box::new(execution)),
             batches: VecDeque::new(),
             operation_id,
+            schema: None,
+            info: ExecutionInfo::default(),
         }
     }
 
@@ -182,24 +185,23 @@ impl RecordBatchStream {
         &self.operation_id
     }
 
-    fn execution(&self) -> Option<&Execution<Observer>> {
-        match &self.state {
-            State::Idle(execution) | State::Ended(execution) => Some(execution),
-            State::Reading(_) | State::Failed => None,
-        }
-    }
-
-    /// The schema of the result, once the server has sent it, with the types of the columns as
-    /// Spark has them. It is `None` until then, and while a batch is being read.
+    /// The schema of the result, with the types of the columns as Spark has them, as of the
+    /// last read of the stream that finished. It is `None` until a read has received it.
     pub fn schema(&self) -> Option<&DataType> {
-        self.execution().and_then(Execution::schema)
+        self.schema.as_ref()
     }
 
-    /// What the execution has reported so far, such as its metrics; complete at the end of the
-    /// stream. It is `None` while a batch is being read, and after an error.
-    pub fn execution_info(&self) -> Option<ExecutionInfo> {
-        self.execution()
-            .map(|execution| ExecutionInfo(execution.info().clone()))
+    /// What the execution reported up to the last read of the stream that finished, such as
+    /// its metrics, which the server sends at the end. A read still in progress adds nothing.
+    pub fn execution_info(&self) -> &ExecutionInfo {
+        &self.info
+    }
+
+    fn finished_read(&mut self, execution: &Execution<Observer>) {
+        if self.schema.as_ref() != execution.schema() {
+            self.schema = execution.schema().cloned();
+        }
+        self.info = ExecutionInfo(execution.info().clone());
     }
 
     pub(crate) fn rows_as<T: DeserializeOwned + Send + 'static>(
@@ -223,7 +225,7 @@ impl Stream for RecordBatchStream {
             if let Some(batch) = this.batches.pop_front() {
                 return Poll::Ready(Some(Ok(batch)));
             }
-            match std::mem::replace(&mut this.state, State::Failed) {
+            match std::mem::replace(&mut this.state, State::Done) {
                 State::Idle(mut execution) => {
                     this.state = State::Reading(
                         async move {
@@ -238,29 +240,24 @@ impl Stream for RecordBatchStream {
                         this.state = State::Reading(reading);
                         return Poll::Pending;
                     }
-                    Poll::Ready((execution, step)) => match step {
-                        Ok(Some(batches)) => {
-                            let schema = execution.schema();
-                            for batch in batches {
-                                match crate::de::with_names_of(batch, schema) {
-                                    Ok(batch) => this.batches.push_back(batch),
-                                    Err(error) => return Poll::Ready(Some(Err(error))),
+                    Poll::Ready((execution, step)) => {
+                        this.finished_read(&execution);
+                        match step {
+                            Ok(Some(batches)) => {
+                                for batch in batches {
+                                    match crate::de::with_names_of(batch, this.schema.as_ref()) {
+                                        Ok(batch) => this.batches.push_back(batch),
+                                        Err(error) => return Poll::Ready(Some(Err(error))),
+                                    }
                                 }
+                                this.state = State::Idle(execution);
                             }
-                            this.state = State::Idle(execution);
+                            Ok(None) => return Poll::Ready(None),
+                            Err(error) => return Poll::Ready(Some(Err(error.into()))),
                         }
-                        Ok(None) => {
-                            this.state = State::Ended(execution);
-                            return Poll::Ready(None);
-                        }
-                        Err(error) => return Poll::Ready(Some(Err(error.into()))),
-                    },
+                    }
                 },
-                ended @ State::Ended(_) => {
-                    this.state = ended;
-                    return Poll::Ready(None);
-                }
-                State::Failed => return Poll::Ready(None),
+                State::Done => return Poll::Ready(None),
             }
         }
     }
@@ -268,7 +265,7 @@ impl Stream for RecordBatchStream {
 
 /// What an execution reported: its operation id, the metrics of its plan, and the metrics
 /// that its observations collected.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutionInfo(CoreInfo);
 
 impl ExecutionInfo {
