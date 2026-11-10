@@ -20,8 +20,13 @@
 //! # }
 //! ```
 
+pub mod column;
+pub mod de;
 pub mod error;
 pub mod session;
+pub mod value;
 
+pub use column::{lit, Column, IntoLiteral};
 pub use error::{Error, ErrorKind, Result};
 pub use session::{Session, SessionBuilder};
+pub use value::{Decimal, Row, Value};
