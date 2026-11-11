@@ -106,7 +106,7 @@ pub fn cases() -> Vec<Case> {
 #[cfg(all(feature = "wasm-udf", unix))]
 mod wasm {
     use spark_connect::column::col;
-    use spark_connect::wasm_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
+    use spark_connect::rust_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
 
     use crate::{Case, Ctx};
 

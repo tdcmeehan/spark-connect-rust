@@ -31,7 +31,7 @@ native executable containing the crate and its dependencies.
 
 A block that must be skipped (pseudo-code, a deliberate compile-error example, or
 a snippet that needs a feature/macro the snippet harness doesn't build - e.g. the
-`wasm-udf` `#[spark_wasm_udf]` examples) should be fenced as ```{.rust .no-run}```.
+`rust-udf` `#[spark_udf]` examples) should be fenced as ```{.rust .no-run}```.
 That brace form still renders as a Rust code block in mkdocs/superfences (unlike
 ```rust,ignore```, whose comma makes superfences drop the fence entirely and print
 the backticks literally), and it is not matched by the checker below, so it is not

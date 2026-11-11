@@ -16,7 +16,7 @@
 // under the License.
 
 // Using UDFs from a reusable crate. The `wasm-udfs` crate defines plain Rust
-// functions with `#[spark_wasm_udf]`; its build.rs compiles + embeds the wasm
+// functions with `#[spark_udf]`; its build.rs compiles + embeds the wasm
 // module, so the generated `udf::*()` constructors are self-contained and this
 // client just calls them.
 //

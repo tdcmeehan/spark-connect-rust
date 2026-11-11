@@ -1,7 +1,7 @@
 //! `build.rs` helper for Rust UDFs compiled to WebAssembly.
 //!
 //! Call [`embed_wasm_udf`] from a crate's `build.rs` to compile a Rust source
-//! file containing `#[spark_wasm_udf]` functions to a `wasm32` module and expose
+//! file containing `#[spark_udf]` functions to a `wasm32` module and expose
 //! it to the crate as the `WASM_UDFS_MODULE` env var (for `include_bytes!`).
 //!
 //! # Requirements (build machine)
@@ -115,7 +115,7 @@ pub fn embed_wasm_udf(src_file: impl AsRef<Path>) -> PathBuf {
 /// The runtime prepended to the wasm build: the exported allocator, the
 /// length-prefixed binary codec (`Abi`) the macro's per-row export wrappers call,
 /// and the Arrow-buffer codec (`batch`) of its batch exports. Must stay
-/// byte-compatible with `spark_connect::wasm_udf::AbiType` and the Python
+/// byte-compatible with `spark_connect::rust_udf::AbiType` and the Python
 /// runners in the embedded packer (`spark-connect-core/src/wasm_packer.py`).
 const WASM_RUNTIME: &str = r#"
 #[allow(dead_code)]

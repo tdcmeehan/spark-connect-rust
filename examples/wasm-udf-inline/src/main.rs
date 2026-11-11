@@ -19,7 +19,7 @@
 //!
 //! `build.rs` compiles this same file to a `wasm32` module (host-only code is
 //! `#[cfg(not(target_arch = "wasm32"))]`, so only the exported UDFs survive) and
-//! embeds it; `#[spark_wasm_udf]` generates the `udf::*()` constructors.
+//! embeds it; `#[spark_udf]` generates the `udf::*()` constructors.
 //!
 //! Run (needs the wasm32 target + a Spark Connect server, `wasmtime` on the
 //! executors):
@@ -28,10 +28,10 @@
 //!     export SPARK_CONNECT_WASM_PACKER_PATH=$PWD/python
 //!     cargo run -p wasm-udf-inline
 
-use spark_connect_macros::spark_wasm_udf;
+use spark_connect_macros::spark_udf;
 
 /// The UDFs — plain Rust functions. That's all the user writes.
-#[spark_wasm_udf]
+#[spark_udf]
 mod udfs {
     pub fn add_one(x: i64) -> i64 {
         x + 1

@@ -30,7 +30,7 @@ regex = "1"
 prost-types.workspace = true
 crc32fast = "1"
 sha2 = "0.10"
-# Optional: only pulled in by the `wasm-udf` feature.
+# Optional: only pulled in by the `rust-udf` feature.
 base64 = { version = "0.21", optional = true }
 # Local time for the reprs of timestamp literals, as Python's `datetime.fromtimestamp`.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -43,8 +43,8 @@ polars = { workspace = true, optional = true }
 sha2 = { version = "0.10", features = ["asm"] }
 
 [features]
-# Build Rust UDFs that run on Spark via WebAssembly (the `wasm_udf` module).
-wasm-udf = ["dep:base64"]
+# Build Rust UDFs that run on Spark via WebAssembly (the `rust_udf` module).
+rust-udf = ["dep:base64"]
 # Convert collected batches into a datafusion::dataframe::DataFrame.
 datafusion = ["dep:datafusion"]
 # Convert collected batches into a polars::frame::DataFrame.

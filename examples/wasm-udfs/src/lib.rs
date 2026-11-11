@@ -17,14 +17,14 @@
 
 //! Example UDFs written as plain Rust functions.
 //!
-//! `#[spark_wasm_udf]` exports each function to WebAssembly and generates a
+//! `#[spark_udf]` exports each function to WebAssembly and generates a
 //! `udf::<name>()` constructor (with the Spark signature inferred). The
 //! functions show the range of supported types: scalars, `bool`, `String`,
 //! `Vec<T>` (array), and `Option<T>` (nullable).
 
-use spark_connect_macros::spark_wasm_udf;
+use spark_connect_macros::spark_udf;
 
-#[spark_wasm_udf]
+#[spark_udf]
 mod udfs {
     /// `i64 -> i64`
     pub fn add_one(x: i64) -> i64 {

@@ -16,7 +16,7 @@
 // under the License.
 
 fn main() {
-    // Compile this crate's `#[spark_wasm_udf]` functions to wasm32 and embed the
+    // Compile this crate's `#[spark_udf]` functions to wasm32 and embed the
     // module, so the generated `<name>_udf()` constructors are self-contained.
     spark_connect_build::embed_wasm_udf("src/lib.rs");
 }

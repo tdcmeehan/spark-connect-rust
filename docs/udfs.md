@@ -7,12 +7,13 @@ them to WebAssembly, embeds the module, and ships it inside a standard Spark
 toolchain server-side.
 
 !!! note "Opt-in"
-    This is behind the `wasm-udf` feature. Users who don't run Rust UDFs pull
+    This is behind the `rust-udf` feature. Users who don't run Rust UDFs pull
     none of the extra dependencies and need none of the preconditions below.
+    The old names `wasm-udf`, `#[spark_wasm_udf]` and `spark_connect::wasm_udf` still work as deprecated aliases.
 
 ## Write plain Rust functions
 
-Annotate a module of functions with `#[spark_wasm_udf]`. For each function the
+Annotate a module of functions with `#[spark_udf]`. For each function the
 macro infers the Spark signature from the Rust types, exports it to WASM, and
 generates a constructor under `udf::` - a direct call `udf::<name>(col0, col1, ...)`
 (one column per argument, **arity checked at compile time**) that returns the
@@ -20,9 +21,9 @@ result `Column`. A one-line `build.rs` compiles the module.
 
 ```{.rust .no-run}
 // src/main.rs
-use spark_connect_macros::spark_wasm_udf;
+use spark_connect_macros::spark_udf;
 
-#[spark_wasm_udf]
+#[spark_udf]
 mod udfs {
     pub fn add_one(x: i64) -> i64 { x + 1 }                          // (Long) -> Long
     pub fn shout(s: String) -> String { format!("{}!", s.to_uppercase()) }
@@ -66,7 +67,7 @@ spark-connect-macros = { package = "apache-spark-connect-macros", version = "4.3
 
 # host-only: the client is not pulled into the wasm build
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-spark-connect = { package = "apache-spark-connect", version = "4.3", features = ["wasm-udf"] }
+spark-connect = { package = "apache-spark-connect", version = "4.3", features = ["rust-udf"] }
 
 [build-dependencies]
 spark-connect-build  = { package = "apache-spark-connect-build",  version = "4.3" }
@@ -88,7 +89,7 @@ cargo run
 ## Supported types
 
 Arguments and results cross the WASM boundary in a binary ABI
-(`spark_connect::wasm_udf::AbiType`), inferred from the Rust signature:
+(`spark_connect::rust_udf::AbiType`), inferred from the Rust signature:
 
 | Rust        | Spark SQL type       |
 |-------------|----------------------|
@@ -128,7 +129,7 @@ file - they write `add_one(x: i64) -> i64` and call `udf::add_one(col("id"))`.
 
 ## Preconditions (only when using Rust UDFs)
 
-Nothing here is needed unless the `wasm-udf` feature is enabled:
+Nothing here is needed unless the `rust-udf` feature is enabled:
 
 - **Build machine** - the `wasm32-unknown-unknown` target (`rustup target add
   wasm32-unknown-unknown`), plus `apache-spark-connect-macros` and
@@ -166,7 +167,7 @@ If you'd rather load a prebuilt module and spell out the types yourself, the
 lower-level factory mirrors `pyspark.sql.functions.udf`:
 
 ```{.rust .no-run}
-use spark_connect::wasm_udf::{udf, AbiType};
+use spark_connect::rust_udf::{udf, AbiType};
 
 let wasm = std::fs::read("shout.wasm")?;
 let shout = udf("shout", wasm, "shout", vec![AbiType::Str], AbiType::Str);

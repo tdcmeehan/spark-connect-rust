@@ -27,7 +27,7 @@ all SQL functions are asserted byte-for-byte against captured reference protos.
 Transport and Arrow paths are exercised by the official Apache Spark Connect test
 suite in CI - see the CI notes under `dev/design/`.
 
-The `wasm-udf` example crates need the `wasm32` target and are built by manifest
+The UDF example crates need the `wasm32` target and are built by manifest
 path (they're excluded from the workspace):
 
 ```bash

@@ -121,8 +121,8 @@ jobs:
         # Compile sha2-asm with the target C toolchain before release builds need it.
         run: cargo test --locked -p apache-spark-connect-core --release --lib --target aarch64-unknown-linux-gnu
 
-  wasm-udf:
-    name: WASM UDF feature
+  rust-udf:
+    name: Rust UDF feature
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -157,10 +157,10 @@ jobs:
 
       - name: Feature-gated unit tests
         run: |
-          cargo test -p apache-spark-connect -p apache-spark-connect-core --features wasm-udf
+          cargo test -p apache-spark-connect -p apache-spark-connect-core --features rust-udf
           cargo test -p apache-spark-connect-macros
 
-      - name: Build the macro/build helpers and WASM UDF crates + examples
+      - name: Build the macro/build helpers and the UDF crates + examples
         run: |
           cargo build -p apache-spark-connect-macros -p apache-spark-connect-build
           cargo build --manifest-path examples/wasm-udfs/Cargo.toml
@@ -173,10 +173,19 @@ jobs:
         # `pyspark.sql.types._parse_datatype_json_value`, and produces a reference
         # `DataType` the executors unpickle. No separate `pyspark_wasm_udf` package
         # is needed on any path now, so just run the ignored end-to-end test.
-        run: cargo test -p apache-spark-connect -p apache-spark-connect-core --features wasm-udf -- --ignored packer_produces
+        run: cargo test -p apache-spark-connect -p apache-spark-connect-core --features rust-udf -- --ignored packer_produces
 
       - name: WASM UDF runners (pyarrow batches, no server)
         run: cargo test --manifest-path tests/wasm-udf/Cargo.toml -- --ignored
+
+      - name: Deprecated UDF names
+        # `#[spark_wasm_udf]`, `spark_connect::wasm_udf` and the `wasm-udf` feature still build,
+        # under a narrow `#[allow(deprecated)]`, and the macro and the module warn where used.
+        # The request snapshots of the UDFs are kept under the `wasm-udf` feature.
+        run: |
+          cargo test -p apache-spark-connect --features wasm-udf --test request_snapshots
+          cargo test --manifest-path tests/wasm-udf/Cargo.toml --test deprecated_names
+          python3 scripts/check_deprecated_udf_names.py
 
   msrv:
     name: Minimum supported Rust
@@ -201,4 +210,4 @@ jobs:
         run: |
           cargo +1.88 check --locked -p apache-spark-connect -p apache-spark-connect-core \
             -p apache-spark-connect-proto -p apache-spark-connect-macros -p apache-spark-connect-build \
-            -p apache-spark-connect-blocking -p apache-spark-connect-async --features apache-spark-connect/wasm-udf
+            -p apache-spark-connect-blocking -p apache-spark-connect-async --features apache-spark-connect/rust-udf

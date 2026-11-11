@@ -37,17 +37,13 @@ pub mod profiler;
 pub mod progress;
 pub mod readwriter;
 pub mod resource;
-pub mod session;
-pub mod storage;
-pub mod streaming;
-pub mod table_arg;
-pub mod tvf;
-/// Run Rust UDFs on Spark via WebAssembly. Requires the `wasm-udf` feature.
+/// Run Rust UDFs on Spark via WebAssembly. Requires the `rust-udf` feature, which its
+/// deprecated old name `wasm-udf` turns on.
 ///
-/// See [`spark_connect_core::wasm_udf`] for how they are built and run.
-#[cfg(feature = "wasm-udf")]
-pub mod wasm_udf {
-    pub use spark_connect_core::wasm_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
+/// See [`spark_connect_core::rust_udf`] for how they are built and run.
+#[cfg(feature = "rust-udf")]
+pub mod rust_udf {
+    pub use spark_connect_core::rust_udf::{udf, AbiType, PythonPacker, UserDefinedFunction};
 
     use spark_connect_core::error::Result;
 
@@ -76,6 +72,31 @@ pub mod wasm_udf {
         pub fn udf(&self) -> UdfRegistration<'_> {
             UdfRegistration { session: self }
         }
+    }
+}
+pub mod session;
+pub mod storage;
+pub mod streaming;
+pub mod table_arg;
+pub mod tvf;
+/// The old name of [`rust_udf`], kept as a deprecated alias.
+// Its own aliases, not re-exports: a use of a re-exported item gets no deprecation warning.
+#[cfg(feature = "rust-udf")]
+#[deprecated(note = "renamed `spark_connect::rust_udf`; the `wasm-udf` feature is now `rust-udf`")]
+pub mod wasm_udf {
+    pub type AbiType = crate::rust_udf::AbiType;
+    pub type PythonPacker = crate::rust_udf::PythonPacker;
+    pub type UdfRegistration<'a> = crate::rust_udf::UdfRegistration<'a>;
+    pub type UserDefinedFunction = crate::rust_udf::UserDefinedFunction;
+
+    pub fn udf(
+        name: impl Into<String>,
+        wasm_module: impl Into<Vec<u8>>,
+        entrypoint: impl Into<String>,
+        arg_types: Vec<crate::rust_udf::AbiType>,
+        ret_type: crate::rust_udf::AbiType,
+    ) -> crate::rust_udf::UserDefinedFunction {
+        crate::rust_udf::udf(name, wasm_module, entrypoint, arg_types, ret_type)
     }
 }
 
@@ -118,7 +139,7 @@ pub use session::{SparkSession, SparkSessionBuilder};
 #[doc(hidden)]
 pub use spark_connect_core::arrow_input::ArrowInputOptions;
 pub use spark_connect_core::client::ExecutePlanHook;
-/// Re-exported so fallible APIs (e.g. the `#[spark_wasm_udf]`-generated UDF
+/// Re-exported so fallible APIs (e.g. the `#[spark_udf]`-generated UDF
 /// constructors) can name the client's `Result`/error types.
 pub use spark_connect_core::error::{
     BreakingChangeInfo, QueryContext, QueryContextType, Result, ServerErrorInfo, SparkError,

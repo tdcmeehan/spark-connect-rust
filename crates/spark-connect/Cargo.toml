@@ -35,10 +35,13 @@ base64 = "0.21"
 tonic.workspace = true
 
 [features]
-# Run Rust UDFs on Spark via WebAssembly (the `wasm_udf` module). Off by
+# Run Rust UDFs on Spark via WebAssembly (the `rust_udf` module). Off by
 # default: only UDF users pay for the extra dependency and the runtime
 # preconditions (a Python packer on the client, `wasmtime` on the executors).
-wasm-udf = ["spark-connect-core/wasm-udf"]
+rust-udf = ["spark-connect-core/rust-udf"]
+# Deprecated: the old name of `rust-udf`, which it turns on. Cargo can't mark a
+# feature deprecated; its `wasm_udf` module and `#[spark_wasm_udf]` warn instead.
+wasm-udf = ["rust-udf"]
 # Convert a collected DataFrame into a datafusion::dataframe::DataFrame.
 datafusion = ["dep:datafusion", "spark-connect-core/datafusion"]
 # Convert a collected DataFrame into a polars::frame::DataFrame.

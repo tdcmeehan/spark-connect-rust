@@ -48,7 +48,7 @@ name = "databricks"
 path = "src/databricks.rs"
 required-features = []
 
-# The `#[spark_wasm_udf]` macro via the reusable `wasm-udfs` crate.
+# The `#[spark_udf]` macro via the reusable `wasm-udfs` crate.
 [[bin]]
 name = "wasm_udf_macro"
 path = "src/wasm_udf_macro.rs"
@@ -61,5 +61,5 @@ wasm-udfs = { path = "wasm-udfs", optional = true }
 [features]
 # Enable the macro example (`wasm_udf_macro` bin). Requires the
 # `wasm32-unknown-unknown` target, since `wasm-udfs`' build.rs compiles to WASM.
-# (Pulls in `wasm-udfs`, which enables `spark-connect/wasm-udf`.)
+# (Pulls in `wasm-udfs`, which enables `spark-connect/rust-udf`.)
 wasm-udf-macro = ["dep:wasm-udfs"]

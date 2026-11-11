@@ -211,7 +211,7 @@ executed with `wasmtime`, so nothing Rust-specific is needed server-side.
 
 ```mermaid
 flowchart LR
-    RUSTFN["#[spark_wasm_udf] fn"] -->|"build.rs -> wasm32"| WASM[".wasm module (embedded)"]
+    RUSTFN["#[spark_udf] fn"] -->|"build.rs -> wasm32"| WASM[".wasm module (embedded)"]
     WASM -->|"cloudpickled into a PythonUDF"| SRV["Spark executors"]
     SRV -->|"wasmtime runs it per batch or row"| RES["UDF result column"]
 ```
