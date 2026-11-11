@@ -266,12 +266,12 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "rand",
             old: || old::rand(),
-            new: || rand(None),
+            new: || rand(Some(2371029763967735218)),
         },
         Case {
             name: "randn",
             old: || old::randn(),
-            new: || randn(None),
+            new: || randn(Some(2561831801369089374)),
         },
         Case {
             name: "rank",
@@ -1106,7 +1106,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "randstr",
             old: || old::randstr(oint(3)),
-            new: || randstr(3, None),
+            new: || randstr(3, Some(1000462829105445681)),
         },
         Case {
             name: "reverse",
@@ -1191,7 +1191,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "shuffle",
             old: || old::shuffle(oc("a")),
-            new: || shuffle("a", None),
+            new: || shuffle("a", Some(1810822539051918711)),
         },
         Case {
             name: "sign",
@@ -2161,7 +2161,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "uniform",
             old: || old::uniform(oint(3), oint(4)),
-            new: || uniform(3, 4, None),
+            new: || uniform(3, 4, Some(1779860837174053365)),
         },
         Case {
             name: "when",
@@ -2231,7 +2231,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "count_min_sketch",
             old: || old::count_min_sketch(oc("a"), odouble(0.5), odouble(0.25)),
-            new: || count_min_sketch("a", 0.5, 0.25, None),
+            new: || count_min_sketch("a", 0.5, 0.25, Some(9151685696388386553)),
         },
         Case {
             name: "lpad",
@@ -2828,7 +2828,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "uuid",
             old: || old::uuid(),
-            new: || uuid(None),
+            new: || uuid(Some(1214072022411175128)),
         },
         Case {
             name: "variant_array_append",
@@ -3769,5 +3769,19 @@ pub fn forms() -> Vec<Case> {
             },
             new: || tuple_union_theta_integer("a", "b", Some(3), Some("x")),
         },
+    ]
+}
+
+pub fn seeded() -> Vec<(&'static str, fn() -> Column)> {
+    vec![
+        ("rand", || rand(None)),
+        ("randn", || randn(None)),
+        ("randstr", || randstr(3, None)),
+        ("shuffle", || shuffle("a", None)),
+        ("uniform", || uniform(3, 4, None)),
+        ("count_min_sketch", || {
+            count_min_sketch("a", 0.5, 0.25, None)
+        }),
+        ("uuid", || uuid(None)),
     ]
 }

@@ -21,6 +21,7 @@ use spark_connect_core::{function_forms, functions as sql};
 
 use super::{lambda1, lambda2, lambda3, literal};
 use crate::column::{lit, to_core, Column, IntoArgument};
+use crate::options::random_seed;
 
 /// The column of the SQL expression `expression`, which the server parses.
 pub fn expr(expression: &str) -> Column {
@@ -896,9 +897,9 @@ pub fn pi() -> Column {
 ///    0.7604953758285915
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn rand(seed: Option<i64>) -> Column {
-    Column::from(function_forms::rand(seed))
+    Column::from(function_forms::rand(Some(seed.unwrap_or_else(random_seed))))
 }
 
 /// Returns a random value with independent and identically distributed (i.i.d.) values drawn from the standard normal distribution.
@@ -927,9 +928,11 @@ pub fn rand(seed: Option<i64>) -> Column {
 ///    1.6034991609278433
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn randn(seed: Option<i64>) -> Column {
-    Column::from(function_forms::randn(seed))
+    Column::from(function_forms::randn(Some(
+        seed.unwrap_or_else(random_seed),
+    )))
 }
 
 /// Computes the rank of a value in a group of values. The result is one plus the number
@@ -4826,11 +4829,11 @@ pub fn raise_error(err_msg: impl IntoArgument) -> Column {
 ///    ceV
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn randstr(length: impl IntoArgument, seed: Option<i64>) -> Column {
     Column::from(function_forms::randstr(
         to_core(length.into_argument()),
-        seed,
+        Some(seed.unwrap_or_else(random_seed)),
     ))
 }
 
@@ -5258,9 +5261,12 @@ pub fn sha1(col: impl Into<Column>) -> Column {
 ///    [20,null,3,1]
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn shuffle(col: impl Into<Column>, seed: Option<i64>) -> Column {
-    Column::from(function_forms::shuffle(to_core(col), seed))
+    Column::from(function_forms::shuffle(
+        to_core(col),
+        Some(seed.unwrap_or_else(random_seed)),
+    ))
 }
 
 /// Returns -1.0, 0.0 or 1.0 as `expr` is negative, 0 or positive.
@@ -11141,12 +11147,12 @@ pub fn try_to_number(col: impl Into<Column>, format: impl Into<Column>) -> Colum
 ///   true
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn uniform(min: impl IntoArgument, max: impl IntoArgument, seed: Option<i64>) -> Column {
     Column::from(function_forms::uniform(
         to_core(min.into_argument()),
         to_core(max.into_argument()),
-        seed,
+        Some(seed.unwrap_or_else(random_seed)),
     ))
 }
 
@@ -11516,7 +11522,7 @@ pub fn convert_timezone(
 ///    0000000100000000000000030000000100000004000000005D8D6AB90000000000000000000000000000000200000000000000010000000000000000
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn count_min_sketch(
     col: impl Into<Column>,
     eps: impl IntoArgument,
@@ -11527,7 +11533,7 @@ pub fn count_min_sketch(
         to_core(col),
         to_core(eps.into_argument()),
         to_core(confidence.into_argument()),
-        seed,
+        Some(seed.unwrap_or_else(random_seed)),
     ))
 }
 
@@ -15099,9 +15105,9 @@ pub fn unix_nanos(col: impl Into<Column>) -> Column {
 ///    46707d92-02f4-4817-8116-a4c3b23e6266
 /// ```
 ///
-/// `seed` is optional: `None` takes the default of the SQL function.
+/// `seed` is optional: `None` draws a new random seed for each call.
 pub fn uuid(seed: Option<i64>) -> Column {
-    Column::from(function_forms::uuid(seed))
+    Column::from(function_forms::uuid(Some(seed.unwrap_or_else(random_seed))))
 }
 
 /// Appends a value to the array in a variant at the given JSONPath location. Returns the variant unchanged if a path key or index is absent. Throws an error if a path segment hits a value of an incompatible type or the target is not an array. Returns NULL if any argument is NULL.

@@ -105,6 +105,29 @@ fn every_argument_of_a_function_with_optional_arguments_is_sent_in_order() {
     assert!(differences.is_empty(), "{differences}");
 }
 
+/// The seed of a call of a seeded function: its last argument, a `BIGINT`.
+fn seed_sent(column: Column) -> i64 {
+    let column = OldColumn::from(column);
+    let ExpressionNode::UnresolvedFunction(UnresolvedFunction { args, .. }) =
+        column.expression().node()
+    else {
+        panic!("not a function call: {column:?}");
+    };
+    match args.last().map(Expression::node) {
+        Some(ExpressionNode::Literal(LiteralExpression::Long(seed))) => *seed,
+        other => panic!("not a BIGINT seed: {other:?}"),
+    }
+}
+
+#[test]
+fn a_seed_not_given_is_drawn_for_each_call_from_zero_to_i64_max() {
+    for (name, call) in cases::seeded() {
+        let (first, second) = (seed_sent(call()), seed_sent(call()));
+        assert_ne!(first, second, "{name}: the same seed twice");
+        assert!(first >= 0 && second >= 0, "{name}: {first}, {second}");
+    }
+}
+
 #[tokio::test]
 async fn broadcast_marks_the_dataframe_as_the_old_api_does() {
     const URL: &str = "sc://localhost:1";
@@ -288,9 +311,9 @@ fn functions_send_the_arguments_given_and_the_defaults_of_the_others() {
             sentences("a", None, None),
         ),
         (
-            "randstr with the fixed seed",
+            "randstr with a seed",
             call("randstr", vec![oint(5), olong(1000462829105445681)]),
-            randstr(5, None),
+            randstr(5, Some(1000462829105445681)),
         ),
         (
             "window of a duration",

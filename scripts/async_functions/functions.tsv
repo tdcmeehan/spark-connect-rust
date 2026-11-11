@@ -8,7 +8,7 @@
 #                bytes (Vec<u8>), arg (impl IntoArgument; arg-str and arg-float test with
 #                a string or a double), args (arguments), fn1..fn3 (closures over 1..3
 #                columns);
-#                ?type is an Option.
+#                ?type is an Option; a `seed:?i64` that is None is drawn at each call.
 #              Builders of one function with different options are one function that calls
 #              the builder of the options given. A row with more arguments than its builder
 #              has parameters calls the form of that name in function_forms.rs, which takes

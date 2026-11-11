@@ -32,6 +32,10 @@ Outputs: `crates/spark-connect-async/src/functions/generated.rs` and the case li
 an input is stale: a builder without a row, a row without a builder, or a SQL function without
 its description.
 
+An optional `seed:?i64` that is `None` is drawn at each call (`options::random_seed`), as
+PySpark draws one; its plan-equality case gives the seed of the core form, and the case list's
+`seeded()` names each seeded function for the test of the seeds drawn.
+
 `--derive` rewrites the parameter types of the table's derived rows from the annotations of an
 installed pyspark 4.3.0 (`inspect.signature`), keeping the rows marked `!`. Only it needs
 pyspark; the rest uses the standard library and `rustfmt`.
@@ -69,7 +73,7 @@ HEADER = f"""\
 #                bytes (Vec<u8>), arg (impl IntoArgument; arg-str and arg-float test with
 #                a string or a double), args (arguments), fn1..fn3 (closures over 1..3
 #                columns);
-#                ?type is an Option.
+#                ?type is an Option; a `seed:?i64` that is None is drawn at each call.
 #              Builders of one function with different options are one function that calls
 #              the builder of the options given. A row with more arguments than its builder
 #              has parameters calls the form of that name in function_forms.rs, which takes
@@ -118,6 +122,7 @@ class CoreFunction:
     sql: list[str] = field(default_factory=list)
     lambdas: list[int] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
+    default_seed: str | None = None
 
     @property
     def path(self) -> str:
@@ -171,6 +176,7 @@ def core_functions(text: str | None = None, forms: str | None = None) -> list[Co
     for match in SIGNATURE.finditer(text):
         raw, name, params = match.groups()
         body = text[match.end() : text.index("\n}\n", match.end())]
+        seed = re.search(r"seed\.map\(long\),\s*Absent::Sent\(lit_long\((\d+)\)\)", body)
         typed = []
         for param in split_params(params):
             pname, _, ptype = param.partition(":")
@@ -188,6 +194,7 @@ def core_functions(text: str | None = None, forms: str | None = None) -> list[Co
                 ],
                 lambdas=[int(n) for n in re.findall(r"make_lambda\((\d+),", body)],
                 calls=re.findall(r"\b(\w+)\(", body),
+                default_seed=seed.group(1) if seed else None,
             )
         )
     return out
@@ -247,6 +254,10 @@ class Row:
                 a.render() for a in self.arguments
             )
         return "\t".join([self.core, self.function, arguments, self.doc, self.old, self.new])
+
+
+def is_seed(argument: Argument) -> bool:
+    return argument.name == "seed" and argument.kind == "?i64"
 
 
 def parse_arguments(text: str) -> list[Argument]:
@@ -515,6 +526,8 @@ def form_argument(argument: Argument, form_type: str) -> str:
     """The expression that passes `argument` to a core form's parameter of type `form_type`."""
     if not argument.optional:
         return core_argument(argument.name, argument.kind, form_type)
+    if is_seed(argument):
+        return f"Some({argument.name}.unwrap_or_else(random_seed))"
     if form_type != "Option<Column>" and not argument.base.startswith("fn"):
         return argument.name
     if argument.base == "col":
@@ -532,6 +545,8 @@ def body(function: Function, by_name: dict[str, CoreFunction]) -> str:
         )
         return f"Column::from(function_forms::{function.form.name}({arguments}))"
     options = function.options
+    if any(is_seed(o) for o in options):
+        raise ValueError(f"{function.name}: a seed needs a core form")
     if not options:
         return f"Column::from({call(function.rows[0], by_name)})"
     arms = []
@@ -569,11 +584,13 @@ def doc_lines(function: Function, sql: str | None, descriptions: dict) -> list[s
         lines += ["```"]
         if "examples" in entry:
             lines += ["", "```sql", entry["examples"], "```"]
-    options = function.options
+    options = [o for o in function.options if not is_seed(o)]
     if options:
         names = " and ".join(f"`{o.name}`" for o in options)
         verb = "is" if len(options) == 1 else "are"
         lines += ["", f"{names} {verb} optional: `None` takes the default of the SQL function."]
+    if any(is_seed(o) for o in function.options):
+        lines += ["", "`seed` is optional: `None` draws a new random seed for each call."]
     out = []
     for line in "\n".join(lines).expandtabs(4).split("\n"):
         if "```" in line and not line.startswith("```"):
@@ -615,7 +632,8 @@ def generate(
         GENERATED_HEADER,
         "use spark_connect_core::{function_forms, functions as sql};\n",
         "use super::{lambda1, lambda2, lambda3, literal};",
-        "use crate::column::{lit, to_core, Column, IntoArgument};\n",
+        "use crate::column::{lit, to_core, Column, IntoArgument};",
+        "use crate::options::random_seed;\n",
     ]
     for function in functions_of(rows, functions, forms):
         params = ", ".join(f"{a.name}: {rust_type(a.kind)}" for a in function.arguments)
@@ -674,7 +692,9 @@ def case(function: Function, row: Row, core: CoreFunction) -> str:
     new, old, raw = {}, {}, {}
     for argument in function.arguments:
         if argument.optional and argument.name not in given:
-            new[argument.name] = "None"
+            new[argument.name] = (
+                f"Some({function.form.default_seed})" if is_seed(argument) else "None"
+            )
             continue
         value, old[argument.name] = sample(argument.kind, names, used)
         new[argument.name] = f"Some({value})" if argument.optional else value
@@ -720,8 +740,22 @@ def cases(rows: list[Row], functions: list[CoreFunction], forms: dict[str, CoreF
     for function in generated.values():
         if function.form is not None and "with_options" in function.form.calls:
             out.append(form_case(function, function.form.sql[0]))
+    out += ["]", "}", "", "pub fn seeded() -> Vec<(&'static str, fn() -> Column)> {", "vec!["]
+    for function in generated.values():
+        if any(is_seed(a) for a in function.arguments):
+            out.append(seeded_case(function))
     out += ["]", "}"]
     return "\n".join(out) + "\n"
+
+
+def seeded_case(function: Function) -> str:
+    """The call of a seeded function with no option given."""
+    names = iter("abcdefghijklmnopqrstuvwxyz")
+    used: dict[str, int] = {}
+    arguments = [
+        "None" if a.optional else sample(a.kind, names, used)[0] for a in function.arguments
+    ]
+    return f'("{function.name}", || {rust_name(function.name)}({", ".join(arguments)})),'
 
 
 def rustfmt(text: str) -> str:

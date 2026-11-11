@@ -70,8 +70,9 @@ impl From<i32> for RangeSpec {
     }
 }
 
-/// A random seed, so that every execution of a sample or split chooses the same rows.
-fn random_seed() -> i64 {
+/// A random seed from 0 to `i64::MAX`, the range of PySpark's. The plan keeps it, so that every
+/// execution of a sample, a split or a seeded function makes the same random choices.
+pub(crate) fn random_seed() -> i64 {
     (RandomState::new().hash_one(()) >> 1) as i64
 }
 
