@@ -666,12 +666,15 @@ fn messages(entries: Vec<server::Entry>) -> Vec<String> {
             "ExecutePlanRequest" => {
                 let mut request = proto::ExecutePlanRequest::decode(&entry.bytes[..]).unwrap();
                 request.operation_id = None;
-                support::message_text(&request)
+                format!("{request:?}")
             }
             "AnalyzePlanRequest" => {
-                support::message_text(&proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap())
+                format!(
+                    "{:?}",
+                    proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap()
+                )
             }
-            _ => support::message_text(&entry),
+            _ => format!("{entry:?}"),
         })
         .collect()
 }
@@ -958,5 +961,12 @@ fn the_maps_of_a_request_are_compared_in_key_order() {
             let in_text = format!("{expected:?}");
             assert_eq!(support::message_text(&text), in_text, "{values}, in a text");
         }
+        let in_a_text = format!("{values}, in a text");
+        let (first, second) = (MapPrintedInOrder(&unordered), MapPrintedInOrder(&ordered));
+        let texts = (vec![format!("{first:?}")], vec![format!("{second:?}")]);
+        let both: [(&str, &dyn std::fmt::Debug, &dyn std::fmt::Debug); 2] =
+            [(values, &first, &second), (&in_a_text, &texts.0, &texts.1)];
+        let differences = support::differences(Vec::from(both));
+        assert!(differences.is_empty(), "{differences}");
     }
 }
