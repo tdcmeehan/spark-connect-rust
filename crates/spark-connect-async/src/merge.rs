@@ -32,6 +32,7 @@ use crate::stream;
 /// A `MERGE INTO` of the rows of a DataFrame into a table, from [`DataFrame::merge_into`]: its
 /// clauses, in order, then awaited to run it. The server applies the first clause of each kind
 /// whose condition holds for a row.
+#[derive(Clone)]
 #[must_use = "a merge does nothing until it is awaited"]
 pub struct MergeIntoWriter {
     source: DataFrame,
