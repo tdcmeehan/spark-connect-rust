@@ -3772,7 +3772,9 @@ pub fn forms() -> Vec<Case> {
     ]
 }
 
-pub fn seeded() -> Vec<(&'static str, fn() -> Column)> {
+pub type SeededCall = (&'static str, fn() -> Column);
+
+pub fn seeded() -> Vec<SeededCall> {
     vec![
         ("rand", || rand(None)),
         ("randn", || randn(None)),

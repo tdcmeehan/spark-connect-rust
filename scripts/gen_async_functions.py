@@ -740,7 +740,8 @@ def cases(rows: list[Row], functions: list[CoreFunction], forms: dict[str, CoreF
     for function in generated.values():
         if function.form is not None and "with_options" in function.form.calls:
             out.append(form_case(function, function.form.sql[0]))
-    out += ["]", "}", "", "pub fn seeded() -> Vec<(&'static str, fn() -> Column)> {", "vec!["]
+    out += ["]", "}", "", "pub type SeededCall = (&'static str, fn() -> Column);", ""]
+    out += ["pub fn seeded() -> Vec<SeededCall> {", "vec!["]
     for function in generated.values():
         if any(is_seed(a) for a in function.arguments):
             out.append(seeded_case(function))
