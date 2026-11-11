@@ -385,15 +385,12 @@ fn messages(entries: Vec<server::Entry>) -> Vec<String> {
             "ExecutePlanRequest" => {
                 let mut request = proto::ExecutePlanRequest::decode(&entry.bytes[..]).unwrap();
                 request.operation_id = None;
-                format!("{request:?}")
+                support::message_text(&request)
             }
             "AnalyzePlanRequest" => {
-                format!(
-                    "{:?}",
-                    proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap()
-                )
+                support::message_text(&proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap())
             }
-            _ => format!("{entry:?}"),
+            _ => support::message_text(&entry),
         })
         .collect()
 }

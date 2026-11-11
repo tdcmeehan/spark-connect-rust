@@ -666,20 +666,14 @@ fn messages(entries: Vec<server::Entry>) -> Vec<String> {
             "ExecutePlanRequest" => {
                 let mut request = proto::ExecutePlanRequest::decode(&entry.bytes[..]).unwrap();
                 request.operation_id = None;
-                message_text(&request)
+                support::message_text(&request)
             }
             "AnalyzePlanRequest" => {
-                message_text(&proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap())
+                support::message_text(&proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap())
             }
-            _ => message_text(&entry),
+            _ => support::message_text(&entry),
         })
         .collect()
-}
-
-/// The `Debug` text of `message`, with its maps in key order. `support::differences` sorts the
-/// maps of a message, but not those inside a text, which it compares escaped.
-fn message_text(message: &impl std::fmt::Debug) -> String {
-    support::sorted_string_maps(&format!("{message:?}"))
 }
 
 fn start() -> (Arc<server::Recorder>, String) {
@@ -917,9 +911,9 @@ async fn local_rows_are_sent_in_the_plan_until_they_are_large() {
 }
 
 /// Prints like a `HashMap`, but in the order given, so that the test doesn't depend on hashing.
-struct MapPrintedInOrder(&'static [(&'static str, &'static str)]);
+struct MapPrintedInOrder<'a>(&'a [(&'a str, &'a dyn std::fmt::Debug)]);
 
-impl std::fmt::Debug for MapPrintedInOrder {
+impl std::fmt::Debug for MapPrintedInOrder<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map().entries(self.0.iter().copied()).finish()
     }
@@ -927,8 +921,42 @@ impl std::fmt::Debug for MapPrintedInOrder {
 
 #[test]
 fn the_maps_of_a_request_are_compared_in_key_order() {
-    assert_eq!(
-        message_text(&MapPrintedInOrder(&[("b", "2"), ("a", "1")])),
-        message_text(&MapPrintedInOrder(&[("a", "1"), ("b", "2")]))
-    );
+    type Entries<'a> = [(&'a str, &'a dyn std::fmt::Debug); 2];
+    let id = oc("id").to_proto();
+    let braces = spark_connect::lit_string("}, \"a\": {").to_proto();
+    let yx: Entries = [("y", &"2"), ("x", &"1")];
+    let xy: Entries = [("x", &"1"), ("y", &"2")];
+    let (open, close) = ("{\"a\", ", "}, \"b\": {\\");
+    let cases: [(&str, Entries, Entries); 4] = [
+        (
+            "strings",
+            [("b", &"2"), ("a", &"1")],
+            [("a", &"1"), ("b", &"2")],
+        ),
+        (
+            "messages",
+            [("b", &braces), ("a", &id)],
+            [("a", &id), ("b", &braces)],
+        ),
+        (
+            "maps",
+            [("b", &MapPrintedInOrder(&yx)), ("a", &id)],
+            [("a", &id), ("b", &MapPrintedInOrder(&xy))],
+        ),
+        (
+            "strings with braces, quotes, commas and a backslash",
+            [("b", &open), ("a", &close)],
+            [("a", &close), ("b", &open)],
+        ),
+    ];
+    for (values, unordered, ordered) in cases {
+        let expected = format!("{:?}", MapPrintedInOrder(&ordered));
+        for entries in [unordered, ordered] {
+            let map = MapPrintedInOrder(&entries);
+            assert_eq!(support::message_text(&map), expected, "{values}");
+            let text = format!("{map:?}");
+            let in_text = format!("{expected:?}");
+            assert_eq!(support::message_text(&text), in_text, "{values}, in a text");
+        }
+    }
 }
