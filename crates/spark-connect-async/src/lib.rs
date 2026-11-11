@@ -21,6 +21,7 @@
 //! ```
 
 pub mod actions;
+pub mod catalog;
 pub mod column;
 pub mod dataframe;
 pub mod de;

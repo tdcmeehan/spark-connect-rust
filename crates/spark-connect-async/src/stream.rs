@@ -116,6 +116,26 @@ pub(crate) fn query(
     .boxed()
 }
 
+/// Executes the catalog operation `relation` of `session`, and returns the rows of its result.
+/// The future is boxed, as that of [`query`].
+pub(crate) fn catalog_rows(
+    session: Session,
+    relation: proto::Relation,
+) -> BoxFuture<'static, Result<Vec<spark_connect_core::row::Row>>> {
+    async move {
+        let client = session.client();
+        let plan_ids = Arc::clone(session.plan_ids());
+        let (execution, _) = accepted(
+            &session,
+            proto::plan::OpType::Root(relation),
+            |request, observer| Execution::start(client, plan_ids, request, observer),
+        )
+        .await?;
+        Ok(actions::catalog::rows_of(execution).await?)
+    }
+    .boxed()
+}
+
 /// Executes `command` of `session` to its end, and returns the first response that `pick`
 /// takes. The future is boxed, as that of [`query`].
 pub(crate) fn command_result<T: Send + 'static>(

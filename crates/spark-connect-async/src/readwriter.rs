@@ -83,7 +83,7 @@ macro_rules! option_value_from_display {
 
 option_value_from_display!(bool, i32, i64, f64);
 
-fn insert_options<K: Into<String>, V: Into<OptionValue>>(
+pub(crate) fn insert_options<K: Into<String>, V: Into<OptionValue>>(
     options: &mut HashMap<String, String>,
     pairs: impl IntoIterator<Item = (K, V)>,
 ) {

@@ -103,7 +103,7 @@ impl StorageLevel {
     /// Serialized in off-heap memory.
     pub const OFF_HEAP: StorageLevel = StorageLevel::of(true, true, true, false, 1);
 
-    fn proto(self) -> proto::StorageLevel {
+    pub(crate) fn proto(self) -> proto::StorageLevel {
         proto::StorageLevel {
             use_disk: self.use_disk,
             use_memory: self.use_memory,

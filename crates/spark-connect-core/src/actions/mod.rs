@@ -329,5 +329,6 @@ mod tests {
             ));
             assert_send_static(pipelines::start_run(client(), vec![], command(), ()));
         };
+        let _ = |execution: Execution<()>| assert_send_static(catalog::rows_of(execution));
     }
 }

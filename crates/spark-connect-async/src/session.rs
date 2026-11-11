@@ -539,6 +539,7 @@ mod tests {
         assert_send_sync::<crate::merge::WhenMatched>();
         assert_send_sync::<crate::merge::WhenNotMatched>();
         assert_send_sync::<crate::merge::WhenNotMatchedBySource>();
+        assert_send_sync::<crate::catalog::Catalog>();
         fn assert_send<T: Send>() {}
         assert_send::<crate::RecordBatchStream>();
         // Type-checked, never called: it would need a server.
