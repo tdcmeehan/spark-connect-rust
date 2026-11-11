@@ -148,6 +148,25 @@ pub(crate) fn catalog_rows(
     .boxed()
 }
 
+/// Starts the execution of `command` of `session`, and returns its responses once the server has
+/// accepted it, with its operation id. The future is boxed, as that of [`query`].
+pub(crate) fn command_responses(
+    session: Session,
+    command: proto::command::CommandType,
+) -> BoxFuture<'static, Result<(Responses<Observer>, String)>> {
+    async move {
+        let plan = proto::plan::OpType::Command(proto::Command {
+            command_type: Some(command),
+        });
+        let client = session.client();
+        accepted(&session, plan, |request, observer| {
+            Responses::start(client, request, observer)
+        })
+        .await
+    }
+    .boxed()
+}
+
 /// Executes `command` of `session` to its end, and returns the first response that `pick`
 /// takes. The future is boxed, as that of [`query`].
 pub(crate) fn command_result<T: Send + 'static>(
@@ -156,14 +175,7 @@ pub(crate) fn command_result<T: Send + 'static>(
     mut pick: impl FnMut(proto::execute_plan_response::ResponseType) -> Option<T> + Send + 'static,
 ) -> BoxFuture<'static, Result<Option<T>>> {
     async move {
-        let plan = proto::plan::OpType::Command(proto::Command {
-            command_type: Some(command),
-        });
-        let client = session.client();
-        let (mut responses, _) = accepted(&session, plan, |request, observer| {
-            Responses::start(client, request, observer)
-        })
-        .await?;
+        let (mut responses, _) = command_responses(session.clone(), command).await?;
         let mut info = CoreInfo::default();
         let mut picked = None;
         while let Some(mut response) = responses.next().await? {

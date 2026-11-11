@@ -32,6 +32,7 @@ pub mod merge;
 pub mod ml;
 pub mod observation;
 pub mod options;
+pub mod pipelines;
 pub mod progress;
 pub mod readwriter;
 pub mod session;

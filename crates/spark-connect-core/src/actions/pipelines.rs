@@ -27,23 +27,36 @@ pub async fn create_dataflow_graph(
     observer: impl ExecutionObserver,
 ) -> Result<String> {
     let command = pipelines::create_dataflow_graph(default_catalog, default_database, sql_conf);
-    command_result(
-        client,
-        plan_ids,
-        tags,
-        command,
-        observer,
-        |result| match result {
-            ResponseType::PipelineCommandResult(proto::PipelineCommandResult {
-                result_type: Some(ResultType::CreateDataflowGraphResult(graph)),
-            }) => graph.dataflow_graph_id,
-            _ => None,
-        },
-    )
-    .await?
-    .ok_or_else(|| {
-        SparkError::connect_msg("CreateDataflowGraph did not return a dataflow_graph_id")
-    })
+    command_result(client, plan_ids, tags, command, observer, graph_id)
+        .await?
+        .ok_or_else(|| {
+            SparkError::connect_msg("CreateDataflowGraph did not return a dataflow_graph_id")
+        })
+}
+
+/// The id of the dataflow graph that `result` reports the creation of. Not a stable API.
+#[doc(hidden)]
+pub fn graph_id(result: ResponseType) -> Option<String> {
+    match result {
+        ResponseType::PipelineCommandResult(proto::PipelineCommandResult {
+            result_type: Some(ResultType::CreateDataflowGraphResult(graph)),
+        }) => graph.dataflow_graph_id,
+        _ => None,
+    }
+}
+
+/// The identifier that `result` reports for the output or the flow that it defined. Not a stable
+/// API.
+#[doc(hidden)]
+pub fn defined_identifier(result: ResponseType) -> Option<proto::ResolvedIdentifier> {
+    let ResponseType::PipelineCommandResult(result) = result else {
+        return None;
+    };
+    match result.result_type? {
+        ResultType::DefineOutputResult(output) => output.resolved_identifier,
+        ResultType::DefineFlowResult(flow) => flow.resolved_identifier,
+        ResultType::CreateDataflowGraphResult(_) => None,
+    }
 }
 
 /// Starts the run of a pipeline that `command` describes (see [`pipelines::start_run`]), with

@@ -553,9 +553,20 @@ mod tests {
         assert_send_sync::<crate::streaming::StreamingQueryManager>();
         assert_send_sync::<crate::streaming::Explain>();
         assert_send_sync::<crate::streaming::QueryEvent>();
+        assert_send_sync::<crate::pipelines::CreateDataflowGraph>();
+        assert_send_sync::<crate::pipelines::DataflowGraph>();
+        assert_send_sync::<crate::pipelines::DefineTable>();
+        assert_send_sync::<crate::pipelines::DefineView>();
+        assert_send_sync::<crate::pipelines::DefineSink>();
+        assert_send_sync::<crate::pipelines::DefineFlow>();
+        assert_send_sync::<crate::pipelines::DefineAutoCdcFlow>();
+        assert_send_sync::<crate::pipelines::DefineSql>();
+        assert_send_sync::<crate::pipelines::StartRun>();
+        assert_send_sync::<crate::pipelines::PipelineEvent>();
         fn assert_send<T: Send>() {}
         assert_send::<crate::RecordBatchStream>();
         assert_send::<crate::streaming::QueryEvents>();
+        assert_send::<crate::pipelines::PipelineRun>();
         // Type-checked, never called: it would need a server.
         let _ = |session: Session| {
             let conf = session.conf();
@@ -604,6 +615,21 @@ mod tests {
             assert_send_static(df.write_stream().start("p"));
             assert_send_static(df.write_stream().start_without_path());
             assert_send_static(df.write_stream().to_table("t"));
+            let graph = session.create_dataflow_graph();
+            assert_send_static(graph.into_future());
+            let _ = |graph: crate::pipelines::DataflowGraph| {
+                assert_send_static(graph.define_materialized_view("t").into_future());
+                assert_send_static(graph.define_temporary_view("v").into_future());
+                assert_send_static(graph.define_sink("s", "kafka").into_future());
+                assert_send_static(graph.define_flow("f", "t", &df).into_future());
+                assert_send_static(
+                    graph
+                        .define_auto_cdc_flow("c", "t", "s", ["k"], "ts")
+                        .into_future(),
+                );
+                assert_send_static(graph.define_sql("SELECT 1").into_future());
+                assert_send_static(graph.start_run("file:///s").into_future());
+            };
         };
         let _ = |query: crate::streaming::StreamingQuery| {
             assert_send_static(query.is_active());

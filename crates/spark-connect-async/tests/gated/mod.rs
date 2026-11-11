@@ -22,7 +22,8 @@
 //! open until a removal, and it never answers a subscription while it holds another. Unless an
 //! execution waits after its first batch, the server answers the commands of Spark ML as 4.3.0
 //! does: a fit with a new model, a fetch of an attribute with a value of its type, and a delete
-//! with the models deleted.
+//! with the models deleted. It answers the commands of pipelines as 4.3.0 does too: a new graph,
+//! the identifier of each output and flow, and a run whose responses a test can set.
 
 // Each test binary uses a part of the server.
 #![allow(dead_code)]
@@ -97,6 +98,34 @@ pub enum Received {
     Fetch(String),
     /// A delete of models.
     Delete(Vec<String>),
+    /// A drop of the dataflow graph of this id.
+    DropGraph(String),
+}
+
+/// A response of a run of a pipeline that a test sets with [`Server::run_with`].
+#[derive(Clone, Debug)]
+pub enum RunResponse {
+    /// An event, with its timestamp in seconds and nanoseconds and its message, if it has them.
+    Event(Option<(i64, i32)>, Option<&'static str>),
+    /// A progress of one running task.
+    Progress,
+    /// The failure of the run, which ends its stream.
+    Failure,
+}
+
+/// The responses of a run unless a test sets others: two events and a progress.
+pub fn default_run() -> Vec<RunResponse> {
+    vec![
+        RunResponse::Event(
+            Some((1_794_431_318, 963_703_034)),
+            Some("Flow f is RUNNING."),
+        ),
+        RunResponse::Progress,
+        RunResponse::Event(
+            Some((1_794_431_321, 984_787_258)),
+            Some("Run is COMPLETED."),
+        ),
+    ]
 }
 
 pub struct Server {
@@ -112,6 +141,10 @@ struct State {
     bus_gate: Semaphore,
     subscription: Mutex<Option<Subscription>>,
     models: AtomicUsize,
+    graphs: AtomicUsize,
+    run: Mutex<Vec<RunResponse>>,
+    /// Whether the commands of pipelines get results without their fields.
+    bare_pipeline_results: std::sync::atomic::AtomicBool,
 }
 
 /// The subscription that the listener bus holds, and the stream of its responses.
@@ -159,6 +192,9 @@ impl Server {
             bus_gate: Semaphore::new(0),
             subscription: Mutex::new(None),
             models: AtomicUsize::new(0),
+            graphs: AtomicUsize::new(0),
+            run: Mutex::new(default_run()),
+            bare_pipeline_results: Default::default(),
         });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -275,6 +311,20 @@ impl Server {
         false
     }
 
+    /// The responses of the runs of pipelines from now on, before the result of the command and
+    /// the end, unless one of them is a failure.
+    pub fn run_with(&self, responses: Vec<RunResponse>) {
+        *self.state.run.lock().unwrap() = responses;
+    }
+
+    /// Answers the commands of pipelines from now on with results without their fields, as a
+    /// server that sends no id or identifier would.
+    pub fn answer_pipelines_with_bare_results(&self) {
+        self.state
+            .bare_pipeline_results
+            .store(true, Ordering::SeqCst);
+    }
+
     /// The operation id of the last execution.
     pub fn operation_id(&self) -> String {
         self.received()
@@ -327,6 +377,118 @@ impl State {
         proto::MlCommandResult {
             result_type: Some(result_type),
         }
+    }
+
+    /// The result of the command of pipelines `command`, as Spark 4.3.0 answers it.
+    fn pipeline_result(&self, command: &proto::PipelineCommand) -> proto::PipelineCommandResult {
+        use proto::pipeline_command::CommandType as C;
+        use proto::pipeline_command_result as r;
+        let identifier = |name: &Option<String>, temporary: bool| {
+            Some(proto::ResolvedIdentifier {
+                catalog_name: if temporary { "" } else { "spark_catalog" }.to_string(),
+                namespace: if temporary {
+                    Vec::new()
+                } else {
+                    vec!["default".to_string()]
+                },
+                table_name: name.clone().unwrap_or_default(),
+            })
+        };
+        if let Some(C::DropDataflowGraph(drop)) = &command.command_type {
+            let id = drop.dataflow_graph_id.clone().unwrap_or_default();
+            self.receive(Received::DropGraph(id));
+        }
+        if self.bare_pipeline_results.load(Ordering::SeqCst) {
+            return proto::PipelineCommandResult { result_type: None };
+        }
+        let result_type = match &command.command_type {
+            Some(C::CreateDataflowGraph(_)) => Some(r::ResultType::CreateDataflowGraphResult(
+                r::CreateDataflowGraphResult {
+                    dataflow_graph_id: Some(format!(
+                        "graph-{}",
+                        self.graphs.fetch_add(1, Ordering::SeqCst) + 1
+                    )),
+                },
+            )),
+            Some(C::DefineOutput(output)) => {
+                let temporary = [proto::OutputType::TemporaryView, proto::OutputType::Sink]
+                    .iter()
+                    .any(|kind| output.output_type == Some(*kind as i32));
+                Some(r::ResultType::DefineOutputResult(r::DefineOutputResult {
+                    resolved_identifier: identifier(&output.output_name, temporary),
+                }))
+            }
+            Some(C::DefineFlow(flow)) => {
+                Some(r::ResultType::DefineFlowResult(r::DefineFlowResult {
+                    resolved_identifier: identifier(&flow.flow_name, false),
+                }))
+            }
+            _ => None,
+        };
+        proto::PipelineCommandResult { result_type }
+    }
+
+    /// The responses of a run of a pipeline, from the response at `index`: those that a test
+    /// set, then the result of the command and the end, unless the run fails.
+    fn run_responses(
+        &self,
+        session_id: &str,
+        operation_id: &str,
+        index: usize,
+        set: &[RunResponse],
+    ) -> Vec<Result<Vec<u8>, Status>> {
+        let mut out = Vec::new();
+        let mut next = index;
+        let mut respond_with = |out: &mut Vec<_>, response_type| {
+            let response = respond(session_id, operation_id, next, response_type);
+            next += 1;
+            out.push(Ok(response.encode_to_vec()));
+        };
+        for response in set {
+            match response {
+                RunResponse::Event(timestamp, message) => {
+                    let mut event = proto::PipelineEvent {
+                        message: message.map(str::to_string),
+                        ..Default::default()
+                    };
+                    if let Some((seconds, nanos)) = timestamp {
+                        let at = event.timestamp.insert(Default::default());
+                        at.seconds = *seconds;
+                        at.nanos = *nanos;
+                    }
+                    respond_with(
+                        &mut out,
+                        ResponseType::PipelineEventResult(proto::PipelineEventResult {
+                            event: Some(event),
+                        }),
+                    );
+                }
+                RunResponse::Progress => respond_with(
+                    &mut out,
+                    ResponseType::ExecutionProgress(
+                        proto::execute_plan_response::ExecutionProgress {
+                            stages: vec![
+                                proto::execute_plan_response::execution_progress::StageInfo {
+                                    num_tasks: 1,
+                                    ..Default::default()
+                                },
+                            ],
+                            num_inflight_tasks: 1,
+                        },
+                    ),
+                ),
+                RunResponse::Failure => {
+                    out.push(Err(Status::internal("the run failed")));
+                    return out;
+                }
+            }
+        }
+        respond_with(
+            &mut out,
+            ResponseType::PipelineCommandResult(Default::default()),
+        );
+        respond_with(&mut out, ResponseType::ResultComplete(Default::default()));
+        out
     }
 
     async fn pass_the_gate(&self) {
@@ -596,6 +758,49 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                             state.pass_the_gate().await;
                         }
                         let result = ResponseType::MlCommandResult(state.ml_result(command));
+                        let complete = ResponseType::ResultComplete(Default::default());
+                        return Ok(Response::new(encoded(vec![
+                            respond(&request.session_id, &operation_id, 0, result),
+                            respond(&request.session_id, &operation_id, 1, complete),
+                        ])));
+                    }
+                    Some(C::PipelineCommand(proto::PipelineCommand {
+                        command_type: Some(proto::pipeline_command::CommandType::StartRun(_)),
+                    })) if wait != Wait::BeforeReattaching => {
+                        if wait == Wait::BeforeAccepting {
+                            state.pass_the_gate().await;
+                        }
+                        let set = state.run.lock().unwrap().clone();
+                        let (session_id, operation_id) = (request.session_id.clone(), operation_id);
+                        if wait != Wait::AfterTheFirstBatch || set.is_empty() {
+                            let responses =
+                                state.run_responses(&session_id, &operation_id, 0, &set);
+                            return Ok(Response::new(Box::pin(stream::iter(responses))));
+                        }
+                        let first = state.run_responses(&session_id, &operation_id, 0, &set[..1]);
+                        let rest_state = Arc::clone(&state);
+                        let rest = stream::once(async move {
+                            rest_state.pass_the_gate().await;
+                            stream::iter(rest_state.run_responses(
+                                &session_id,
+                                &operation_id,
+                                1,
+                                &set[1..],
+                            ))
+                        });
+                        return Ok(Response::new(Box::pin(futures::StreamExt::chain(
+                            stream::iter(first.into_iter().take(1)),
+                            futures::StreamExt::flatten(rest),
+                        ))));
+                    }
+                    Some(C::PipelineCommand(command))
+                        if matches!(wait, Wait::Never | Wait::BeforeAccepting) =>
+                    {
+                        if wait == Wait::BeforeAccepting {
+                            state.pass_the_gate().await;
+                        }
+                        let result =
+                            ResponseType::PipelineCommandResult(state.pipeline_result(command));
                         let complete = ResponseType::ResultComplete(Default::default());
                         return Ok(Response::new(encoded(vec![
                             respond(&request.session_id, &operation_id, 0, result),

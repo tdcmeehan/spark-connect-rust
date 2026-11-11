@@ -20,6 +20,7 @@
 
 mod gated;
 
+use std::future::IntoFuture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -436,6 +437,72 @@ fn dropping_a_fit_an_evaluation_or_an_attribute_stops_it_once_in_either_runtime(
                     } else {
                         an_ml_call_dropped_before_the_server_accepts_it(&server, call).await;
                     }
+                }
+            }
+        });
+    }
+}
+
+async fn a_start_of_a_run_dropped_before_the_server_accepts_it(server: &Server) {
+    let session = connect(server).await;
+    let graph = session.create_dataflow_graph().await.unwrap();
+    server.wait_at(Wait::BeforeAccepting);
+    let before = executions(server).await;
+    let starting = tokio::spawn(graph.start_run("file:///storage").into_future());
+    while executions(server).await <= before {
+        assert!(server.wait_for(|r| matches!(r, Received::Execute(_))).await);
+        tokio::task::yield_now().await;
+    }
+    let operation_id = server.operation_id();
+    starting.abort();
+    assert!(starting.await.unwrap_err().is_cancelled());
+    let id = operation_id.clone();
+    assert!(
+        server
+            .wait_for(|r| *r == Received::Interrupt(id.clone()))
+            .await,
+        "not interrupted"
+    );
+    assert_eq!(releases(server, &operation_id).await, 0, "released early");
+    server.open_gate();
+    let id = operation_id.clone();
+    assert!(
+        server
+            .wait_for(|r| *r == Received::ReleaseAll(id.clone()))
+            .await,
+        "not released"
+    );
+    assert_eq!(releases(server, &operation_id).await, 1);
+}
+
+async fn the_events_of_a_run_dropped_after_the_first(server: &Server) {
+    let session = connect(server).await;
+    let graph = session.create_dataflow_graph().await.unwrap();
+    server.wait_at(Wait::AfterTheFirstBatch);
+    let mut run = graph.start_run("file:///storage").await.unwrap();
+    assert!(run.next().await.unwrap().is_ok());
+    let operation_id = run.operation_id().to_string();
+    drop(run);
+    assert_eq!(releases(server, &operation_id).await, 1);
+    assert!(!interrupted(server, &operation_id), "interrupted");
+    server.open_gate();
+}
+
+#[test]
+fn dropping_the_start_or_the_events_of_a_run_stops_them_once_in_either_runtime() {
+    for flavor in ["current-thread", "multi-thread"] {
+        let mut runtime = match flavor {
+            "current-thread" => tokio::runtime::Builder::new_current_thread(),
+            _ => tokio::runtime::Builder::new_multi_thread(),
+        };
+        runtime.enable_all().build().unwrap().block_on(async {
+            for accepted in [false, true] {
+                let server = Server::start();
+                println!("{flavor}: accepted {accepted}");
+                if accepted {
+                    the_events_of_a_run_dropped_after_the_first(&server).await;
+                } else {
+                    a_start_of_a_run_dropped_before_the_server_accepts_it(&server).await;
                 }
             }
         });
