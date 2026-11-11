@@ -666,17 +666,20 @@ fn messages(entries: Vec<server::Entry>) -> Vec<String> {
             "ExecutePlanRequest" => {
                 let mut request = proto::ExecutePlanRequest::decode(&entry.bytes[..]).unwrap();
                 request.operation_id = None;
-                format!("{request:?}")
+                message_text(&request)
             }
             "AnalyzePlanRequest" => {
-                format!(
-                    "{:?}",
-                    proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap()
-                )
+                message_text(&proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap())
             }
-            _ => format!("{entry:?}"),
+            _ => message_text(&entry),
         })
         .collect()
+}
+
+/// The `Debug` text of `message`, with its maps in key order. `support::differences` sorts the
+/// maps of a message, but not those inside a text, which it compares escaped.
+fn message_text(message: &impl std::fmt::Debug) -> String {
+    support::sorted_string_maps(&format!("{message:?}"))
 }
 
 fn start() -> (Arc<server::Recorder>, String) {
@@ -911,4 +914,21 @@ async fn local_rows_are_sent_in_the_plan_until_they_are_large() {
         large.to_relation().rel_type,
         Some(proto::relation::RelType::ChunkedCachedLocalRelation(_))
     ));
+}
+
+/// Prints like a `HashMap`, but in the order given, so that the test doesn't depend on hashing.
+struct MapPrintedInOrder(&'static [(&'static str, &'static str)]);
+
+impl std::fmt::Debug for MapPrintedInOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.0.iter().copied()).finish()
+    }
+}
+
+#[test]
+fn the_maps_of_a_request_are_compared_in_key_order() {
+    assert_eq!(
+        message_text(&MapPrintedInOrder(&[("b", "2"), ("a", "1")])),
+        message_text(&MapPrintedInOrder(&[("a", "1"), ("b", "2")]))
+    );
 }
