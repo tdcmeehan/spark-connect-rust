@@ -1,5 +1,6 @@
 //! DataFrames and their transformations.
 
+use std::future::Future;
 use std::sync::Arc;
 
 use spark_connect_core::column::Column as CoreColumn;
@@ -92,6 +93,19 @@ impl DataFrame {
 
     pub(crate) fn with_plan(&self, plan: LogicalPlan) -> DataFrame {
         DataFrame::new(self.session.clone(), plan)
+    }
+
+    /// `future`, which keeps the plan of this DataFrame until it is done, and so what the server
+    /// keeps for the plan: the checkpoints and the fitted models that it refers to.
+    pub(crate) fn holding<T>(
+        &self,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> impl Future<Output = T> + Send + 'static {
+        let plan = self.input();
+        async move {
+            let _plan = plan;
+            future.await
+        }
     }
 
     /// The session of this DataFrame.

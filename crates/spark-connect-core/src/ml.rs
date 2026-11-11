@@ -243,6 +243,21 @@ pub fn delete(refs: Vec<proto::ObjectRef>) -> proto::command::CommandType {
     })
 }
 
+/// The command that calls `method`, without arguments, on the object `reference` that the server
+/// caches, such as an attribute of a fitted model. Not a stable API.
+#[doc(hidden)]
+pub fn fetch(reference: proto::ObjectRef, method: &str) -> proto::command::CommandType {
+    proto::command::CommandType::MlCommand(proto::MlCommand {
+        command: Some(proto::ml_command::Command::Fetch(proto::Fetch {
+            obj_ref: Some(reference),
+            methods: vec![proto::fetch::Method {
+                method: method.to_string(),
+                args: Vec::new(),
+            }],
+        })),
+    })
+}
+
 /// The relation that applies `operator`, with `params`, to `input`.
 pub fn transform(
     operator: proto::ml_relation::transform::Operator,

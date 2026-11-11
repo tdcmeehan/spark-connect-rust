@@ -429,10 +429,10 @@ impl DataFrameWriter {
         save_type: Option<SaveType>,
     ) -> impl Future<Output = Result<()>> + Send + 'static {
         let operation = self.spec.to_proto(self.input.to_relation(), save_type);
-        stream::command(
+        self.input.holding(stream::command(
             self.input.session().clone(),
             proto::command::CommandType::WriteOperation(operation),
-        )
+        ))
     }
 
     /// Writes the DataFrame to `path`.
@@ -573,10 +573,10 @@ impl DataFrameWriterV2 {
         let operation = self
             .spec
             .to_proto(self.input.to_relation(), mode, condition);
-        stream::command(
+        self.input.holding(stream::command(
             self.input.session().clone(),
             proto::command::CommandType::WriteOperationV2(operation),
-        )
+        ))
     }
 
     /// Creates the table from the DataFrame; fails if it exists.

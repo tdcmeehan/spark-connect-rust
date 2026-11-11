@@ -19,13 +19,17 @@
 //! that a test can drop a client future at a chosen point of an execution.
 //!
 //! Its listener bus acts as Spark 4.3.0's: it acknowledges a subscription and keeps its stream
-//! open until a removal, and it never answers a subscription while it holds another.
+//! open until a removal, and it never answers a subscription while it holds another. Unless an
+//! execution waits after its first batch, the server answers the commands of Spark ML as 4.3.0
+//! does: a fit with a new model, a fetch of an attribute with a value of its type, and a delete
+//! with the models deleted.
 
 // Each test binary uses a part of the server.
 #![allow(dead_code)]
 
 use std::convert::Infallible;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -46,6 +50,7 @@ use tonic::server::{Grpc, NamedService, ServerStreamingService, UnaryService};
 use tonic::{Request, Response, Status};
 
 use proto::execute_plan_response::ResponseType;
+use proto::expression::literal::LiteralType;
 
 /// Where an execution waits for the gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +93,10 @@ pub enum Received {
     ReleaseUntil(String),
     ReleaseSession,
     Config,
+    /// A fetch of the attribute of a model.
+    Fetch(String),
+    /// A delete of models.
+    Delete(Vec<String>),
 }
 
 pub struct Server {
@@ -102,6 +111,7 @@ struct State {
     bus_wait: Mutex<BusWait>,
     bus_gate: Semaphore,
     subscription: Mutex<Option<Subscription>>,
+    models: AtomicUsize,
 }
 
 /// The subscription that the listener bus holds, and the stream of its responses.
@@ -148,6 +158,7 @@ impl Server {
             bus_wait: Mutex::new(BusWait::Never),
             bus_gate: Semaphore::new(0),
             subscription: Mutex::new(None),
+            models: AtomicUsize::new(0),
         });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -280,6 +291,42 @@ impl Server {
 impl State {
     fn receive(&self, received: Received) {
         self.received.lock().unwrap().push(received);
+    }
+
+    /// The result of the command of Spark ML `command`.
+    fn ml_result(&self, command: &proto::MlCommand) -> proto::MlCommandResult {
+        use proto::ml_command::Command as C;
+        use proto::ml_command_result::{ml_operator_info::Type, MlOperatorInfo, ResultType};
+        let models = |ids: String| {
+            ResultType::OperatorInfo(MlOperatorInfo {
+                r#type: Some(Type::ObjRef(proto::ObjectRef { id: ids })),
+                ..Default::default()
+            })
+        };
+        let result_type = match &command.command {
+            Some(C::Fit(_)) => models(format!(
+                "model-{}",
+                self.models.fetch_add(1, Ordering::SeqCst) + 1
+            )),
+            Some(C::Evaluate(_)) => ResultType::Param(literal(LiteralType::Double(0.75))),
+            Some(C::Fetch(fetch)) => {
+                let method = fetch.methods[0].method.clone();
+                self.receive(Received::Fetch(method.clone()));
+                ResultType::Param(attribute(&method))
+            }
+            Some(C::Delete(delete)) => models(
+                delete
+                    .obj_refs
+                    .iter()
+                    .map(|reference| reference.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            _ => ResultType::Summary("ok".to_string()),
+        };
+        proto::MlCommandResult {
+            result_type: Some(result_type),
+        }
     }
 
     async fn pass_the_gate(&self) {
@@ -538,6 +585,23 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                             return Ok(Response::new(encoded(vec![complete])));
                         }
                     },
+                    Some(C::MlCommand(command))
+                        if matches!(wait, Wait::Never | Wait::BeforeAccepting) =>
+                    {
+                        if let Some(proto::ml_command::Command::Delete(delete)) = &command.command {
+                            let ids = delete.obj_refs.iter().map(|r| r.id.clone()).collect();
+                            state.receive(Received::Delete(ids));
+                        }
+                        if wait == Wait::BeforeAccepting {
+                            state.pass_the_gate().await;
+                        }
+                        let result = ResponseType::MlCommandResult(state.ml_result(command));
+                        let complete = ResponseType::ResultComplete(Default::default());
+                        return Ok(Response::new(encoded(vec![
+                            respond(&request.session_id, &operation_id, 0, result),
+                            respond(&request.session_id, &operation_id, 1, complete),
+                        ])));
+                    }
                     Some(C::WriteStreamOperationStart(start)) => {
                         let started = proto::WriteStreamOperationStartResult {
                             query_id: Some(proto::StreamingQueryInstanceId {
@@ -611,6 +675,62 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
             };
             Ok(Response::new(responses))
         })
+    }
+}
+
+fn literal(literal_type: LiteralType) -> proto::expression::Literal {
+    proto::expression::Literal {
+        literal_type: Some(literal_type),
+        ..Default::default()
+    }
+}
+
+/// The value of the attribute `method` of a model, as Spark 4.3.0 sends one of its type: the
+/// vector `[1, 2]`, the number 0.5, the count 2, a one-row matrix, or the labels `a`, `b`.
+fn attribute(method: &str) -> proto::expression::Literal {
+    use proto::expression::literal::{specialized_array::ValueType, SpecializedArray, Struct};
+    let null = || literal(LiteralType::Null(Default::default()));
+    let doubles = || {
+        literal(LiteralType::SpecializedArray(SpecializedArray {
+            value_type: Some(ValueType::Doubles(proto::Doubles {
+                values: vec![1.0, 2.0],
+            })),
+        }))
+    };
+    let fields = |elements| {
+        literal(LiteralType::Struct(Struct {
+            elements,
+            ..Default::default()
+        }))
+    };
+    match method {
+        "intercept" | "scale" => literal(LiteralType::Double(0.5)),
+        "numClasses" | "numFeatures" => literal(LiteralType::Integer(2)),
+        "coefficientMatrix" => fields(vec![
+            literal(LiteralType::Byte(1)),
+            literal(LiteralType::Integer(1)),
+            literal(LiteralType::Integer(2)),
+            null(),
+            null(),
+            doubles(),
+            literal(LiteralType::Boolean(true)),
+        ]),
+        "labelsArray" => {
+            let strings = ["a", "b"].map(|label| literal(LiteralType::String(label.to_string())));
+            let array = |elements: Vec<_>| {
+                literal(LiteralType::Array(proto::expression::literal::Array {
+                    elements,
+                    ..Default::default()
+                }))
+            };
+            array(vec![array(strings.to_vec())])
+        }
+        _ => fields(vec![
+            literal(LiteralType::Byte(1)),
+            null(),
+            null(),
+            doubles(),
+        ]),
     }
 }
 

@@ -187,6 +187,22 @@ pub(crate) fn command(
         .boxed()
 }
 
+/// Executes `command` of `session` from `runtime` without waiting for it, unless the session is
+/// stopped, and ignores its result: what a value sends when it is dropped, such as the removal of
+/// what the server keeps for it.
+pub(crate) fn spawn_command(
+    runtime: &tokio::runtime::Handle,
+    session: Session,
+    command: proto::command::CommandType,
+) {
+    if session.is_stopped() {
+        return;
+    }
+    runtime.spawn(async move {
+        let _ = self::command(session, command).await;
+    });
+}
+
 type Step = (
     Box<Execution<Observer>>,
     spark_connect_core::error::Result<Option<Vec<RecordBatch>>>,

@@ -339,7 +339,7 @@ impl DataStreamWriter {
             foreach_payload: None,
         }
         .to_proto(self.input.to_relation());
-        async move {
+        self.input.holding(async move {
             let command = proto::command::CommandType::WriteStreamOperationStart(start);
             let result =
                 stream::command_result(session.clone(), command, core_streaming::start_result)
@@ -354,7 +354,7 @@ impl DataStreamWriter {
                 run_id: started.run_id,
                 name: started.name.or(name),
             })
-        }
+        })
     }
 
     /// Starts the query, which writes to `path`, and returns it once the server has started it.

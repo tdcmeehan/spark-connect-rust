@@ -101,10 +101,10 @@ impl IntoFuture for MergeIntoWriter {
             not_matched_by_source_actions: self.not_matched_by_source,
             with_schema_evolution: self.schema_evolution,
         };
-        stream::command(
+        Box::pin(self.source.holding(stream::command(
             self.source.session().clone(),
             proto::command::CommandType::MergeIntoTableCommand(command),
-        )
+        )))
     }
 }
 

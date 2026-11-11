@@ -20,6 +20,7 @@
 //! | `ARRAY` | `Vec<T>`, any sequence |
 //! | `MAP` | any map, or `Vec<(K, V)>`, in the server's order of the entries |
 //! | `STRUCT` | a struct by field name, a tuple by position, or a map |
+//! | the vectors of Spark ML | [`ml::Vector`](crate::ml::Vector) |
 //! | `VARIANT` | a struct of `value` and `metadata`, both `Vec<u8>` |
 //!
 //! A `NULL` deserializes into `None` of an `Option`, and is an error elsewhere. An error names its

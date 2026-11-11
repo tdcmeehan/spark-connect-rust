@@ -185,9 +185,6 @@ struct CachedRelation {
 
 impl Drop for CachedRelation {
     fn drop(&mut self) {
-        if self.session.is_stopped() {
-            return;
-        }
         let command = proto::command::CommandType::RemoveCachedRemoteRelationCommand(
             proto::RemoveCachedRemoteRelationCommand {
                 relation: Some(proto::CachedRemoteRelation {
@@ -195,10 +192,7 @@ impl Drop for CachedRelation {
                 }),
             },
         );
-        let session = self.session.clone();
-        self.runtime.spawn(async move {
-            let _ = stream::command(session, command).await;
-        });
+        stream::spawn_command(&self.runtime, self.session.clone(), command);
     }
 }
 
@@ -268,7 +262,7 @@ impl DataFrame {
     /// Dropping the future before then interrupts the operation on the server; dropping the
     /// stream before its end releases it, which stops it too.
     pub fn stream(&self) -> impl Future<Output = Result<RecordBatchStream>> + Send + 'static {
-        stream::query(self.session().clone(), self.to_relation())
+        self.holding(stream::query(self.session().clone(), self.to_relation()))
     }
 
     /// Runs the query, and returns the stream of its rows as values of `T`, which
@@ -406,7 +400,10 @@ impl DataFrame {
         &self,
         mode: ExplainMode,
     ) -> impl Future<Output = Result<String>> + Send + 'static {
-        core_actions::explain(self.session().client(), self.to_relation(), mode.proto()).err_into()
+        self.holding(
+            core_actions::explain(self.session().client(), self.to_relation(), mode.proto())
+                .err_into(),
+        )
     }
 
     /// Persists the rows in memory and on disk, as [`StorageLevel::MEMORY_AND_DISK_DESER`].
@@ -420,19 +417,27 @@ impl DataFrame {
         &self,
         level: StorageLevel,
     ) -> impl Future<Output = Result<()>> + Send + 'static {
-        core_actions::persist(self.session().client(), self.to_relation(), level.proto()).err_into()
+        self.holding(
+            core_actions::persist(self.session().client(), self.to_relation(), level.proto())
+                .err_into(),
+        )
     }
 
     /// Stops keeping the rows; with `blocking`, it returns once they are removed.
     pub fn unpersist(&self, blocking: bool) -> impl Future<Output = Result<()>> + Send + 'static {
-        core_actions::unpersist(self.session().client(), self.to_relation(), blocking).err_into()
+        self.holding(
+            core_actions::unpersist(self.session().client(), self.to_relation(), blocking)
+                .err_into(),
+        )
     }
 
     /// Where the server keeps the rows, or [`StorageLevel::NONE`].
     pub fn storage_level(&self) -> impl Future<Output = Result<StorageLevel>> + Send + 'static {
-        core_actions::storage_level(self.session().client(), self.to_relation())
-            .map_ok(StorageLevel::of_proto)
-            .err_into()
+        self.holding(
+            core_actions::storage_level(self.session().client(), self.to_relation())
+                .map_ok(StorageLevel::of_proto)
+                .err_into(),
+        )
     }
 
     /// Creates the temporary view `name` of this DataFrame.
@@ -448,7 +453,7 @@ impl DataFrame {
                 is_global: view.global,
                 replace: view.replace,
             });
-        stream::command(self.session().clone(), command)
+        self.holding(stream::command(self.session().clone(), command))
     }
 
     /// A DataFrame of the rows of this one as the server keeps them, whose plan does not
@@ -465,7 +470,7 @@ impl DataFrame {
             storage_level: checkpoint.storage_level.map(StorageLevel::proto),
         });
         let session = self.session().clone();
-        async move {
+        self.holding(async move {
             let relation_id =
                 stream::command_result(session.clone(), command, |response| match response {
                     proto::execute_plan_response::ResponseType::CheckpointCommandResult(result) => {
@@ -487,12 +492,14 @@ impl DataFrame {
                     owner: Some(RelationOwner(Arc::new(owner))),
                 },
             ))
-        }
+        })
     }
 
     /// The files that the query reads, as far as the server can tell.
     pub fn input_files(&self) -> impl Future<Output = Result<Vec<String>>> + Send + 'static {
-        core_actions::input_files(self.session().client(), self.to_relation()).err_into()
+        self.holding(
+            core_actions::input_files(self.session().client(), self.to_relation()).err_into(),
+        )
     }
 
     /// Whether this DataFrame and `other` return the same rows by their plans.
@@ -500,22 +507,26 @@ impl DataFrame {
         &self,
         other: &DataFrame,
     ) -> impl Future<Output = Result<bool>> + Send + 'static {
-        core_actions::same_semantics(
+        let same = core_actions::same_semantics(
             self.session().client(),
             self.to_relation(),
             other.to_relation(),
-        )
-        .err_into()
+        );
+        self.holding(other.holding(same.err_into()))
     }
 
     /// A hash of the plan, the same for plans of [`DataFrame::same_semantics`].
     pub fn semantic_hash(&self) -> impl Future<Output = Result<i32>> + Send + 'static {
-        core_actions::semantic_hash(self.session().client(), self.to_relation()).err_into()
+        self.holding(
+            core_actions::semantic_hash(self.session().client(), self.to_relation()).err_into(),
+        )
     }
 
     /// Whether the query reads a stream, so that its rows never end.
     pub fn is_streaming(&self) -> impl Future<Output = Result<bool>> + Send + 'static {
-        core_actions::is_streaming(self.session().client(), self.to_relation()).err_into()
+        self.holding(
+            core_actions::is_streaming(self.session().client(), self.to_relation()).err_into(),
+        )
     }
 
     /// Each row as the text of a JSON object.

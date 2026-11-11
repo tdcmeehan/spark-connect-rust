@@ -29,6 +29,7 @@ pub mod error;
 pub mod functions;
 pub mod group;
 pub mod merge;
+pub mod ml;
 pub mod observation;
 pub mod options;
 pub mod progress;
