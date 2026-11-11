@@ -18,7 +18,7 @@
 //! The deprecated names of the UDF API: `#[spark_wasm_udf]`, `spark_connect::wasm_udf` and
 //! the `wasm-udf` feature, the only one this crate enables, so the new names here build
 //! through it. `scripts/check_deprecated_udf_names.py` builds this file with the
-//! deprecation lint forced on and checks that each old name warns.
+//! deprecation lint forced on and checks which old names warn.
 
 use spark_connect::rust_udf;
 use spark_connect::session::SparkSession;
@@ -51,14 +51,19 @@ mod new_names {
 #[allow(deprecated)]
 fn the_deprecated_names_build_what_the_new_names_build() {
     use spark_connect::wasm_udf;
+    use spark_connect::wasm_udf::AbiType::Bool;
 
     let _: fn(&SparkSession) -> wasm_udf::UdfRegistration<'_> = SparkSession::udf;
+    let arguments: Vec<wasm_udf::AbiType> = {
+        use spark_connect::wasm_udf::AbiType::*;
+        vec![Str, I64]
+    };
     let by_hand: wasm_udf::UserDefinedFunction = wasm_udf::udf(
         "label",
         vec![0u8, 97, 115, 109],
         "spark_udf_label",
-        vec![wasm_udf::AbiType::Str, wasm_udf::AbiType::I64],
-        wasm_udf::AbiType::Bool,
+        arguments,
+        Bool,
     )
     .with_packer(wasm_udf::PythonPacker::default());
     let by_hand_with_the_new_names = rust_udf::udf(

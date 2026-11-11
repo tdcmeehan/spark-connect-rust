@@ -80,11 +80,12 @@ pub mod streaming;
 pub mod table_arg;
 pub mod tvf;
 /// The old name of [`rust_udf`], kept as a deprecated alias.
-// Its own aliases, not re-exports: a use of a re-exported item gets no deprecation warning.
+// Type aliases warn where they are used and re-exports don't; AbiType is re-exported anyway,
+// since its variants can't be imported through a type alias.
 #[cfg(feature = "rust-udf")]
 #[deprecated(note = "renamed `spark_connect::rust_udf`; the `wasm-udf` feature is now `rust-udf`")]
 pub mod wasm_udf {
-    pub type AbiType = crate::rust_udf::AbiType;
+    pub use crate::rust_udf::AbiType;
     pub type PythonPacker = crate::rust_udf::PythonPacker;
     pub type UdfRegistration<'a> = crate::rust_udf::UdfRegistration<'a>;
     pub type UserDefinedFunction = crate::rust_udf::UserDefinedFunction;
