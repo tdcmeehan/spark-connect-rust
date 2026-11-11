@@ -42,6 +42,7 @@ struct Shared {
     hook: Option<ExecutePlanHook>,
     version: OnceCell<String>,
     stopped: AtomicBool,
+    listener_bus: crate::streaming::Bus,
 }
 
 impl Session {
@@ -63,6 +64,7 @@ impl Session {
                 hook,
                 version: OnceCell::new(),
                 stopped: AtomicBool::new(false),
+                listener_bus: Default::default(),
             }),
             tags: Arc::from([]),
         }
@@ -78,6 +80,11 @@ impl Session {
 
     pub(crate) fn progress_handlers(&self) -> Arc<[ProgressHandler]> {
         Arc::clone(&self.shared.progress_handlers)
+    }
+
+    /// The subscription of the session to the events of its streaming queries.
+    pub(crate) fn listener_bus(&self) -> &crate::streaming::Bus {
+        &self.shared.listener_bus
     }
 
     /// `request` as the hook of the session's executions returns it, with the operation id of
@@ -540,8 +547,15 @@ mod tests {
         assert_send_sync::<crate::merge::WhenNotMatched>();
         assert_send_sync::<crate::merge::WhenNotMatchedBySource>();
         assert_send_sync::<crate::catalog::Catalog>();
+        assert_send_sync::<crate::streaming::DataStreamReader>();
+        assert_send_sync::<crate::streaming::DataStreamWriter>();
+        assert_send_sync::<crate::streaming::StreamingQuery>();
+        assert_send_sync::<crate::streaming::StreamingQueryManager>();
+        assert_send_sync::<crate::streaming::Explain>();
+        assert_send_sync::<crate::streaming::QueryEvent>();
         fn assert_send<T: Send>() {}
         assert_send::<crate::RecordBatchStream>();
+        assert_send::<crate::streaming::QueryEvents>();
         // Type-checked, never called: it would need a server.
         let _ = |session: Session| {
             let conf = session.conf();
@@ -581,6 +595,26 @@ mod tests {
             assert_send_static(conf.get_all());
             assert_send_static(conf.unset("k"));
             assert_send_static(conf.is_modifiable("k"));
+            let streams = session.streams();
+            assert_send_static(streams.events());
+            assert_send_static(streams.active());
+            assert_send_static(streams.get("id"));
+            assert_send_static(streams.await_any_termination(None));
+            assert_send_static(streams.reset_terminated());
+            assert_send_static(df.write_stream().start("p"));
+            assert_send_static(df.write_stream().start_without_path());
+            assert_send_static(df.write_stream().to_table("t"));
+        };
+        let _ = |query: crate::streaming::StreamingQuery| {
+            assert_send_static(query.is_active());
+            assert_send_static(query.status());
+            assert_send_static(query.stop());
+            assert_send_static(query.await_termination(None));
+            assert_send_static(query.last_progress());
+            assert_send_static(query.recent_progress());
+            assert_send_static(query.process_all_available());
+            assert_send_static(query.explain().into_future());
+            assert_send_static(query.exception());
         };
     }
 

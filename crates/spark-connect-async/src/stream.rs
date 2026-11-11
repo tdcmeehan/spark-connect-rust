@@ -47,6 +47,32 @@ impl Drop for InterruptOnDrop {
     }
 }
 
+/// The request of an execution of `plan` of `session`, with the handle's tags, a new operation
+/// id and the session's hook applied; that operation id; and the observer of the execution,
+/// which reports nothing once `abandoned` is set.
+pub(crate) fn prepared(
+    session: &Session,
+    plan: proto::plan::OpType,
+    abandoned: &Arc<AtomicBool>,
+) -> Result<(proto::ExecutePlanRequest, String, Observer)> {
+    check_callback_depth()?;
+    let mut request = core_execution::execute_plan_request(
+        session.session_id(),
+        session.tags().to_vec(),
+        proto::Plan {
+            op_type: Some(plan),
+        },
+    );
+    let operation_id = actions::operation_id(&mut request);
+    let request = session.hooked(request)?;
+    let observer = Observer::new(
+        session.progress_handlers(),
+        operation_id.clone(),
+        Arc::clone(abandoned),
+    );
+    Ok((request, operation_id, observer))
+}
+
 /// Starts the execution of `plan` of `session`, its request with the handle's tags, a new
 /// operation id and the session's hook applied, and returns what `start` returns once the
 /// server has accepted it, with the operation id.
@@ -62,22 +88,8 @@ async fn accepted<T: Send + 'static, F>(
 where
     F: Future<Output = spark_connect_core::error::Result<T>> + Send + 'static,
 {
-    check_callback_depth()?;
-    let mut request = core_execution::execute_plan_request(
-        session.session_id(),
-        session.tags().to_vec(),
-        proto::Plan {
-            op_type: Some(plan),
-        },
-    );
-    let operation_id = actions::operation_id(&mut request);
-    let request = session.hooked(request)?;
     let abandoned = Arc::new(AtomicBool::new(false));
-    let observer = Observer::new(
-        session.progress_handlers(),
-        operation_id.clone(),
-        Arc::clone(&abandoned),
-    );
+    let (request, operation_id, observer) = prepared(session, plan, &abandoned)?;
     let runtime = tokio::runtime::Handle::current();
     let mut guard = InterruptOnDrop {
         client: session.client(),

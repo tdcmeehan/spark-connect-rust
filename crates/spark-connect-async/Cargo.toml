@@ -19,6 +19,7 @@ arrow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 futures.workspace = true
 serde = "1"
+serde_json = "1"
 tokio.workspace = true
 tonic.workspace = true
 datafusion = { workspace = true, optional = true }

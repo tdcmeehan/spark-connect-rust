@@ -37,6 +37,7 @@ pub mod session;
 pub mod sql;
 pub mod stat;
 pub mod stream;
+pub mod streaming;
 pub mod tvf;
 pub mod value;
 pub mod window;

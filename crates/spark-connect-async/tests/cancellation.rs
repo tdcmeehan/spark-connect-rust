@@ -205,3 +205,127 @@ async fn a_session_whose_configuration_the_server_rejects_is_released() {
     assert!(error.message().contains("rejected"), "{error}");
     assert!(server.wait_for(|r| *r == Received::ReleaseSession).await);
 }
+
+/// The future of the wait `wait` of `query`.
+fn wait_of(
+    wait: &str,
+    query: &spark_connect_async::streaming::StreamingQuery,
+    session: &Session,
+) -> futures::future::BoxFuture<'static, spark_connect_async::Result<()>> {
+    use futures::FutureExt;
+    match wait {
+        "await_termination" => query.await_termination(None).map(|r| r.map(drop)).boxed(),
+        "process_all_available" => query.process_all_available().boxed(),
+        _ => session
+            .streams()
+            .await_any_termination(None)
+            .map(|r| r.map(drop))
+            .boxed(),
+    }
+}
+
+async fn executions(server: &Server) -> usize {
+    server
+        .received()
+        .iter()
+        .filter(|received| matches!(received, Received::Execute(_)))
+        .count()
+}
+
+async fn a_wait_dropped_before_the_server_accepts_it(server: &Server, wait: &str) {
+    let session = connect(server).await;
+    let query = session
+        .range(3)
+        .write_stream()
+        .format("memory")
+        .start_without_path()
+        .await
+        .unwrap();
+    server.wait_at(Wait::BeforeAccepting);
+    let waiting = tokio::spawn(wait_of(wait, &query, &session));
+    while executions(server).await < 2 {
+        assert!(server.wait_for(|r| matches!(r, Received::Execute(_))).await);
+        tokio::task::yield_now().await;
+    }
+    let operation_id = server.operation_id();
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    let id = operation_id.clone();
+    assert!(
+        server
+            .wait_for(|r| *r == Received::Interrupt(id.clone()))
+            .await,
+        "{wait}: not interrupted"
+    );
+    assert_eq!(
+        releases(server, &operation_id).await,
+        0,
+        "{wait}: released early"
+    );
+    server.open_gate();
+    let id = operation_id.clone();
+    assert!(
+        server
+            .wait_for(|r| *r == Received::ReleaseAll(id.clone()))
+            .await,
+        "{wait}: not released"
+    );
+    assert_eq!(releases(server, &operation_id).await, 1);
+}
+
+async fn a_wait_dropped_after_the_server_accepted_it(server: &Server, wait: &str) {
+    let session = connect(server).await;
+    let query = session
+        .range(3)
+        .write_stream()
+        .format("memory")
+        .start_without_path()
+        .await
+        .unwrap();
+    server.wait_at(Wait::AfterTheFirstBatch);
+    let waiting = tokio::spawn(wait_of(wait, &query, &session));
+    while executions(server).await < 2 {
+        assert!(server.wait_for(|r| matches!(r, Received::Execute(_))).await);
+        tokio::task::yield_now().await;
+    }
+    let operation_id = server.operation_id();
+    // The client releases each response that it has read.
+    let id = operation_id.clone();
+    assert!(
+        server
+            .wait_for(|r| *r == Received::ReleaseUntil(id.clone()))
+            .await
+    );
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    assert_eq!(releases(server, &operation_id).await, 1, "{wait}");
+    assert!(!interrupted(server, &operation_id), "{wait}: interrupted");
+    server.open_gate();
+}
+
+#[test]
+fn dropping_a_wait_of_a_streaming_query_stops_it_once_in_either_runtime() {
+    for flavor in ["current-thread", "multi-thread"] {
+        let mut runtime = match flavor {
+            "current-thread" => tokio::runtime::Builder::new_current_thread(),
+            _ => tokio::runtime::Builder::new_multi_thread(),
+        };
+        runtime.enable_all().build().unwrap().block_on(async {
+            for wait in [
+                "await_termination",
+                "process_all_available",
+                "await_any_termination",
+            ] {
+                for accepted in [false, true] {
+                    let server = Server::start();
+                    println!("{flavor}: {wait}, accepted {accepted}");
+                    if accepted {
+                        a_wait_dropped_after_the_server_accepted_it(&server, wait).await;
+                    } else {
+                        a_wait_dropped_before_the_server_accepts_it(&server, wait).await;
+                    }
+                }
+            }
+        });
+    }
+}

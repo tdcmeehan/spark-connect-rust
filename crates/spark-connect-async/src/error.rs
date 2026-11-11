@@ -94,6 +94,12 @@ impl Error {
         SparkError::value_msg(message).into()
     }
 
+    pub(crate) fn unsupported(message: impl Into<String>) -> Error {
+        let mut error = SparkError::connect_msg(message);
+        error.kind = SparkErrorKind::UnsupportedOperation;
+        error.into()
+    }
+
     pub(crate) fn decode(message: impl Into<String>) -> Error {
         Error(Box::new(Repr::Decode {
             message: message.into(),

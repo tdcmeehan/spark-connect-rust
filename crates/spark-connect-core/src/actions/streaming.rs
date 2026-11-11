@@ -36,19 +36,39 @@ pub async fn start(
 ) -> Result<Started> {
     let command = proto::command::CommandType::WriteStreamOperationStart(start);
     let (responses, _) = execute_command(client, plan_ids, tags, command, observer).await?;
+    started(
+        responses
+            .into_iter()
+            .filter_map(|response| response.response_type.and_then(start_result)),
+    )
+}
+
+/// The result of a start of a streaming query that `response` carries, if it is one. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn start_result(response: ResponseType) -> Option<proto::WriteStreamOperationStartResult> {
+    match response {
+        ResponseType::WriteStreamOperationStartResult(result) => Some(result),
+        _ => None,
+    }
+}
+
+/// The streaming query that `results`, the results of a start of a query, tell of. Not a stable
+/// API.
+#[doc(hidden)]
+pub fn started(
+    results: impl IntoIterator<Item = proto::WriteStreamOperationStartResult>,
+) -> Result<Started> {
     let mut started = Started::default();
-    for response in responses {
-        if let Some(ResponseType::WriteStreamOperationStartResult(result)) = response.response_type
-        {
-            if let Some(id) = result.query_id {
-                started.query_id = id.id;
-                started.run_id = id.run_id;
-            }
-            if !result.name.is_empty() {
-                started.name = Some(result.name);
-            }
-            started.started_event_json = result.query_started_event_json;
+    for result in results {
+        if let Some(id) = result.query_id {
+            started.query_id = id.id;
+            started.run_id = id.run_id;
         }
+        if !result.name.is_empty() {
+            started.name = Some(result.name);
+        }
+        started.started_event_json = result.query_started_event_json;
     }
     if started.query_id.is_empty() {
         return Err(SparkError::connect_msg(
@@ -68,18 +88,18 @@ pub async fn query_command(
     observer: impl ExecutionObserver,
 ) -> Result<proto::StreamingQueryCommandResult> {
     let command = proto::command::CommandType::StreamingQueryCommand(command);
-    let result = command_result(
-        client,
-        plan_ids,
-        tags,
-        command,
-        observer,
-        |result| match result {
-            ResponseType::StreamingQueryCommandResult(result) => Some(result),
-            _ => None,
-        },
-    );
+    let result = command_result(client, plan_ids, tags, command, observer, query_result);
     Ok(result.await?.unwrap_or_default())
+}
+
+/// The result of a command of a streaming query that `response` carries, if it is one. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn query_result(response: ResponseType) -> Option<proto::StreamingQueryCommandResult> {
+    match response {
+        ResponseType::StreamingQueryCommandResult(result) => Some(result),
+        _ => None,
+    }
 }
 
 /// Runs `command`, a command of the streaming query manager, and returns its result, or the
@@ -92,18 +112,18 @@ pub async fn manager_command(
     observer: impl ExecutionObserver,
 ) -> Result<proto::StreamingQueryManagerCommandResult> {
     let command = proto::command::CommandType::StreamingQueryManagerCommand(command);
-    let result = command_result(
-        client,
-        plan_ids,
-        tags,
-        command,
-        observer,
-        |result| match result {
-            ResponseType::StreamingQueryManagerCommandResult(result) => Some(result),
-            _ => None,
-        },
-    );
+    let result = command_result(client, plan_ids, tags, command, observer, manager_result);
     Ok(result.await?.unwrap_or_default())
+}
+
+/// The result of a command of the streaming query manager that `response` carries, if it is
+/// one. Not a stable API.
+#[doc(hidden)]
+pub fn manager_result(response: ResponseType) -> Option<proto::StreamingQueryManagerCommandResult> {
+    match response {
+        ResponseType::StreamingQueryManagerCommandResult(result) => Some(result),
+        _ => None,
+    }
 }
 
 /// Unsubscribes the session from the events of its listener bus.
@@ -113,15 +133,36 @@ pub async fn unsubscribe(
     tags: Vec<String>,
     observer: impl ExecutionObserver,
 ) -> Result<()> {
-    let command = proto::StreamingQueryListenerBusCommand {
-        command: Some(
-            proto::streaming_query_listener_bus_command::Command::RemoveListenerBusListener(true),
-        ),
-    };
-    let command = proto::command::CommandType::StreamingQueryListenerBusCommand(command);
-    execute_command(client, plan_ids, tags, command, observer)
+    execute_command(client, plan_ids, tags, unsubscribe_command(), observer)
         .await
         .map(drop)
+}
+
+/// The command that subscribes a session to the events of its listener bus. Not a stable API.
+#[doc(hidden)]
+pub fn subscribe_command() -> proto::command::CommandType {
+    listener_bus_command(
+        proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
+    )
+}
+
+/// The command that unsubscribes a session from the events of its listener bus. Not a stable
+/// API.
+#[doc(hidden)]
+pub fn unsubscribe_command() -> proto::command::CommandType {
+    listener_bus_command(
+        proto::streaming_query_listener_bus_command::Command::RemoveListenerBusListener(true),
+    )
+}
+
+fn listener_bus_command(
+    command: proto::streaming_query_listener_bus_command::Command,
+) -> proto::command::CommandType {
+    proto::command::CommandType::StreamingQueryListenerBusCommand(
+        proto::StreamingQueryListenerBusCommand {
+            command: Some(command),
+        },
+    )
 }
 
 /// The events of the streaming query listener bus of a session, as the server sends them: each
@@ -140,24 +181,25 @@ impl<O: ExecutionObserver> ListenerEvents<O> {
         plan_ids: Arc<PlanIds>,
         observer: O,
     ) -> Result<Self> {
-        let command = proto::StreamingQueryListenerBusCommand {
-            command: Some(
-                proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
-            ),
-        };
         let request = execution::execute_plan_request(
             client.session_id(),
             Vec::new(),
-            execution::command(
-                proto::command::CommandType::StreamingQueryListenerBusCommand(command),
-            ),
+            execution::command(subscribe_command()),
         );
-        Ok(ListenerEvents {
-            execution: Execution::start(client, plan_ids, request, observer).await?,
+        let execution = Execution::start(client, plan_ids, request, observer).await?;
+        Ok(Self::of(execution))
+    }
+
+    /// The events of `execution`, a subscription to the listener bus that has started. Not a
+    /// stable API.
+    #[doc(hidden)]
+    pub fn of(execution: Execution<O>) -> Self {
+        ListenerEvents {
+            execution,
             buffered: VecDeque::new(),
             done: false,
             cancel: None,
-        })
+        }
     }
 
     /// Ends the events like the end of the stream once `cancel` completes, also while a

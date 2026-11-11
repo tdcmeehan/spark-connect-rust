@@ -17,6 +17,12 @@
 
 //! An in-process Spark Connect server whose executions wait at a gate that the test opens, so
 //! that a test can drop a client future at a chosen point of an execution.
+//!
+//! Its listener bus acts as Spark 4.3.0's: it acknowledges a subscription and keeps its stream
+//! open until a removal, and it never answers a subscription while it holds another.
+
+// Each test binary uses a part of the server.
+#![allow(dead_code)]
 
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -28,6 +34,7 @@ use arrow::array::Int64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use futures::channel::mpsc;
 use futures::{stream, Stream};
 use prost::Message;
 use spark_connect_core::bytes_codec::BytesCodec;
@@ -37,6 +44,8 @@ use tonic::body::Body;
 use tonic::codegen::{http, BoxFuture, Service};
 use tonic::server::{Grpc, NamedService, ServerStreamingService, UnaryService};
 use tonic::{Request, Response, Status};
+
+use proto::execute_plan_response::ResponseType;
 
 /// Where an execution waits for the gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,10 +61,27 @@ pub enum Wait {
     BeforeReattaching,
 }
 
+/// Where the listener bus waits for its gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BusWait {
+    /// Nowhere.
+    Never,
+    /// Before it answers a subscription, so before the client has a stream.
+    BeforeAcknowledging,
+    /// After a first response to a subscription, a progress of one task rather than its
+    /// acknowledgement, before the rest: the client has accepted the stream, but not read the
+    /// acknowledgement.
+    AfterAccepting,
+    /// Before it removes the subscription and answers the removal.
+    BeforeRemoving,
+}
+
 /// What the server received.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Received {
     Execute(String),
+    Subscribe(String),
+    Unsubscribe(String),
     Reattach(String),
     Interrupt(String),
     ReleaseAll(String),
@@ -73,6 +99,41 @@ struct State {
     wait: Mutex<Wait>,
     gate: Semaphore,
     received: Mutex<Vec<Received>>,
+    bus_wait: Mutex<BusWait>,
+    bus_gate: Semaphore,
+    subscription: Mutex<Option<Subscription>>,
+}
+
+/// The subscription that the listener bus holds, and the stream of its responses.
+struct Subscription {
+    sender: mpsc::UnboundedSender<Result<Vec<u8>, Status>>,
+    session_id: String,
+    operation_id: String,
+    next: usize,
+}
+
+impl Subscription {
+    fn send(&mut self, response_type: proto::execute_plan_response::ResponseType) {
+        let response = respond(
+            &self.session_id,
+            &self.operation_id,
+            self.next,
+            response_type,
+        );
+        self.next += 1;
+        let _ = self.sender.unbounded_send(Ok(response.encode_to_vec()));
+    }
+}
+
+/// The id, run id and name of the queries that the server starts.
+pub const QUERY_ID: &str = "00000000-0000-4000-8000-000000000001";
+pub const QUERY_RUN_ID: &str = "00000000-0000-4000-8000-000000000002";
+
+/// The JSON of the started event of a query named `name`.
+pub fn started_json(name: &str) -> String {
+    format!(
+        r#"{{"id":"{QUERY_ID}","runId":"{QUERY_RUN_ID}","name":"{name}","timestamp":"2026-11-11T17:57:24.633Z","jobTags":[]}}"#
+    )
 }
 
 /// The key of a configuration that the server rejects.
@@ -84,6 +145,9 @@ impl Server {
             wait: Mutex::new(Wait::Never),
             gate: Semaphore::new(0),
             received: Mutex::new(Vec::new()),
+            bus_wait: Mutex::new(BusWait::Never),
+            bus_gate: Semaphore::new(0),
+            subscription: Mutex::new(None),
         });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -126,6 +190,67 @@ impl Server {
         self.state.received.lock().unwrap().clone()
     }
 
+    pub fn bus_wait_at(&self, wait: BusWait) {
+        *self.state.bus_wait.lock().unwrap() = wait;
+    }
+
+    pub fn open_bus_gate(&self) {
+        self.state.bus_gate.add_permits(1);
+    }
+
+    /// Holds the subscription of another client of the session, so that the bus answers no
+    /// other until it is removed.
+    pub fn hold_other_subscription(&self) {
+        let (sender, _) = mpsc::unbounded();
+        *self.state.subscription.lock().unwrap() = Some(Subscription {
+            sender,
+            session_id: String::new(),
+            operation_id: "other".to_string(),
+            next: 0,
+        });
+    }
+
+    /// Whether the bus holds a subscription.
+    pub fn subscribed(&self) -> bool {
+        self.state.subscription.lock().unwrap().is_some()
+    }
+
+    /// Sends an event of the type `event_type` with the JSON `json` to the subscription.
+    pub fn send_event(&self, event_type: proto::StreamingQueryEventType, json: &str) {
+        let mut subscription = self.state.subscription.lock().unwrap();
+        let subscription = subscription.as_mut().expect("no subscription");
+        subscription.send(ResponseType::StreamingQueryListenerEventsResult(
+            proto::StreamingQueryListenerEventsResult {
+                events: vec![proto::StreamingQueryListenerEvent {
+                    event_json: json.to_string(),
+                    event_type: event_type as i32,
+                }],
+                listener_bus_listener_added: None,
+            },
+        ));
+    }
+
+    /// Ends the subscription as a removal by another client of the session does.
+    pub fn end_subscription(&self) {
+        let mut subscription = self
+            .state
+            .subscription
+            .lock()
+            .unwrap()
+            .take()
+            .expect("no subscription");
+        subscription.send(ResponseType::ResultComplete(Default::default()));
+    }
+
+    /// Fails the stream of the subscription; the bus still holds the subscription.
+    pub fn fail_subscription(&self) {
+        let subscription = self.state.subscription.lock().unwrap();
+        let subscription = subscription.as_ref().expect("no subscription");
+        let _ = subscription
+            .sender
+            .unbounded_send(Err(Status::internal("the subscription failed")));
+    }
+
     /// Waits up to five seconds for a request that `found` accepts, and returns whether one
     /// came.
     pub async fn wait_for(&self, found: impl Fn(&Received) -> bool) -> bool {
@@ -159,6 +284,108 @@ impl State {
 
     async fn pass_the_gate(&self) {
         self.gate.acquire().await.unwrap().forget();
+    }
+
+    async fn pass_the_bus_gate(&self) {
+        self.bus_gate.acquire().await.unwrap().forget();
+    }
+
+    /// Holds a subscription, and returns its stream, which starts with the acknowledgement
+    /// at `index`; or `None` while the bus holds another.
+    fn register(&self, session_id: &str, operation_id: &str, index: usize) -> Option<ByteStream> {
+        let mut held = self.subscription.lock().unwrap();
+        if held.is_some() {
+            return None;
+        }
+        let (sender, receiver) = mpsc::unbounded();
+        let mut subscription = Subscription {
+            sender,
+            session_id: session_id.to_string(),
+            operation_id: operation_id.to_string(),
+            next: index,
+        };
+        subscription.send(ResponseType::StreamingQueryListenerEventsResult(
+            proto::StreamingQueryListenerEventsResult {
+                events: Vec::new(),
+                listener_bus_listener_added: Some(true),
+            },
+        ));
+        *held = Some(subscription);
+        Some(Box::pin(receiver))
+    }
+
+    /// The responses to a subscription, or `None` while the bus holds another, which Spark
+    /// never answers.
+    async fn subscribe(
+        self: &Arc<Self>,
+        session_id: String,
+        operation_id: String,
+    ) -> Option<ByteStream> {
+        let wait = *self.bus_wait.lock().unwrap();
+        if wait == BusWait::BeforeAcknowledging {
+            self.pass_the_bus_gate().await;
+        }
+        if wait != BusWait::AfterAccepting {
+            return self.register(&session_id, &operation_id, 0);
+        }
+        let first = respond(
+            &session_id,
+            &operation_id,
+            0,
+            ResponseType::ExecutionProgress(proto::execute_plan_response::ExecutionProgress {
+                stages: vec![
+                    proto::execute_plan_response::execution_progress::StageInfo {
+                        num_tasks: 1,
+                        ..Default::default()
+                    },
+                ],
+                num_inflight_tasks: 1,
+            }),
+        );
+        let state = Arc::clone(self);
+        let rest = stream::once(async move {
+            state.pass_the_bus_gate().await;
+            state
+                .register(&session_id, &operation_id, 1)
+                .unwrap_or_else(|| Box::pin(stream::pending()))
+        });
+        Some(Box::pin(futures::StreamExt::chain(
+            stream::iter([Ok(first.encode_to_vec())]),
+            futures::StreamExt::flatten(rest),
+        )))
+    }
+
+    /// Removes the subscription, ending its stream.
+    async fn unsubscribe(&self) {
+        if *self.bus_wait.lock().unwrap() == BusWait::BeforeRemoving {
+            self.pass_the_bus_gate().await;
+        }
+        if let Some(mut subscription) = self.subscription.lock().unwrap().take() {
+            subscription.send(ResponseType::ResultComplete(Default::default()));
+        }
+    }
+}
+
+fn respond(
+    session_id: &str,
+    operation_id: &str,
+    index: usize,
+    response_type: proto::execute_plan_response::ResponseType,
+) -> proto::ExecutePlanResponse {
+    proto::ExecutePlanResponse {
+        session_id: session_id.to_string(),
+        operation_id: operation_id.to_string(),
+        response_id: format!("response-{index}"),
+        response_type: Some(response_type),
+        ..Default::default()
+    }
+}
+
+/// The command of `request`, if it executes one.
+fn command_of(request: &proto::ExecutePlanRequest) -> Option<&proto::command::CommandType> {
+    match request.plan.as_ref()?.op_type.as_ref()? {
+        proto::plan::OpType::Command(command) => command.command_type.as_ref(),
+        _ => None,
     }
 }
 
@@ -287,6 +514,54 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                 let request = proto::ExecutePlanRequest::decode(&bytes[..]).unwrap();
                 let operation_id = request.operation_id.clone().unwrap_or_default();
                 state.receive(Received::Execute(operation_id.clone()));
+                use proto::command::CommandType as C;
+                use proto::streaming_query_listener_bus_command::Command as Bus;
+                match command_of(&request) {
+                    Some(C::StreamingQueryListenerBusCommand(bus)) => match bus.command {
+                        Some(Bus::AddListenerBusListener(_)) => {
+                            state.receive(Received::Subscribe(operation_id.clone()));
+                            let session_id = request.session_id.clone();
+                            match state.subscribe(session_id, operation_id.clone()).await {
+                                Some(responses) => return Ok(Response::new(responses)),
+                                None => std::future::pending::<()>().await,
+                            }
+                        }
+                        _ => {
+                            state.receive(Received::Unsubscribe(operation_id.clone()));
+                            state.unsubscribe().await;
+                            let complete = respond(
+                                &request.session_id,
+                                &operation_id,
+                                0,
+                                ResponseType::ResultComplete(Default::default()),
+                            );
+                            return Ok(Response::new(encoded(vec![complete])));
+                        }
+                    },
+                    Some(C::WriteStreamOperationStart(start)) => {
+                        let started = proto::WriteStreamOperationStartResult {
+                            query_id: Some(proto::StreamingQueryInstanceId {
+                                id: QUERY_ID.to_string(),
+                                run_id: QUERY_RUN_ID.to_string(),
+                            }),
+                            name: start.query_name.clone(),
+                            query_started_event_json: state
+                                .subscription
+                                .lock()
+                                .unwrap()
+                                .is_some()
+                                .then(|| started_json(&start.query_name)),
+                        };
+                        let respond = |index, response_type| {
+                            respond(&request.session_id, &operation_id, index, response_type)
+                        };
+                        return Ok(Response::new(encoded(vec![
+                            respond(0, ResponseType::WriteStreamOperationStartResult(started)),
+                            respond(1, ResponseType::ResultComplete(Default::default())),
+                        ])));
+                    }
+                    _ => {}
+                }
                 (request.session_id, operation_id)
             };
             let respond = |index: usize, response_type| proto::ExecutePlanResponse {
