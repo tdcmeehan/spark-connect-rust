@@ -127,6 +127,13 @@ impl Ctx {
         );
     }
 
+    /// Has the server keep the listener bus subscriptions of the case open until the client
+    /// removes its listener, as Spark does: one that ended at once would end the client's bus
+    /// before the case removes the listener.
+    pub fn hold_listener_bus(&self) {
+        self.recorder.hold_listener_bus(true);
+    }
+
     /// Masks `value`, a random id, wherever it occurs in what the case records.
     pub fn mask(&self, value: &str) {
         self.masks.borrow_mut().push(value.to_string());
@@ -270,6 +277,7 @@ fn run(
                 .unwrap_or_default()
         ),
     };
+    recorder.hold_listener_bus(false);
     let mut entries = with_linux_client_type(mask(recorder.take(), &ctx.masks.borrow()));
     if ctx.unordered.get() {
         entries.sort_by(|a, b| (&a.kind, &a.bytes).cmp(&(&b.kind, &b.bytes)));

@@ -146,6 +146,7 @@ pub fn cases() -> Vec<Case> {
         },
         "StreamingQueryManager::add_listener" => |c| {
             c.unordered();
+            c.hold_listener_bus();
             let streams = c.spark.streams();
             let id = streams.add_listener(Arc::new(Listener))?;
             streams.remove_listener(&id)?;
@@ -154,12 +155,14 @@ pub fn cases() -> Vec<Case> {
             streams.close()
         },
         "StreamingQueryManager::remove_listener_found" => |c| {
+            c.hold_listener_bus();
             let streams = c.spark.streams();
             let id = streams.add_listener(Arc::new(Listener))?;
             c.message("Text", &format!("{} {}", streams.remove_listener_found(&id)?, streams.remove_listener_found(&id)?));
             Ok(())
         },
         "StreamingQueryManager::listeners" => |c| {
+            c.hold_listener_bus();
             let streams = c.spark.streams();
             let id = streams.add_listener(Arc::new(Listener))?;
             c.message("Text", &format!("{}", streams.listeners().len()));

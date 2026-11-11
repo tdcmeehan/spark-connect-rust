@@ -21,6 +21,7 @@
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll};
 
@@ -50,6 +51,8 @@ pub struct Recorder {
     /// The `ReleaseAll` requests, which are not entries: they are sent in the background.
     released_all: Mutex<usize>,
     released: Condvar,
+    holds_listener_bus: AtomicBool,
+    held_subscription_end: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Recorder {
@@ -90,6 +93,28 @@ impl Recorder {
     fn release_all(&self) {
         *self.released_all.lock().unwrap() += 1;
         self.released.notify_all();
+    }
+
+    /// Whether the server keeps each subscription to the listener bus open, after its
+    /// acknowledgement, until the client removes its listener, as Spark does.
+    #[allow(dead_code)]
+    pub fn hold_listener_bus(&self, hold: bool) {
+        self.holds_listener_bus.store(hold, Ordering::SeqCst);
+    }
+
+    fn hold_subscription(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        if !self.holds_listener_bus.load(Ordering::SeqCst) {
+            return None;
+        }
+        let (end, ended) = tokio::sync::oneshot::channel();
+        *self.held_subscription_end.lock().unwrap() = Some(end);
+        Some(ended)
+    }
+
+    fn end_held_subscription(&self) {
+        if let Some(end) = self.held_subscription_end.lock().unwrap().take() {
+            let _ = end.send(());
+        }
     }
 }
 
@@ -275,6 +300,7 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
     type Future = BoxFuture<Response<ByteStream>, Status>;
 
     fn call(&mut self, request: Request<Vec<u8>>) -> Self::Future {
+        use proto::streaming_query_listener_bus_command::Command as Bus;
         let bytes = request.into_inner();
         let responses = if self.method == "ReattachExecute" {
             self.record("ReattachExecuteRequest", &bytes);
@@ -285,7 +311,18 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                 .collect()
         } else {
             self.record("ExecutePlanRequest", &bytes);
-            execute(proto::ExecutePlanRequest::decode(&bytes[..]).unwrap())
+            let request = proto::ExecutePlanRequest::decode(&bytes[..]).unwrap();
+            match listener_bus_command(&request) {
+                Some(Bus::AddListenerBusListener(_)) => {
+                    if let Some(ended) = self.recorder.hold_subscription() {
+                        let stream = held_subscription(&request, ended);
+                        return Box::pin(async move { Ok(Response::new(stream)) });
+                    }
+                }
+                Some(Bus::RemoveListenerBusListener(_)) => self.recorder.end_held_subscription(),
+                _ => {}
+            }
+            execute(request)
         };
         let stream: ByteStream =
             Box::pin(stream::iter(responses.into_iter().map(|response| {
@@ -477,6 +514,46 @@ fn complete(
         .enumerate()
         .map(|(index, result)| response(session_id, operation_id, index, result))
         .collect()
+}
+
+fn listener_bus_command(
+    request: &proto::ExecutePlanRequest,
+) -> Option<&proto::streaming_query_listener_bus_command::Command> {
+    use proto::command::CommandType as C;
+    match request.plan.as_ref()?.op_type.as_ref()? {
+        proto::plan::OpType::Command(proto::Command {
+            command_type: Some(C::StreamingQueryListenerBusCommand(bus)),
+        }) => bus.command.as_ref(),
+        _ => None,
+    }
+}
+
+/// Spark's responses to a subscription to the listener bus: its acknowledgement, then the end of
+/// the results once `ended` completes.
+fn held_subscription(
+    request: &proto::ExecutePlanRequest,
+    ended: tokio::sync::oneshot::Receiver<()>,
+) -> ByteStream {
+    use proto::execute_plan_response::ResponseType;
+    let operation_id = request.operation_id.clone().unwrap_or_default();
+    let added = ResponseType::StreamingQueryListenerEventsResult(
+        proto::StreamingQueryListenerEventsResult {
+            events: Vec::new(),
+            listener_bus_listener_added: Some(true),
+        },
+    );
+    let mut responses = complete(&request.session_id, &operation_id, vec![added]);
+    let result_complete = responses.pop().unwrap().encode_to_vec();
+    let acknowledgement = stream::iter(
+        responses
+            .into_iter()
+            .map(|response| Ok(response.encode_to_vec())),
+    );
+    let end = stream::once(async move {
+        let _ = ended.await;
+        Ok(result_complete)
+    });
+    Box::pin(acknowledgement.chain(end))
 }
 
 fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
