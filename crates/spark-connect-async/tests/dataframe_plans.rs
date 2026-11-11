@@ -744,6 +744,26 @@ async fn a_sample_without_a_seed_chooses_one_that_each_request_sends() {
     assert_ne!(seed(&sample), seed(&other));
 }
 
+#[tokio::test]
+async fn a_sample_by_without_a_seed_draws_one_from_zero_to_i64_max_for_each_call() {
+    let s = Sessions::connect().await;
+    let seed = || match s
+        .new_df()
+        .stat()
+        .sample_by("k", [(0, 0.5)], None)
+        .to_relation()
+        .rel_type
+    {
+        Some(spark_connect_proto::relation::RelType::SampleBy(sample_by)) => {
+            sample_by.seed.expect("no seed sent")
+        }
+        other => panic!("not a sample_by: {other:?}"),
+    };
+    let (first, second) = (seed(), seed());
+    assert!(first >= 0 && second >= 0, "{first}, {second}");
+    assert_ne!(first, second, "the same seed twice");
+}
+
 #[test]
 fn weights_of_a_split_that_are_negative_or_add_up_to_zero_are_rejected() {
     let cases: [(&[f64], &str, &str); 4] = [
@@ -913,11 +933,11 @@ async fn statistics_and_missing_values_have_the_plans_of_the_old_api() {
                 .sample_by("k", [(0, 0.5), (1, 0.25)], Some(7)),
         ),
         (
-            "sample_by without a seed",
-            s.old_df().stat().sample_by("k", strata, None),
+            "sample_by with the seed 0",
+            s.old_df().stat().sample_by("k", strata, Some(0)),
             s.new_df()
                 .stat()
-                .sample_by("k", [(0, 0.5), (1, 0.25)], None),
+                .sample_by("k", [(0, 0.5), (1, 0.25)], Some(0)),
         ),
         (
             "dropna",

@@ -11,7 +11,7 @@ use spark_connect_core::plan::{self, LogicalPlan};
 use crate::column::{Column, IntoLiteral};
 use crate::dataframe::{strings, DataFrame};
 use crate::error::Result;
-use crate::options::{DropNa, DropRows, Fill, FillValue, Replace};
+use crate::options::{random_seed, DropNa, DropRows, Fill, FillValue, Replace};
 
 /// The statistics of [`DataFrame::stat`].
 #[derive(Clone)]
@@ -56,7 +56,7 @@ impl StatFunctions {
 
     /// A sample of the rows without replacement whose values of `column` are a stratum of
     /// `fractions`, each with the probability of its fraction; a value of no stratum is not
-    /// chosen. The server chooses a seed without `seed`.
+    /// chosen. `seed` is optional: `None` draws a random seed, which the plan keeps.
     pub fn sample_by(
         &self,
         column: impl Into<Column>,
@@ -67,11 +67,12 @@ impl StatFunctions {
             .into_iter()
             .map(|(stratum, fraction)| (Expression::literal(stratum.into_literal()), fraction))
             .collect();
+        let seed = seed.unwrap_or_else(random_seed);
         self.with_input(|input| LogicalPlan::StatSampleBy {
             input,
             col: column.into().expression().clone(),
             fractions,
-            seed,
+            seed: Some(seed),
         })
     }
 
