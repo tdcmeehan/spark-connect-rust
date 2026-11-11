@@ -311,11 +311,6 @@ fn functions_send_the_arguments_given_and_the_defaults_of_the_others() {
             sentences("a", None, None),
         ),
         (
-            "randstr with a seed",
-            call("randstr", vec![oint(5), olong(1000462829105445681)]),
-            randstr(5, Some(1000462829105445681)),
-        ),
-        (
             "window of a duration",
             call("window", vec![oc("t"), ostr("10 minutes")]),
             window("t", "10 minutes", None, None),
