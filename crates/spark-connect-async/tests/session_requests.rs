@@ -25,9 +25,11 @@ mod server;
 use std::sync::{Arc, OnceLock};
 
 use futures::future::BoxFuture;
+use prost::Message;
 use spark_connect::session::SparkSession;
 use spark_connect_async::session::ArtifactKind;
 use spark_connect_async::Session;
+use spark_connect_proto as proto;
 
 const SESSION_ID: &str = "00000000-0000-4000-8000-00000000005e";
 
@@ -251,11 +253,42 @@ async fn the_session_api_sends_the_requests_of_the_old_api() {
         (case.new)(url.clone()).await;
         let new = recorder.take();
         assert!(!old.is_empty(), "{}: the old API sent nothing", case.name);
-        if old != new {
+        if !same_requests(&old, &new) {
             differ.push(format!("{}: old {old:?}\nnew {new:?}", case.name));
         }
     }
     assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// Whether two recordings hold the same requests. prost encodes the entries of a map field in the
+/// order of its `HashMap`, which differs from map to map, so encodings that differ may still be
+/// the same message.
+fn same_requests(old: &[server::Entry], new: &[server::Entry]) -> bool {
+    old.len() == new.len()
+        && old.iter().zip(new).all(|(old, new)| {
+            old.kind == new.kind
+                && (old.bytes == new.bytes || same_message(&old.kind, &old.bytes, &new.bytes))
+        })
+}
+
+/// Whether two encodings of a request of `kind` decode to the same message.
+fn same_message(kind: &str, old: &[u8], new: &[u8]) -> bool {
+    fn decoded<M: Message + Default + PartialEq>(old: &[u8], new: &[u8]) -> bool {
+        M::decode(old).unwrap() == M::decode(new).unwrap()
+    }
+    match kind {
+        "ExecutePlanRequest" => decoded::<proto::ExecutePlanRequest>(old, new),
+        "AnalyzePlanRequest" => decoded::<proto::AnalyzePlanRequest>(old, new),
+        "ConfigRequest" => decoded::<proto::ConfigRequest>(old, new),
+        "AddArtifactsRequest" => decoded::<proto::AddArtifactsRequest>(old, new),
+        "ArtifactStatusesRequest" => decoded::<proto::ArtifactStatusesRequest>(old, new),
+        "InterruptRequest" => decoded::<proto::InterruptRequest>(old, new),
+        "ReattachExecuteRequest" => decoded::<proto::ReattachExecuteRequest>(old, new),
+        "ReleaseSessionRequest" => decoded::<proto::ReleaseSessionRequest>(old, new),
+        "CloneSessionRequest" => decoded::<proto::CloneSessionRequest>(old, new),
+        "FetchErrorDetailsRequest" => decoded::<proto::FetchErrorDetailsRequest>(old, new),
+        other => panic!("no message type for requests of kind {other}"),
+    }
 }
 
 #[tokio::test]
@@ -281,4 +314,62 @@ async fn the_parameters_of_the_builder_are_those_of_the_connection_string() {
     session.version().await.unwrap();
     assert_eq!(session.session_id(), SESSION_ID);
     assert_eq!(old, recorder.take());
+}
+
+/// A request to read with one option, `key` set to `value`.
+fn read_with_option(key: &str, value: &str) -> proto::ExecutePlanRequest {
+    let source = proto::read::DataSource {
+        format: Some("csv".to_string()),
+        options: [(key.to_string(), value.to_string())].into(),
+        ..Default::default()
+    };
+    let read = proto::Read {
+        read_type: Some(proto::read::ReadType::DataSource(source)),
+        ..Default::default()
+    };
+    proto::ExecutePlanRequest {
+        plan: Some(proto::Plan {
+            op_type: Some(proto::plan::OpType::Root(proto::Relation {
+                rel_type: Some(proto::relation::RelType::Read(read)),
+                ..Default::default()
+            })),
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn recorded_requests_compare_as_messages_whatever_the_order_of_their_map_entries() {
+    // Protobuf merges the occurrences of a field, so requests encoded one after the other decode
+    // as one request with all of their options: each order of the entries, without a HashMap.
+    let recorded = |kind: &str, options: &[(&str, &str)]| {
+        let bytes = options
+            .iter()
+            .flat_map(|(key, value)| read_with_option(key, value).encode_to_vec())
+            .collect();
+        vec![server::Entry {
+            kind: kind.to_string(),
+            bytes,
+        }]
+    };
+    let old = recorded("ExecutePlanRequest", &[("a", "1"), ("b", "2")]);
+    let reordered = recorded("ExecutePlanRequest", &[("b", "2"), ("a", "1")]);
+    assert_ne!(old[0].bytes, reordered[0].bytes);
+    let cases = [
+        ("the options in another order", reordered, true),
+        (
+            "another value",
+            recorded("ExecutePlanRequest", &[("a", "1"), ("b", "3")]),
+            false,
+        ),
+        (
+            "another kind",
+            recorded("AnalyzePlanRequest", &[("a", "1"), ("b", "2")]),
+            false,
+        ),
+        ("no request", Vec::new(), false),
+    ];
+    for (case, new, same) in cases {
+        assert_eq!(same_requests(&old, &new), same, "{case}");
+    }
 }
