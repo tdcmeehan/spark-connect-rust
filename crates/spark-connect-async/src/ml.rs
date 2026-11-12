@@ -220,49 +220,35 @@ fn transformed(
 }
 
 /// A model that the server fitted and keeps for the session of its fit, with the params of its
-/// estimator, which its transforms send. Its clones share the model.
+/// estimator, which its transforms send. Its clones share the model, which the last handle to
+/// drop deletes.
 #[derive(Clone)]
 struct Fitted {
-    kept: Arc<Kept>,
-    params: Params,
-}
-
-/// The reference to a model that the server keeps, which the last handle to drop deletes.
-struct Kept {
     reference: proto::ObjectRef,
-    session: Session,
-    runtime: tokio::runtime::Handle,
-}
-
-impl Drop for Kept {
-    fn drop(&mut self) {
-        let command = core_ml::delete(vec![std::mem::take(&mut self.reference)]);
-        stream::spawn_command(&self.runtime, self.session.clone(), command);
-    }
+    kept: Arc<stream::RemoveOnDrop>,
+    params: Params,
 }
 
 impl fmt::Debug for Fitted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Fitted")
-            .field("id", &self.kept.reference.id)
+            .field("id", &self.reference.id)
             .finish_non_exhaustive()
     }
 }
 
 impl Fitted {
     fn new(reference: proto::ObjectRef, session: Session, params: Params) -> Self {
+        let delete = core_ml::delete(vec![reference.clone()]);
         Fitted {
-            kept: Arc::new(Kept {
-                reference,
-                session,
-                runtime: tokio::runtime::Handle::current(),
-            }),
+            reference,
+            kept: Arc::new(stream::RemoveOnDrop::new(session, delete)),
             params,
         }
     }
 
     fn transform(&self, dataset: &DataFrame) -> DataFrame {
-        let operator = proto::ml_relation::transform::Operator::ObjRef(self.kept.reference.clone());
+        let operator = proto::ml_relation::transform::Operator::ObjRef(self.reference.clone());
         let owner = RelationOwner(Arc::clone(&self.kept) as Arc<dyn Any + Send + Sync>);
         transformed(dataset, operator, &self.params, Some(owner))
     }
@@ -273,8 +259,8 @@ impl Fitted {
         name: &'static str,
         read: fn(&proto::expression::Literal) -> Result<T>,
     ) -> impl Future<Output = Result<T>> + Send + 'static {
-        let command = core_ml::fetch(self.kept.reference.clone(), name);
-        let session = self.kept.session.clone();
+        let command = core_ml::fetch(self.reference.clone(), name);
+        let session = self.kept.session().clone();
         let kept = Arc::clone(&self.kept);
         async move {
             let value = stream::command_result(session, command, fetched).await;

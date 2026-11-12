@@ -128,19 +128,12 @@ pub struct DataflowGraph {
 /// The graph that the server keeps, which the last handle to drop removes.
 struct Kept {
     id: String,
-    session: Session,
-    runtime: tokio::runtime::Handle,
+    /// Dropped before `plans`, so the graph is removed before what its flows refer to.
+    removal: stream::RemoveOnDrop,
     /// The plans of the DataFrames that the flows of the graph were defined from. The server
     /// reads them when a run runs the flows, so the graph keeps what they refer to, such as the
     /// fitted models and the checkpoints that the server keeps for them.
     plans: Mutex<Vec<Arc<LogicalPlan>>>,
-}
-
-impl Drop for Kept {
-    fn drop(&mut self) {
-        let command = core::drop_dataflow_graph(&self.id);
-        stream::spawn_command(&self.runtime, self.session.clone(), command);
-    }
 }
 
 impl fmt::Debug for DataflowGraph {
@@ -155,9 +148,8 @@ impl DataflowGraph {
     fn new(id: String, session: Session) -> Self {
         DataflowGraph {
             kept: Arc::new(Kept {
+                removal: stream::RemoveOnDrop::new(session, core::drop_dataflow_graph(&id)),
                 id,
-                session,
-                runtime: tokio::runtime::Handle::current(),
                 plans: Mutex::new(Vec::new()),
             }),
         }
@@ -170,7 +162,7 @@ impl DataflowGraph {
 
     /// The session of the graph.
     pub fn session(&self) -> &Session {
-        &self.kept.session
+        self.kept.removal.session()
     }
 
     fn keep(&self, plan: Arc<LogicalPlan>) {

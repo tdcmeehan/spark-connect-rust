@@ -202,7 +202,7 @@ pub(crate) fn command(
 /// Executes `command` of `session` from `runtime` without waiting for it, unless the session is
 /// stopped, and ignores its result: what a value sends when it is dropped, such as the removal of
 /// what the server keeps for it.
-pub(crate) fn spawn_command(
+fn spawn_command(
     runtime: &tokio::runtime::Handle,
     session: Session,
     command: proto::command::CommandType,
@@ -213,6 +213,38 @@ pub(crate) fn spawn_command(
     runtime.spawn(async move {
         let _ = self::command(session, command).await;
     });
+}
+
+/// What the server keeps for a value of a session, such as a fitted model: `command` removes it
+/// when this drops, sent from the runtime that created this.
+pub(crate) struct RemoveOnDrop {
+    session: Session,
+    runtime: tokio::runtime::Handle,
+    command: Option<proto::command::CommandType>,
+}
+
+impl RemoveOnDrop {
+    /// The removal by `command` of what `session` keeps, from the current runtime.
+    pub(crate) fn new(session: Session, command: proto::command::CommandType) -> Self {
+        RemoveOnDrop {
+            session,
+            runtime: tokio::runtime::Handle::current(),
+            command: Some(command),
+        }
+    }
+
+    /// The session that keeps it.
+    pub(crate) fn session(&self) -> &Session {
+        &self.session
+    }
+}
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if let Some(command) = self.command.take() {
+            spawn_command(&self.runtime, self.session.clone(), command);
+        }
+    }
 }
 
 type Step = (
