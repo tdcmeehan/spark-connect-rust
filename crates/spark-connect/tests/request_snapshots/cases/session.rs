@@ -68,7 +68,7 @@ fn rows() -> Vec<Row> {
 
 /// A file with fixed content, named `name`, in a directory of this test.
 fn artifact(name: &str) -> String {
-    let dir: PathBuf = std::env::temp_dir().join("spark-connect-request-snapshots");
+    let dir: PathBuf = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("request-snapshots");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
     std::fs::write(&path, format!("content of {name}")).unwrap();
