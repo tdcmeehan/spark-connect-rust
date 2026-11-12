@@ -70,7 +70,7 @@ macro_rules! case {
 }
 
 fn three(s: &blocking::Session) -> blocking::DataFrame {
-    s.sql(server::THREE_BATCHES).run().unwrap()
+    s.as_async().sql(server::THREE_BATCHES).run().unwrap()
 }
 
 async fn three_async(s: &Session) -> DataFrame {
@@ -128,16 +128,19 @@ fn session_cases() -> Vec<Case> {
             .conf()
             .is_modifiable("k")
             .await),
-        case!("a SQL command", |b| b.sql("SET x = 1").run(), |a| a
-            .sql("SET x = 1")
-            .await),
+        case!(
+            "a SQL command",
+            |b| b.as_async().sql("SET x = 1").run(),
+            |a| a.sql("SET x = 1").await
+        ),
         case!(
             "a SQL query with arguments and a DataFrame",
             |b| b
+                .as_async()
                 .sql("SELECT :a, ? FROM {t}")
                 .named_arg("a", 1)
                 .arg("two")
-                .reference("t", &b.range(3))
+                .reference("t", &b.as_async().range(3))
                 .run()
                 .and_then(|df| df.collect()),
             |a| {
@@ -153,7 +156,11 @@ fn session_cases() -> Vec<Case> {
         ),
         case!(
             "add_artifacts",
-            |b| b.add_artifacts([artifact()]).kind(ArtifactKind::File).run(),
+            |b| b
+                .as_async()
+                .add_artifacts([artifact()])
+                .kind(ArtifactKind::File)
+                .run(),
             |a| a.add_artifacts([artifact()]).kind(ArtifactKind::File).await
         ),
         case!("interrupt_all", |b| b.interrupt_all(), |a| a
@@ -192,6 +199,7 @@ fn session_cases() -> Vec<Case> {
         case!(
             "create_dataframe_from_arrow",
             |b| b
+                .as_async()
                 .create_dataframe_from_arrow([batch()])
                 .schema(ids())
                 .run()
@@ -334,7 +342,7 @@ fn dataframe_cases() -> Vec<Case> {
         .await),
         case!(
             "same_semantics",
-            |b| three(b).same_semantics(&b.range(3)),
+            |b| three(b).same_semantics(&b.as_async().range(3)),
             |a| three_async(&a).await.same_semantics(&a.range(3)).await
         ),
         case!("semantic_hash", |b| three(b).semantic_hash(), |a| {
@@ -347,17 +355,23 @@ fn dataframe_cases() -> Vec<Case> {
             .await
             .to_json()
             .await),
-        case!("show", |b| three(b).show().rows(5).truncate(0).run(), |a| {
-            three_async(&a).await.show().rows(5).truncate(0).await
-        }),
+        case!(
+            "show",
+            |b| three(b).as_async().show().rows(5).truncate(0).run(),
+            |a| { three_async(&a).await.show().rows(5).truncate(0).await }
+        ),
         case!(
             "show to_string",
-            |b| three(b).show().vertical().blocking().to_string(),
+            |b| three(b).as_async().show().vertical().blocking().to_string(),
             |a| three_async(&a).await.show().vertical().to_string().await
         ),
         case!(
             "a transformation, then an action",
-            |b| three(b).filter(col("id").gt(lit(1))).blocking().count(),
+            |b| three(b)
+                .as_async()
+                .filter(col("id").gt(lit(1)))
+                .blocking()
+                .count(),
             |a| three_async(&a)
                 .await
                 .filter(col("id").gt(lit(1)))
@@ -366,12 +380,18 @@ fn dataframe_cases() -> Vec<Case> {
         ),
         case!(
             "an async DataFrame converted",
-            |b| blocking::DataFrame::from(b.range(3)).count(),
+            |b| blocking::DataFrame::from(b.as_async().range(3)).count(),
             |a| a.range(3).count().await
+        ),
+        case!(
+            "a blocking DataFrame into_async",
+            |b| three(b).into_async().limit(2).blocking().collect(),
+            |a| three_async(&a).await.limit(2).collect().await
         ),
         case!(
             "group_by sum",
             |b| b
+                .as_async()
                 .range(3)
                 .group_by(["id"])
                 .blocking()
@@ -389,6 +409,7 @@ fn dataframe_cases() -> Vec<Case> {
         case!(
             "group_by avg",
             |b| b
+                .as_async()
                 .range(3)
                 .group_by(["id"])
                 .blocking()
@@ -406,6 +427,7 @@ fn dataframe_cases() -> Vec<Case> {
         case!(
             "rollup min",
             |b| b
+                .as_async()
                 .range(3)
                 .rollup(["id"])
                 .blocking()
@@ -423,6 +445,7 @@ fn dataframe_cases() -> Vec<Case> {
         case!(
             "pivot max",
             |b| b
+                .as_async()
                 .range(3)
                 .group_by(["id"])
                 .pivot("id")
@@ -441,17 +464,18 @@ fn dataframe_cases() -> Vec<Case> {
         ),
         case!(
             "stat corr",
-            |b| b.range(3).stat().blocking().corr("id", "id"),
+            |b| b.as_async().range(3).stat().blocking().corr("id", "id"),
             |a| a.range(3).stat().corr("id", "id").await
         ),
         case!(
             "stat cov",
-            |b| b.range(3).stat().blocking().cov("id", "id"),
+            |b| b.as_async().range(3).stat().blocking().cov("id", "id"),
             |a| a.range(3).stat().cov("id", "id").await
         ),
         case!(
             "stat approx_quantile",
             |b| b
+                .as_async()
                 .range(3)
                 .stat()
                 .blocking()
@@ -464,7 +488,7 @@ fn dataframe_cases() -> Vec<Case> {
         ),
         case!(
             "the session of a DataFrame",
-            |b| b.range(3).blocking().session().version(),
+            |b| b.as_async().range(3).blocking().session().version(),
             |a| a.range(3).session().version().await
         ),
     ]
@@ -494,11 +518,12 @@ fn read_write_cases() -> Vec<Case> {
         case!(
             "parse",
             |b| b
+                .as_async()
                 .read()
                 .schema("id INT")
                 .option("header", true)
                 .blocking()
-                .parse(ParseFormat::Csv, &b.range(3))
+                .parse(ParseFormat::Csv, &b.as_async().range(3))
                 .and_then(|df| df.collect()),
             |a| a
                 .read()
@@ -512,12 +537,19 @@ fn read_write_cases() -> Vec<Case> {
         ),
         case!(
             "a load, then an action",
-            |b| b.read().format("csv").load("/in").blocking().count(),
+            |b| b
+                .as_async()
+                .read()
+                .format("csv")
+                .load("/in")
+                .blocking()
+                .count(),
             |a| a.read().format("csv").load("/in").count().await
         ),
         case!(
             "save",
             |b| b
+                .as_async()
                 .range(3)
                 .write()
                 .mode(SaveMode::Overwrite)
@@ -539,6 +571,7 @@ fn read_write_cases() -> Vec<Case> {
         case!(
             "save_without_path",
             |b| b
+                .as_async()
                 .range(3)
                 .write()
                 .format("noop")
@@ -549,6 +582,7 @@ fn read_write_cases() -> Vec<Case> {
         case!(
             "save_as_table",
             |b| b
+                .as_async()
                 .range(3)
                 .write()
                 .mode(SaveMode::Append)
@@ -563,42 +597,43 @@ fn read_write_cases() -> Vec<Case> {
         ),
         case!(
             "insert_into",
-            |b| b.range(3).write().blocking().insert_into("db.t"),
+            |b| b.as_async().range(3).write().blocking().insert_into("db.t"),
             |a| a.range(3).write().insert_into("db.t").await
         ),
-        case!("csv", |b| b.range(3).write().blocking().csv("/out"), |a| a
-            .range(3)
-            .write()
-            .csv("/out")
-            .await),
+        case!(
+            "csv",
+            |b| b.as_async().range(3).write().blocking().csv("/out"),
+            |a| a.range(3).write().csv("/out").await
+        ),
         case!(
             "json",
-            |b| b.range(3).write().blocking().json("/out"),
+            |b| b.as_async().range(3).write().blocking().json("/out"),
             |a| a.range(3).write().json("/out").await
         ),
-        case!("orc", |b| b.range(3).write().blocking().orc("/out"), |a| a
-            .range(3)
-            .write()
-            .orc("/out")
-            .await),
+        case!(
+            "orc",
+            |b| b.as_async().range(3).write().blocking().orc("/out"),
+            |a| a.range(3).write().orc("/out").await
+        ),
         case!(
             "parquet",
-            |b| b.range(3).write().blocking().parquet("/out"),
+            |b| b.as_async().range(3).write().blocking().parquet("/out"),
             |a| a.range(3).write().parquet("/out").await
         ),
         case!(
             "text",
-            |b| b.range(3).write().blocking().text("/out"),
+            |b| b.as_async().range(3).write().blocking().text("/out"),
             |a| a.range(3).write().text("/out").await
         ),
-        case!("xml", |b| b.range(3).write().blocking().xml("/out"), |a| a
-            .range(3)
-            .write()
-            .xml("/out")
-            .await),
+        case!(
+            "xml",
+            |b| b.as_async().range(3).write().blocking().xml("/out"),
+            |a| a.range(3).write().xml("/out").await
+        ),
         case!(
             "create",
             |b| b
+                .as_async()
                 .range(3)
                 .write_to("db.t")
                 .using("parquet")
@@ -615,22 +650,28 @@ fn read_write_cases() -> Vec<Case> {
         ),
         case!(
             "replace",
-            |b| b.range(3).write_to("db.t").blocking().replace(),
+            |b| b.as_async().range(3).write_to("db.t").blocking().replace(),
             |a| a.range(3).write_to("db.t").replace().await
         ),
         case!(
             "create_or_replace",
-            |b| b.range(3).write_to("db.t").blocking().create_or_replace(),
+            |b| b
+                .as_async()
+                .range(3)
+                .write_to("db.t")
+                .blocking()
+                .create_or_replace(),
             |a| a.range(3).write_to("db.t").create_or_replace().await
         ),
         case!(
             "append",
-            |b| b.range(3).write_to("db.t").blocking().append(),
+            |b| b.as_async().range(3).write_to("db.t").blocking().append(),
             |a| a.range(3).write_to("db.t").append().await
         ),
         case!(
             "overwrite",
             |b| b
+                .as_async()
                 .range(3)
                 .write_to("db.t")
                 .blocking()
@@ -644,6 +685,7 @@ fn read_write_cases() -> Vec<Case> {
         case!(
             "overwrite_partitions",
             |b| b
+                .as_async()
                 .range(3)
                 .write_to("db.t")
                 .blocking()
@@ -653,6 +695,7 @@ fn read_write_cases() -> Vec<Case> {
         case!(
             "MERGE",
             |b| b
+                .as_async()
                 .range(3)
                 .merge_into("db.t", col("t.id").eq(col("s.id")))
                 .when_matched(Some(col("s.d")))
@@ -689,7 +732,7 @@ fn catalog_cases() -> Vec<Case> {
         ),
         case!(
             "list_catalogs",
-            |b| b.catalog().list_catalogs().pattern("s*").run(),
+            |b| b.catalog().as_async().list_catalogs().pattern("s*").run(),
             |a| a.catalog().list_catalogs().pattern("s*").await
         ),
         case!(
@@ -704,7 +747,7 @@ fn catalog_cases() -> Vec<Case> {
         ),
         case!(
             "list_databases",
-            |b| b.catalog().list_databases().pattern("d*").run(),
+            |b| b.catalog().as_async().list_databases().pattern("d*").run(),
             |a| a.catalog().list_databases().pattern("d*").await
         ),
         case!("get_database", |b| b.catalog().get_database("db"), |a| a
@@ -717,29 +760,51 @@ fn catalog_cases() -> Vec<Case> {
             |a| a.catalog().database_exists("db").await
         ),
         case!(
+            "a blocking catalog into_async",
+            |b| b.catalog().into_async().list_tables().run(),
+            |a| a.catalog().list_tables().await
+        ),
+        case!(
             "list_tables",
-            |b| b.catalog().list_tables().database("db").pattern("t*").run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .list_tables()
+                .database("db")
+                .pattern("t*")
+                .run(),
             |a| a.catalog().list_tables().database("db").pattern("t*").await
         ),
         case!(
             "get_table",
-            |b| b.catalog().get_table("t").database("db").run(),
+            |b| b.catalog().as_async().get_table("t").database("db").run(),
             |a| a.catalog().get_table("t").database("db").await
         ),
         case!(
             "table_exists",
-            |b| b.catalog().table_exists("t").database("db").run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .table_exists("t")
+                .database("db")
+                .run(),
             |a| a.catalog().table_exists("t").database("db").await
         ),
         case!(
             "list_columns",
-            |b| b.catalog().list_columns("t").database("db").run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .list_columns("t")
+                .database("db")
+                .run(),
             |a| a.catalog().list_columns("t").database("db").await
         ),
         case!(
             "list_functions",
             |b| b
                 .catalog()
+                .as_async()
                 .list_functions()
                 .database("db")
                 .pattern("f*")
@@ -753,18 +818,29 @@ fn catalog_cases() -> Vec<Case> {
         ),
         case!(
             "get_function",
-            |b| b.catalog().get_function("f").database("db").run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .get_function("f")
+                .database("db")
+                .run(),
             |a| a.catalog().get_function("f").database("db").await
         ),
         case!(
             "function_exists",
-            |b| b.catalog().function_exists("f").database("db").run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .function_exists("f")
+                .database("db")
+                .run(),
             |a| a.catalog().function_exists("f").database("db").await
         ),
         case!(
             "create_table",
             |b| b
                 .catalog()
+                .as_async()
                 .create_table("db.t")
                 .path("/p")
                 .source("parquet")
@@ -799,6 +875,7 @@ fn catalog_cases() -> Vec<Case> {
             "cache_table",
             |b| b
                 .catalog()
+                .as_async()
                 .cache_table("t")
                 .storage_level(StorageLevel::DISK_ONLY)
                 .run(),
@@ -838,6 +915,7 @@ fn catalog_cases() -> Vec<Case> {
             "create_database",
             |b| b
                 .catalog()
+                .as_async()
                 .create_database("db")
                 .if_not_exists()
                 .property("k", "v")
@@ -851,17 +929,29 @@ fn catalog_cases() -> Vec<Case> {
         ),
         case!(
             "drop_database",
-            |b| b.catalog().drop_database("db").if_exists().cascade().run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .drop_database("db")
+                .if_exists()
+                .cascade()
+                .run(),
             |a| a.catalog().drop_database("db").if_exists().cascade().await
         ),
         case!(
             "drop_table",
-            |b| b.catalog().drop_table("t").if_exists().purge().run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .drop_table("t")
+                .if_exists()
+                .purge()
+                .run(),
             |a| a.catalog().drop_table("t").if_exists().purge().await
         ),
         case!(
             "drop_view",
-            |b| b.catalog().drop_view("v").if_exists().run(),
+            |b| b.catalog().as_async().drop_view("v").if_exists().run(),
             |a| a.catalog().drop_view("v").if_exists().await
         ),
         case!("truncate_table", |b| b.catalog().truncate_table("t"), |a| a
@@ -870,12 +960,17 @@ fn catalog_cases() -> Vec<Case> {
             .await),
         case!(
             "analyze_table",
-            |b| b.catalog().analyze_table("t").no_scan().run(),
+            |b| b.catalog().as_async().analyze_table("t").no_scan().run(),
             |a| a.catalog().analyze_table("t").no_scan().await
         ),
         case!(
             "get_create_table_string",
-            |b| b.catalog().get_create_table_string("t").as_serde().run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .get_create_table_string("t")
+                .as_serde()
+                .run(),
             |a| a.catalog().get_create_table_string("t").as_serde().await
         ),
         case!(
@@ -890,7 +985,13 @@ fn catalog_cases() -> Vec<Case> {
         ),
         case!(
             "list_views",
-            |b| b.catalog().list_views().database("db").pattern("v*").run(),
+            |b| b
+                .catalog()
+                .as_async()
+                .list_views()
+                .database("db")
+                .pattern("v*")
+                .run(),
             |a| a.catalog().list_views().database("db").pattern("v*").await
         ),
         case!(
@@ -1010,11 +1111,33 @@ fn the_iterators_yield_what_the_streams_yield_then_end() {
         batches.next().is_none(),
         "an ended iterator yields nothing more"
     );
-    assert!(batches.schema().is_some(), "the schema of the stream");
-    let failing = session.sql(server::A_BATCH_THEN_A_FAILURE).run().unwrap();
+    assert!(
+        batches.as_async().schema().is_some(),
+        "the schema of the stream"
+    );
+    let failing = session
+        .as_async()
+        .sql(server::A_BATCH_THEN_A_FAILURE)
+        .run()
+        .unwrap();
     let failed: Vec<_> = failing.stream_as::<i64>().unwrap().map(outcome).collect();
     assert_eq!((&rows, &failed), (&streamed.0, &streamed.1));
     assert_eq!(rows, ["1", "1", "1"]);
+
+    let mut batches = three(&session).stream().unwrap();
+    let first = outcome(batches.next().unwrap().map(|b| b.num_rows()));
+    let rest: Vec<_> = runtime.block_on(
+        batches
+            .into_async()
+            .map(|batch| outcome(batch.map(|b| b.num_rows())))
+            .collect(),
+    );
+    assert_eq!(first, "1");
+    assert_eq!(
+        rest,
+        ["1", "1"],
+        "the batches into_async leaves to the stream"
+    );
     assert_eq!(
         failed,
         [
@@ -1044,7 +1167,13 @@ fn an_async_and_a_blocking_handle_of_one_session_share_it_and_its_tags() {
             .unwrap();
         session.with_tag("etl").unwrap()
     });
-    tagged.blocking().range(3).blocking().collect().unwrap();
+    tagged
+        .blocking()
+        .as_async()
+        .range(3)
+        .blocking()
+        .collect()
+        .unwrap();
     let sent = recorder.take();
     let request = proto::ExecutePlanRequest::decode(&sent[0].bytes[..]).unwrap();
     assert_eq!(request.tags, ["etl"]);
@@ -1052,14 +1181,21 @@ fn an_async_and_a_blocking_handle_of_one_session_share_it_and_its_tags() {
 
     let blocking = Session::builder().remote(url).blocking().connect().unwrap();
     let tagged = blocking.with_tag("daily").unwrap();
-    let awaited = Session::from(tagged.clone());
-    runtime.block_on(awaited.range(3).collect()).unwrap();
-    let sent = recorder.take();
-    let request = proto::ExecutePlanRequest::decode(&sent[0].bytes[..]).unwrap();
-    assert_eq!(request.tags, ["daily"]);
-    assert_eq!(request.session_id, blocking.session_id());
+    let converted = Session::from(tagged.clone());
+    let into_async = tagged.clone().into_async();
+    for (form, awaited) in [
+        ("From", &converted),
+        ("into_async", &into_async),
+        ("as_async", tagged.as_async()),
+    ] {
+        runtime.block_on(awaited.range(3).collect()).unwrap();
+        let sent = recorder.take();
+        let request = proto::ExecutePlanRequest::decode(&sent[0].bytes[..]).unwrap();
+        assert_eq!(request.tags, ["daily"], "{form}");
+        assert_eq!(request.session_id, converted.session_id(), "{form}");
+    }
     assert!(
-        blocking.tags().is_empty(),
+        blocking.as_async().tags().is_empty(),
         "the untagged handle keeps no tag"
     );
 }

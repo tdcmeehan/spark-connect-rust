@@ -1,7 +1,6 @@
 //! The blocking forms of a DataFrame, its results and its statistics.
 
 use std::future::IntoFuture;
-use std::ops::Deref;
 use std::pin::Pin;
 
 use arrow::record_batch::RecordBatch;
@@ -18,22 +17,45 @@ use crate::value::Row;
 
 /// A DataFrame whose actions block until the server answers.
 ///
-/// It dereferences to its [`crate::DataFrame`], whose transformations send nothing and return
-/// async DataFrames: call [`crate::DataFrame::blocking`] on one to run its actions here.
+/// Its transformations and columns send nothing: they are the async [`crate::DataFrame`]'s,
+/// which [`as_async`](DataFrame::as_async) borrows, and they return async DataFrames, which
+/// [`crate::DataFrame::blocking`] turns into blocking ones.
 ///
 /// ```no_run
 /// # fn run(people: spark_connect_async::blocking::DataFrame) -> spark_connect_async::Result<()> {
 /// use spark_connect_async::{col, lit};
 ///
-/// let adults = people.filter(col("age").ge(lit(18))).blocking();
+/// let adults = people.as_async().filter(col("age").ge(lit(18))).blocking();
 /// println!("{} of {} are adults", adults.count()?, people.count()?);
 /// # Ok(())
+/// # }
+/// ```
+///
+/// A blocking DataFrame doesn't dereference to its async one, so a transformation called on it
+/// doesn't compile:
+///
+/// ```compile_fail,E0599
+/// # fn run(people: spark_connect_async::blocking::DataFrame) {
+/// use spark_connect_async::{col, lit};
+///
+/// let adults = people.filter(col("age").ge(lit(18)));
 /// # }
 /// ```
 #[derive(Clone)]
 pub struct DataFrame(crate::DataFrame);
 
 impl DataFrame {
+    /// This DataFrame as the async [`crate::DataFrame`] it holds, borrowed: its
+    /// transformations and columns are called on it.
+    pub fn as_async(&self) -> &crate::DataFrame {
+        &self.0
+    }
+
+    /// This DataFrame as the async [`crate::DataFrame`] it holds, as [`From`] converts it.
+    pub fn into_async(self) -> crate::DataFrame {
+        self.0
+    }
+
     /// The session of this DataFrame.
     pub fn session(&self) -> Session {
         Session::from(self.0.session().clone())
@@ -144,8 +166,8 @@ impl DataFrame {
         wait(self.0.input_files())
     }
 
-    /// Whether this DataFrame and `other`, async or blocking, return the same rows by their
-    /// plans.
+    /// Whether this DataFrame and `other` return the same rows by their plans. For a blocking
+    /// `other`, pass its [`as_async`](DataFrame::as_async).
     pub fn same_semantics(&self, other: &crate::DataFrame) -> Result<bool> {
         wait(self.0.same_semantics(other))
     }
@@ -181,14 +203,6 @@ impl DataFrame {
     }
 }
 
-impl Deref for DataFrame {
-    type Target = crate::DataFrame;
-
-    fn deref(&self) -> &crate::DataFrame {
-        &self.0
-    }
-}
-
 impl From<crate::DataFrame> for DataFrame {
     fn from(dataframe: crate::DataFrame) -> Self {
         DataFrame(dataframe)
@@ -211,10 +225,35 @@ impl crate::DataFrame {
 /// The record batches of the result of a query, read as the iterator is advanced: each
 /// [`next`](Iterator::next) blocks until the server sends the next batch.
 ///
-/// Dropping it before its end releases the operation on the server, which stops it. It
-/// dereferences to its [`RecordBatchStream`], whose operation id, schema and execution info it
-/// shares.
+/// Dropping it before its end releases the operation on the server, which stops it. The
+/// operation id, schema and execution info are its [`RecordBatchStream`]'s, which
+/// [`as_async`](RecordBatchIter::as_async) borrows:
+///
+/// ```no_run
+/// # fn run(df: spark_connect_async::blocking::DataFrame) -> spark_connect_async::Result<()> {
+/// let batches = df.stream()?;
+/// println!("operation {}", batches.as_async().operation_id());
+/// for batch in batches {
+///     println!("{} rows", batch?.num_rows());
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub struct RecordBatchIter(RecordBatchStream);
+
+impl RecordBatchIter {
+    /// The stream that this iterator reads, borrowed: its operation id, schema and execution
+    /// info.
+    pub fn as_async(&self) -> &RecordBatchStream {
+        &self.0
+    }
+
+    /// The stream that this iterator reads, with the batches not read yet, as [`From`]
+    /// converts it.
+    pub fn into_async(self) -> RecordBatchStream {
+        self.0
+    }
+}
 
 impl Iterator for RecordBatchIter {
     type Item = Result<RecordBatch>;
@@ -224,14 +263,6 @@ impl Iterator for RecordBatchIter {
             Ok(runtime) => runtime.block_on(self.0.next()),
             Err(error) => Some(Err(error)),
         }
-    }
-}
-
-impl Deref for RecordBatchIter {
-    type Target = RecordBatchStream;
-
-    fn deref(&self) -> &RecordBatchStream {
-        &self.0
     }
 }
 
@@ -271,12 +302,38 @@ impl<S: Stream<Item = Result<T>>, T> Iterator for Blocked<S> {
 /// The groups of a DataFrame, whose numeric aggregations block until the server has given the
 /// schema they read.
 ///
-/// It dereferences to its [`crate::group::GroupedData`], whose other aggregations and pivot
-/// send nothing and return async values.
+/// They come from the groupings of the async DataFrame, such as [`crate::DataFrame::group_by`],
+/// through [`blocking`](crate::group::GroupedData::blocking). Their other aggregations and their
+/// pivot send nothing: they are the async [`crate::group::GroupedData`]'s, which
+/// [`as_async`](GroupedData::as_async) borrows.
+///
+/// ```no_run
+/// # fn run(sales: spark_connect_async::blocking::DataFrame) -> spark_connect_async::Result<()> {
+/// use spark_connect_async::functions::max;
+///
+/// let regions = sales.as_async().group_by(["region"]);
+/// let totals = regions.blocking().sum(["amount"])?;
+/// let largest = regions.agg([max("amount")]).blocking();
+/// println!("{} and {} regions", totals.count()?, largest.count()?);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct GroupedData<K = Grouped>(crate::group::GroupedData<K>);
 
 impl<K> GroupedData<K> {
+    /// These groups as the async [`crate::group::GroupedData`] they hold, borrowed: their
+    /// other aggregations and their pivot are called on it.
+    pub fn as_async(&self) -> &crate::group::GroupedData<K> {
+        &self.0
+    }
+
+    /// These groups as the async [`crate::group::GroupedData`] they hold, as [`From`] converts
+    /// them.
+    pub fn into_async(self) -> crate::group::GroupedData<K> {
+        self.0
+    }
+
     /// The sums of the numeric columns `columns` in each group, named `sum(<column>)`; of every
     /// numeric column without `columns`. It fails if a column of `columns` is not a numeric one.
     pub fn sum(&self, columns: impl IntoIterator<Item = impl Into<String>>) -> Result<DataFrame> {
@@ -302,14 +359,6 @@ impl<K> GroupedData<K> {
     }
 }
 
-impl<K> Deref for GroupedData<K> {
-    type Target = crate::group::GroupedData<K>;
-
-    fn deref(&self) -> &crate::group::GroupedData<K> {
-        &self.0
-    }
-}
-
 impl<K> From<crate::group::GroupedData<K>> for GroupedData<K> {
     fn from(grouped: crate::group::GroupedData<K>) -> Self {
         GroupedData(grouped)
@@ -331,14 +380,38 @@ impl<K: Clone> crate::group::GroupedData<K> {
 
 /// The statistics of a DataFrame, whose computed values block until the server answers.
 ///
-/// It dereferences to its [`crate::stat::StatFunctions`], whose statistics that are DataFrames
-/// send nothing and return async ones.
+/// They come from the async DataFrame's [`stat`](crate::DataFrame::stat), through
+/// [`blocking`](crate::stat::StatFunctions::blocking). The statistics that are DataFrames send
+/// nothing: they are the async [`crate::stat::StatFunctions`]'s, which
+/// [`as_async`](StatFunctions::as_async) borrows.
+///
+/// ```no_run
+/// # fn run(points: spark_connect_async::blocking::DataFrame) -> spark_connect_async::Result<()> {
+/// let stat = points.as_async().stat();
+/// let r = stat.blocking().corr("x", "y")?;
+/// let pairs = stat.crosstab("x", "y").blocking();
+/// println!("{r:?}, {} rows of pairs", pairs.count()?);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct StatFunctions(crate::stat::StatFunctions);
 
 impl StatFunctions {
-    /// The Pearson correlation coefficient of the columns `column1` and `column2`, which are
-    /// numeric; `None` when it is undefined, as of no rows.
+    /// These statistics as the async [`crate::stat::StatFunctions`] they hold, borrowed: the
+    /// statistics that are DataFrames are called on it.
+    pub fn as_async(&self) -> &crate::stat::StatFunctions {
+        &self.0
+    }
+
+    /// These statistics as the async [`crate::stat::StatFunctions`] they hold, as [`From`]
+    /// converts them.
+    pub fn into_async(self) -> crate::stat::StatFunctions {
+        self.0
+    }
+
+    /// The Pearson correlation coefficient of the numeric columns `column1` and `column2`, as
+    /// [`crate::stat::StatFunctions::corr`] computes it.
     pub fn corr(
         &self,
         column1: impl Into<String>,
@@ -347,8 +420,8 @@ impl StatFunctions {
         wait(self.0.corr(column1, column2))
     }
 
-    /// The sample covariance of the columns `column1` and `column2`, which are numeric; `None`
-    /// when it is undefined, as of no rows.
+    /// The sample covariance of the numeric columns `column1` and `column2`, as
+    /// [`crate::stat::StatFunctions::cov`] computes it.
     pub fn cov(
         &self,
         column1: impl Into<String>,
@@ -370,14 +443,6 @@ impl StatFunctions {
             self.0
                 .approx_quantile(columns, probabilities, relative_error),
         )
-    }
-}
-
-impl Deref for StatFunctions {
-    type Target = crate::stat::StatFunctions;
-
-    fn deref(&self) -> &crate::stat::StatFunctions {
-        &self.0
     }
 }
 

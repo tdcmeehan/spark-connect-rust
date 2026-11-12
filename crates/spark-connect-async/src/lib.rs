@@ -5,8 +5,8 @@
 //! awaited, and it can run inside any Tokio runtime. Errors are [`Error`]s, with the condition,
 //! SQL state and message parameters of the server's error.
 //!
-//! For code that doesn't run async, the `blocking` feature adds the `blocking` module: the same
-//! API, with calls that block until the server answers.
+//! For code that doesn't run async, the `blocking` feature adds the `blocking` module: the
+//! calls that talk to the server, in forms that block until the server answers.
 //!
 //! ```no_run
 //! # async fn run() -> spark_connect_async::Result<()> {

@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::future::IntoFuture;
-use std::ops::Deref;
 
 use super::{wait, DataFrame, Session};
 use crate::catalog::{
@@ -12,17 +11,18 @@ use crate::error::Result;
 
 /// The catalog of a session, whose operations block until the server answers.
 ///
-/// It dereferences to its [`crate::catalog::Catalog`], whose operations with optional arguments
-/// return builders: [`run`](crate::catalog::ListTables::run) one to send it and block.
+/// Its operations with optional arguments are the async [`crate::catalog::Catalog`]'s, which
+/// [`as_async`](Catalog::as_async) borrows. They return builders:
+/// [`run`](crate::catalog::ListTables::run) one to send it and block.
 ///
 /// ```no_run
 /// # fn run(session: spark_connect_async::blocking::Session) -> spark_connect_async::Result<()> {
 /// let catalog = session.catalog();
 /// println!("in {}", catalog.current_database()?);
-/// for table in catalog.list_tables().database("sales").run()? {
+/// for table in catalog.as_async().list_tables().database("sales").run()? {
 ///     println!("{} ({})", table.name, table.table_type);
 /// }
-/// catalog.drop_table("sales.staging").if_exists().run()?;
+/// catalog.as_async().drop_table("sales.staging").if_exists().run()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -30,6 +30,17 @@ use crate::error::Result;
 pub struct Catalog(catalog::Catalog);
 
 impl Catalog {
+    /// This catalog as the async [`crate::catalog::Catalog`] it holds, borrowed: its operations
+    /// with optional arguments are called on it.
+    pub fn as_async(&self) -> &catalog::Catalog {
+        &self.0
+    }
+
+    /// This catalog as the async [`crate::catalog::Catalog`] it holds, as [`From`] converts it.
+    pub fn into_async(self) -> catalog::Catalog {
+        self.0
+    }
+
     /// The session of this catalog.
     pub fn session(&self) -> Session {
         Session::from(self.0.session().clone())
@@ -124,14 +135,6 @@ impl Catalog {
     /// The partitions of the table `name`.
     pub fn list_partitions(&self, name: impl Into<String>) -> Result<Vec<TablePartition>> {
         wait(self.0.list_partitions(name))
-    }
-}
-
-impl Deref for Catalog {
-    type Target = catalog::Catalog;
-
-    fn deref(&self) -> &catalog::Catalog {
-        &self.0
     }
 }
 

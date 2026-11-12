@@ -105,12 +105,13 @@ fn run_in<T: Send + 'static>(context: Context, call: impl FnOnce() -> T + Send +
 /// A session's calls of every kind, with what they returned.
 fn calls(url: String) -> (i64, Vec<(i64,)>, usize, String, Option<String>) {
     let session = connect(&url);
-    let three = session.sql(server::THREE_BATCHES).run().unwrap();
-    let count = session.range(3).blocking().count().unwrap();
+    let three = session.as_async().sql(server::THREE_BATCHES).run().unwrap();
+    let count = session.as_async().range(3).blocking().count().unwrap();
     let rows = three.collect_as::<(i64,)>().unwrap();
     let batches = three.stream().unwrap().map(Result::unwrap).count();
     let database = session.catalog().current_database().unwrap();
     three
+        .as_async()
         .write()
         .mode(SaveMode::Overwrite)
         .blocking()
@@ -148,7 +149,12 @@ fn counts(url: String) -> (i64, i64) {
         .get_or_create()
         .unwrap();
     let old_count = old.range(3).unwrap().count().unwrap();
-    let count = connect(&url).range(3).blocking().count().unwrap();
+    let count = connect(&url)
+        .as_async()
+        .range(3)
+        .blocking()
+        .count()
+        .unwrap();
     (old_count, count)
 }
 
@@ -187,7 +193,7 @@ fn releases(recorder: &server::Recorder) -> usize {
 fn a_result_dropped_anywhere_is_released_from_the_runtime_of_the_module() {
     let (recorder, url) = start();
     let session = connect(&url);
-    let three = session.sql(server::THREE_BATCHES).run().unwrap();
+    let three = session.as_async().sql(server::THREE_BATCHES).run().unwrap();
     // That of the SQL command.
     assert_eq!(recorder.wait_for_releases(WAIT, 0), 1);
     for context in CONTEXTS {
@@ -272,7 +278,11 @@ fn progress_handlers_and_the_hook_run_on_the_calling_thread() {
             });
         let caller = run_in(context, move || {
             let session = builder.blocking().connect().unwrap();
-            session.sql(server::REPORTS_PROGRESS).run().unwrap();
+            session
+                .as_async()
+                .sql(server::REPORTS_PROGRESS)
+                .run()
+                .unwrap();
             thread::current().id()
         });
         let threads = threads.lock().unwrap();
@@ -294,7 +304,7 @@ fn a_session_connected_in_any_context_works_after_the_context_ends() {
     for context in CONTEXTS {
         let url = url.clone();
         let session = run_in(context, move || connect(&url));
-        let count = session.range(3).blocking().count();
+        let count = session.as_async().range(3).blocking().count();
         assert_eq!(count.unwrap(), 3, "{context:?}");
     }
 }

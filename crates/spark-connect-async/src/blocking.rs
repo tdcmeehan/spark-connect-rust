@@ -1,9 +1,10 @@
 //! The client with calls that block, for code that doesn't run async: a command-line tool, a
 //! script, or a synchronous callback.
 //!
-//! Enable the `blocking` feature. A blocking [`Session`] is a [`crate::Session`] whose calls to
-//! the server block the calling thread until the server answers, and return the answer that
-//! the async call's future returns:
+//! Enable the `blocking` feature. A blocking [`Session`] holds a [`crate::Session`]. Its calls to
+//! the server block the calling thread until the server answers, and return what the async
+//! call's future returns. What sends nothing, such as the transformations of a query, is the
+//! async API's, reached with `as_async()`:
 //!
 //! ```no_run
 //! # fn run() -> spark_connect_async::Result<()> {
@@ -14,12 +15,12 @@
 //!     .remote("sc://localhost:15002")
 //!     .blocking()
 //!     .connect()?;
-//! let people = session.sql("SELECT name, age FROM people").run()?;
+//! let people = session.as_async().sql("SELECT name, age FROM people").run()?;
 //! println!("{} people", people.count()?);
-//! let adults = people.filter(col("age").ge(lit(18))).blocking();
-//! let names: Vec<(String,)> = adults.select(["name"]).blocking().collect_as()?;
-//! adults.write().mode(SaveMode::Overwrite).blocking().parquet("/tmp/adults")?;
-//! for table in session.catalog().list_tables().run()? {
+//! let adults = people.as_async().filter(col("age").ge(lit(18))).blocking();
+//! let names: Vec<(String,)> = adults.as_async().select(["name"]).blocking().collect_as()?;
+//! adults.as_async().write().mode(SaveMode::Overwrite).blocking().parquet("/tmp/adults")?;
+//! for table in session.catalog().as_async().list_tables().run()? {
 //!     println!("{}", table.name);
 //! }
 //! session.stop()?;
@@ -33,12 +34,20 @@
 //! # The blocking forms of the async API
 //!
 //! - [`Session`], [`DataFrame`], [`Catalog`], [`RuntimeConfig`], [`GroupedData`] and
-//!   [`StatFunctions`] are the async types with the same methods, which block: `df.count()?`
-//!   here is `df.count().await?` there.
-//! - What sends nothing stays the async API's: a blocking type dereferences to its async type,
-//!   so a DataFrame's transformations, and the builders of the session and the catalog, are the
-//!   async API's, and return async values. `.blocking()` turns an async value into its blocking
-//!   form, and [`From`] converts both ways, so code can mix the two.
+//!   [`StatFunctions`] have the methods of their async types that return futures, with the same
+//!   names and arguments, and those block: `df.count()?` here is `df.count().await?` there. The
+//!   [`conf`](Session::conf), [`catalog`](Session::catalog) and [`with_tag`](Session::with_tag)
+//!   of a session, and the [`session`](DataFrame::session) of a DataFrame or a catalog, return
+//!   blocking values too.
+//! - Everything else is the async API's alone, such as a DataFrame's transformations and
+//!   columns, the builders of a session or a catalog, and a session's id: a blocking value
+//!   doesn't dereference to its async one. `as_async()` borrows the async value, and
+//!   `into_async()` returns it. A lazy call returns an async value, which `.blocking()` turns
+//!   into its blocking form, so a lazy chain starts with `as_async()` and ends with
+//!   `.blocking()`. [`From`] converts both ways too, so code can mix the two.
+//! - A parameter that takes a DataFrame, such as [`crate::DataFrame::union`]'s or
+//!   [`DataFrame::same_semantics`]'s, takes an async one: pass a blocking DataFrame's
+//!   `as_async()`.
 //! - A builder that async code awaits, such as [`crate::Session::sql`]'s or
 //!   [`crate::catalog::Catalog::list_tables`]'s, has a `run()` method, which sends it and blocks.
 //! - A builder whose last step is a method has a `.blocking()` form with that method, which
@@ -76,7 +85,6 @@ mod readwriter;
 
 use std::collections::BTreeMap;
 use std::future::{Future, IntoFuture};
-use std::ops::Deref;
 use std::sync::OnceLock;
 
 use spark_connect_blocking::Blocking;
@@ -115,13 +123,34 @@ fn wait<T>(future: impl Future<Output = Result<T>>) -> Result<T> {
 /// A session with a Spark Connect server, whose calls block until the server answers.
 ///
 /// Connect one with [`crate::SessionBuilder::blocking`], or convert a [`crate::Session`] with
-/// [`crate::Session::blocking`] or [`From`]. It dereferences to the async session, whose
-/// methods that send nothing, such as [`table`](crate::Session::table) or
-/// [`sql`](crate::Session::sql)'s builder, it shares.
+/// [`crate::Session::blocking`] or [`From`]. What sends nothing, such as
+/// [`table`](crate::Session::table), [`sql`](crate::Session::sql)'s builder or
+/// [`session_id`](crate::Session::session_id), is the async session's, which
+/// [`as_async`](Session::as_async) borrows:
+///
+/// ```no_run
+/// # fn run(session: spark_connect_async::blocking::Session) -> spark_connect_async::Result<()> {
+/// let people = session.as_async().table("people").blocking();
+/// println!("{} people", people.count()?);
+/// println!("in session {}", session.as_async().session_id());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Session(crate::Session);
 
 impl Session {
+    /// This session as the async [`crate::Session`] it holds, borrowed: the calls that send
+    /// nothing are made on it.
+    pub fn as_async(&self) -> &crate::Session {
+        &self.0
+    }
+
+    /// This session as the async [`crate::Session`] it holds, as [`From`] converts it.
+    pub fn into_async(self) -> crate::Session {
+        self.0
+    }
+
     /// The runtime configuration of the session.
     pub fn conf(&self) -> RuntimeConfig {
         RuntimeConfig(self.0.conf())
@@ -159,14 +188,6 @@ impl Session {
     /// Releases the session on the server and closes it, as [`crate::Session::stop`] does.
     pub fn stop(&self) -> Result<()> {
         wait(self.0.stop())
-    }
-}
-
-impl Deref for Session {
-    type Target = crate::Session;
-
-    fn deref(&self) -> &crate::Session {
-        &self.0
     }
 }
 
@@ -227,10 +248,24 @@ impl crate::SessionBuilder {
 }
 
 /// The runtime configuration of a session, whose calls block until the server answers.
+///
+/// Each call of the async [`crate::session::RuntimeConfig`] has its blocking form here;
+/// [`as_async`](RuntimeConfig::as_async) borrows the async one.
 #[derive(Clone)]
 pub struct RuntimeConfig(AsyncConfig);
 
 impl RuntimeConfig {
+    /// This configuration as the async [`crate::session::RuntimeConfig`] it holds, borrowed.
+    pub fn as_async(&self) -> &AsyncConfig {
+        &self.0
+    }
+
+    /// This configuration as the async [`crate::session::RuntimeConfig`] it holds, as [`From`]
+    /// converts it.
+    pub fn into_async(self) -> AsyncConfig {
+        self.0
+    }
+
     /// Sets `key` to `value`, and returns the server's warnings, such as of a deprecated key.
     pub fn set(&self, key: impl Into<String>, value: impl Into<String>) -> Result<Vec<String>> {
         wait(self.0.set(key, value))
@@ -262,14 +297,6 @@ impl RuntimeConfig {
     /// Whether `key` can be set on a running session.
     pub fn is_modifiable(&self, key: impl Into<String>) -> Result<bool> {
         wait(self.0.is_modifiable(key))
-    }
-}
-
-impl Deref for RuntimeConfig {
-    type Target = AsyncConfig;
-
-    fn deref(&self) -> &AsyncConfig {
-        &self.0
     }
 }
 
@@ -307,6 +334,59 @@ impl AddArtifacts {
         wait(self.into_future())
     }
 }
+
+/// Each of these fails to compile, since a blocking value doesn't dereference to its async
+/// value. [`DataFrame`]'s own documentation has its example.
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::blocking;
+///
+/// fn session(session: &blocking::Session) -> &spark_connect_async::Session {
+///     session
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, session};
+///
+/// fn conf(conf: &blocking::RuntimeConfig) -> &session::RuntimeConfig {
+///     conf
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, catalog};
+///
+/// fn catalog(catalog: &blocking::Catalog) -> &catalog::Catalog {
+///     catalog
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, group};
+///
+/// fn groups(groups: &blocking::GroupedData) -> &group::GroupedData {
+///     groups
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, stat};
+///
+/// fn stat(stat: &blocking::StatFunctions) -> &stat::StatFunctions {
+///     stat
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, RecordBatchStream};
+///
+/// fn batches(batches: &blocking::RecordBatchIter) -> &RecordBatchStream {
+///     batches
+/// }
+/// ```
+#[cfg(doctest)]
+struct NoDeref;
 
 #[cfg(test)]
 mod tests {

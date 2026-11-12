@@ -20,9 +20,10 @@ use crate::value::Value;
 pub struct DataFrameReader(crate::readwriter::DataFrameReader);
 
 impl DataFrameReader {
-    /// The DataFrame of the strings of `input`, a DataFrame of one string column, async or
-    /// blocking, parsed as `format` with the options of this reader, as
-    /// [`crate::readwriter::DataFrameReader::parse`] parses them.
+    /// The DataFrame of the strings of `input`, a DataFrame of one string column, parsed as
+    /// `format` with the options of this reader, as
+    /// [`crate::readwriter::DataFrameReader::parse`] parses them. For a blocking `input`, pass
+    /// its [`as_async`](DataFrame::as_async).
     pub fn parse(self, format: ParseFormat, input: &crate::DataFrame) -> Result<DataFrame> {
         wait(self.0.parse(format, input)).map(DataFrame::from)
     }

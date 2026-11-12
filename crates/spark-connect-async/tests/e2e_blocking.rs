@@ -83,7 +83,8 @@ fn a_blocking_session_queries_writes_reads_back_and_lists_its_catalog() {
     let _stopped = Stopped(session.clone());
     let s = session.clone();
     let people = within("sql", move || {
-        s.sql("SELECT id, concat('p', id) AS name FROM range(5)")
+        s.as_async()
+            .sql("SELECT id, concat('p', id) AS name FROM range(5)")
             .run()
             .unwrap()
     });
@@ -99,11 +100,17 @@ fn a_blocking_session_queries_writes_reads_back_and_lists_its_catalog() {
         }
     );
     let df = people.clone();
-    let table = within("show", move || df.show().blocking().to_string().unwrap());
+    let table = within("show", move || {
+        df.as_async().show().blocking().to_string().unwrap()
+    });
     assert!(table.contains("| id|name|"), "{table}");
     let df = people.clone();
     let adults = within("count", move || {
-        df.filter(col("id").ge(lit(2))).blocking().count().unwrap()
+        df.as_async()
+            .filter(col("id").ge(lit(2)))
+            .blocking()
+            .count()
+            .unwrap()
     });
     assert_eq!(adults, 3);
 
@@ -111,7 +118,8 @@ fn a_blocking_session_queries_writes_reads_back_and_lists_its_catalog() {
     let path = directory.path().join("people").display().to_string();
     let (df, out) = (people.clone(), path.clone());
     within("write", move || {
-        df.write()
+        df.as_async()
+            .write()
             .mode(SaveMode::Overwrite)
             .blocking()
             .parquet(out)
@@ -119,7 +127,12 @@ fn a_blocking_session_queries_writes_reads_back_and_lists_its_catalog() {
     });
     let s = session.clone();
     let mut read: Vec<Person> = within("read back", move || {
-        s.read().parquet(path).blocking().collect_as().unwrap()
+        s.as_async()
+            .read()
+            .parquet(path)
+            .blocking()
+            .collect_as()
+            .unwrap()
     });
     read.sort_by_key(|person| person.id);
     assert_eq!(read, rows);
@@ -131,7 +144,7 @@ fn a_blocking_session_queries_writes_reads_back_and_lists_its_catalog() {
     });
     let s = session.clone();
     let tables = within("list_tables", move || {
-        s.catalog().list_tables().run().unwrap()
+        s.catalog().as_async().list_tables().run().unwrap()
     });
     assert!(
         tables
