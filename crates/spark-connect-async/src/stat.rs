@@ -76,8 +76,9 @@ impl StatFunctions {
         })
     }
 
-    /// The Pearson correlation coefficient of the columns `column1` and `column2`, which are
-    /// numeric; `None` when it is undefined, as of no rows.
+    /// The Pearson correlation coefficient of the numeric columns `column1` and `column2`,
+    /// counting a `NULL` as 0. Where it is undefined, as with fewer than two rows or a column of
+    /// one value, the server answers NaN; `None` stands for a `NULL` answer, which it doesn't send.
     pub fn corr(
         &self,
         column1: impl Into<String>,
@@ -90,8 +91,9 @@ impl StatFunctions {
         }))
     }
 
-    /// The sample covariance of the columns `column1` and `column2`, which are numeric;
-    /// `None` when it is undefined, as of no rows.
+    /// The sample covariance of the numeric columns `column1` and `column2`, counting a `NULL` as
+    /// 0. With fewer than two rows, where it is undefined, the server answers 0.0; `None` stands
+    /// for a `NULL` answer, which it doesn't send.
     pub fn cov(
         &self,
         column1: impl Into<String>,
@@ -105,9 +107,9 @@ impl StatFunctions {
     }
 
     /// The approximate quantiles at `probabilities`, each from 0 to 1, of each of the numeric
-    /// columns `columns`: one `Vec` of each column, in order. The rank of each is within
-    /// `relative_error` times the number of rows of the exact one; 0 computes exact
-    /// quantiles, at a greater cost.
+    /// columns `columns`, leaving out `NULL`s and NaNs: one `Vec` of each column, in order, empty
+    /// for a column with no other values. The rank of each is within `relative_error` times the
+    /// number of values of the exact one; 0 computes exact quantiles, at a greater cost.
     pub fn approx_quantile(
         &self,
         columns: impl IntoIterator<Item = impl Into<String>>,
