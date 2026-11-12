@@ -20,7 +20,8 @@
 //! a registration is cancelled as every operation is.
 //!
 //! Both APIs build their UDFs with the Python of `SPARK_CONNECT_PYTHON`, which every test sets
-//! first to a script that answers with the spec it is given, so the payload is the spec.
+//! first to a script that answers with the spec it is given, so the payload is the spec, and that
+//! logs the entrypoint of each build.
 #![cfg(all(feature = "rust-udf", unix))]
 
 mod gated;
@@ -44,23 +45,46 @@ use spark_connect_proto as proto;
 
 const SESSION_ID: &str = "00000000-0000-4000-8000-0000000000d1";
 
-/// Points `SPARK_CONNECT_PYTHON` at a script that answers with the spec it is given, and fails
-/// for the entrypoint `failing`. Every test calls it before anything else, so no other thread
-/// reads the environment while it is set.
+fn scratch() -> &'static std::path::Path {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+}
+
+/// The script that answers with the spec it is given, after it logs the spec's entrypoint to
+/// `BUILDS`. It fails for the entrypoint `failing`, and for an entrypoint `e` while the file
+/// `e.fail` is beside it. A run without a spec is the version check, which it answers with
+/// nothing.
+const ECHO: &str = r#"#!/bin/sh
+spec=$(cat)
+[ -n "$spec" ] || exit 0
+dir=$(dirname "$0")
+entrypoint=$(printf '%s' "$spec" | sed -n 's/.*"entrypoint":"\([^"]*\)".*/\1/p')
+echo "$entrypoint" >> "$dir/rust-udf-requests-builds"
+if [ "$entrypoint" = failing ] || [ -e "$dir/$entrypoint.fail" ]; then
+  echo 'the packer failed' >&2
+  exit 1
+fi
+printf '%s' "$spec"
+"#;
+
+/// Points `SPARK_CONNECT_PYTHON` at `ECHO`, with an empty log. Every test calls it before anything
+/// else, so no other thread reads the environment while it is set.
 fn echo_python() {
     static SET: Once = Once::new();
     SET.call_once(|| {
-        let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
-        let path = dir.join("rust-udf-requests-python");
-        let staged = dir.join(format!("rust-udf-requests-python.{}", std::process::id()));
-        let script = "#!/bin/sh\nspec=$(cat)\ncase \"$spec\" in\n  \
-                      *'\"entrypoint\":\"failing\"'*) echo 'the packer failed' >&2; exit 1 ;;\n\
-                      esac\nprintf '%s' \"$spec\"\n";
-        std::fs::write(&staged, script).unwrap();
+        let path = scratch().join("rust-udf-requests-python");
+        let staged = scratch().join(format!("rust-udf-requests-python.{}", std::process::id()));
+        std::fs::write(&staged, ECHO).unwrap();
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::rename(&staged, &path).unwrap();
+        std::fs::write(scratch().join("rust-udf-requests-builds"), "").unwrap();
         std::env::set_var("SPARK_CONNECT_PYTHON", &path);
     });
+}
+
+/// The builds of UDFs whose entrypoint is `entrypoint`, as `ECHO` logged them.
+fn builds(entrypoint: &str) -> usize {
+    let log = std::fs::read_to_string(scratch().join("rust-udf-requests-builds")).unwrap();
+    log.lines().filter(|line| *line == entrypoint).count()
 }
 
 const MODULE: [u8; 4] = [0, 97, 115, 109];
@@ -172,6 +196,30 @@ fn cases() -> Vec<Case> {
                 .unwrap()
         ),
         case!(
+            "call one UDF twice and register it",
+            |s| {
+                let label = old_label();
+                let columns = || [spark_connect::col("id"), spark_connect::col("s")];
+                for _ in 0..2 {
+                    let column = label.call(columns()).unwrap();
+                    s.range(3)
+                        .unwrap()
+                        .select([column])
+                        .collect_record_batches()
+                        .unwrap();
+                }
+                s.udf().register("label", &label).unwrap()
+            },
+            |s| {
+                let label = label();
+                for _ in 0..2 {
+                    let column = label.call(["id", "s"]).unwrap();
+                    s.range(3).select([column]).collect().await.unwrap();
+                }
+                s.udf().register("label", &label).await.unwrap()
+            }
+        ),
+        case!(
             "call a nondeterministic UDF",
             |s| s
                 .range(3)
@@ -246,9 +294,9 @@ async fn every_registration_and_call_sends_the_tags_of_its_handle() {
     let (recorder, url) = start();
     let session = Session::builder().remote(url).connect().await.unwrap();
     let tagged = session.with_tag("udfs").unwrap();
-    let mut sent = 0;
     for case in cases() {
         (case.new)(tagged.clone()).await;
+        let mut sent = 0;
         for entry in recorder.take() {
             if entry.kind != "ExecutePlanRequest" {
                 continue;
@@ -257,8 +305,8 @@ async fn every_registration_and_call_sends_the_tags_of_its_handle() {
             let request = proto::ExecutePlanRequest::decode(&entry.bytes[..]).unwrap();
             assert_eq!(request.tags, ["udfs"], "{}", case.name);
         }
+        assert!(sent > 0, "{}: sent nothing", case.name);
     }
-    assert_eq!(sent, cases().len());
 }
 
 #[tokio::test]
@@ -278,7 +326,7 @@ async fn a_registration_whose_udf_cannot_be_built_fails_and_sends_nothing() {
             "an array per batch",
             udf("f", MODULE, "f", array, AbiType::I64).with_batch_entrypoint("f_batch"),
             ErrorKind::InvalidArgument,
-            "so it cannot be called once per batch",
+            "so it can't be called once per batch",
         ),
     ] {
         recorder.take();
@@ -287,6 +335,51 @@ async fn a_registration_whose_udf_cannot_be_built_fails_and_sends_nothing() {
         assert!(error.message().contains(message), "{name}: {error}");
         assert!(recorder.take().is_empty(), "{name}: sent");
     }
+}
+
+#[tokio::test]
+async fn a_udf_value_builds_its_payload_once_for_its_calls_and_registrations() {
+    echo_python();
+    let (_, url) = start();
+    let session = Session::builder().remote(url).connect().await.unwrap();
+    let types = vec![AbiType::I64, AbiType::I64];
+    let counted = udf("counted", MODULE, "counted", types, AbiType::I64);
+    assert_eq!(builds("counted"), 0, "built when created");
+    for _ in 0..3 {
+        counted.call(["a", "b"]).unwrap();
+    }
+    counted.clone().call(["a", "b"]).unwrap();
+    let nondeterministic = counted.clone().as_nondeterministic();
+    nondeterministic.call(["a", "b"]).unwrap();
+    session.udf().register("counted", &counted).await.unwrap();
+    session
+        .udf()
+        .register("n", &nondeterministic)
+        .await
+        .unwrap();
+    assert_eq!(
+        builds("counted"),
+        1,
+        "the calls and registrations of a value"
+    );
+    let batched = counted.with_batch_entrypoint("counted_batch");
+    session.udf().register("b", &batched).await.unwrap();
+    batched.call(["a", "b"]).unwrap();
+    assert_eq!(builds("counted"), 2, "a value with a batch entrypoint");
+}
+
+#[test]
+fn a_failed_build_is_tried_again_at_the_next_call() {
+    echo_python();
+    let fail = scratch().join("flaky.fail");
+    std::fs::write(&fail, "").unwrap();
+    let flaky = udf("flaky", MODULE, "flaky", arg_types(), ret_type());
+    let error = flaky.call(["a", "b"]).unwrap_err();
+    std::fs::remove_file(&fail).unwrap();
+    assert_eq!(error.kind(), ErrorKind::Internal, "{error}");
+    flaky.call(["a", "b"]).unwrap();
+    flaky.call(["a", "b"]).unwrap();
+    assert_eq!(builds("flaky"), 2);
 }
 
 /// Starts a registration once the gated server waits at `wait`, and returns its task once the

@@ -53,18 +53,26 @@
 //! UDF as a Python UDF that carries the module, and builds it with Python: the interpreter of
 //! `SPARK_CONNECT_PYTHON`, else of `PYSPARK_PYTHON`, else `python3`, which needs `pyspark`, with
 //! the directory of `SPARK_CONNECT_WASM_PACKER_PATH` added to its `PYTHONPATH` if it is set.
-//! Building a UDF and calling it on columns run that Python on the calling thread; registering
-//! one runs it on a blocking thread of the runtime.
+//!
+//! [`udf`] asks that Python for its version when it creates a UDF value. The value builds its
+//! payload with it once: at its first call on columns, on the calling thread, or at its first
+//! registration, on a blocking thread of the runtime. Its clones share that build, and later
+//! calls and registrations reuse it. A build that fails is not kept, so the next call or
+//! registration tries again. The `udf::<name>(...)` functions that `#[spark_udf]` generates
+//! create a new value each time: keep the value of `udf::<name>_udf()` to reuse its build.
 
+use std::fmt;
 use std::future::Future;
+use std::sync::{Arc, OnceLock};
 
 use spark_connect_core::error::SparkError;
-use spark_connect_core::rust_udf::UserDefinedFunction as CoreUdf;
+use spark_connect_core::rust_udf::{BatchProblem, UserDefinedFunction as CoreUdf};
 use spark_connect_core::types::DataType;
+use spark_connect_core::udf::PythonUDFPayload;
 use spark_connect_proto as proto;
 
 use crate::column::{to_core, Column};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::session::Session;
 use crate::stream;
 
@@ -81,7 +89,7 @@ pub fn udf(
     arg_types: Vec<AbiType>,
     ret_type: AbiType,
 ) -> UserDefinedFunction {
-    UserDefinedFunction(spark_connect_core::rust_udf::udf(
+    UserDefinedFunction::new(spark_connect_core::rust_udf::udf(
         name,
         wasm_module,
         entrypoint,
@@ -93,35 +101,93 @@ pub fn udf(
 /// A Rust UDF: a function of a WebAssembly module, with the types of its arguments and result.
 ///
 /// Apply it to columns with [`call`](UserDefinedFunction::call), or register it on a session for
-/// its SQL with [`UdfRegistration::register`].
-#[derive(Debug, Clone)]
-pub struct UserDefinedFunction(CoreUdf);
+/// its SQL with [`UdfRegistration::register`]. The value builds its payload once (see the
+/// [module](crate::rust_udf)), and its clones share that build.
+#[derive(Clone)]
+pub struct UserDefinedFunction {
+    udf: CoreUdf,
+    built: Arc<OnceLock<PythonUDFPayload>>,
+}
+
+impl fmt::Debug for UserDefinedFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("UserDefinedFunction")
+            .field(&self.udf)
+            .finish()
+    }
+}
 
 impl UserDefinedFunction {
+    fn new(udf: CoreUdf) -> UserDefinedFunction {
+        UserDefinedFunction {
+            udf,
+            built: Arc::default(),
+        }
+    }
+
     /// This UDF, marked nondeterministic, so that Spark's optimizer doesn't assume that the same
-    /// arguments give the same result.
+    /// arguments give the same result. It shares the build of this value, since its payload is
+    /// the same.
     pub fn as_nondeterministic(self) -> UserDefinedFunction {
-        UserDefinedFunction(self.0.as_nondeterministic())
+        UserDefinedFunction {
+            udf: self.udf.as_nondeterministic(),
+            built: self.built,
+        }
     }
 
     /// This UDF, called once per Arrow batch through `entrypoint`, the batch export that
-    /// `#[spark_udf]` generates for a function, instead of once per row.
+    /// `#[spark_udf]` generates for a function, instead of once per row. Its payload differs,
+    /// so it has a build of its own.
     pub fn with_batch_entrypoint(self, entrypoint: impl Into<String>) -> UserDefinedFunction {
-        UserDefinedFunction(self.0.with_batch_entrypoint(entrypoint))
+        UserDefinedFunction::new(self.udf.with_batch_entrypoint(entrypoint))
     }
 
     /// The Spark type of the result.
     pub fn output_type(&self) -> DataType {
-        self.0.output_type()
+        self.udf.output_type()
     }
 
     /// The column of this UDF applied to `args`, one column per argument of the function.
     ///
-    /// Fails if Python can't build the UDF (see the [module](crate::rust_udf)), or if the UDF
-    /// has a batch entrypoint but no argument, or an argument or a result that can't be read from
-    /// an Arrow batch.
+    /// The first call or registration of the value builds its payload (see the
+    /// [module](crate::rust_udf)). That fails if Python fails, or if the UDF has a batch
+    /// entrypoint but no arguments, or an argument or a result that a batch export can't take.
     pub fn call(&self, args: impl IntoIterator<Item = impl Into<Column>>) -> Result<Column> {
-        Ok(Column::from(self.0.call(args.into_iter().map(to_core))?))
+        let payload = self.payload()?;
+        let column = self
+            .udf
+            .call_with_payload(args.into_iter().map(to_core), payload);
+        Ok(Column::from(column))
+    }
+
+    /// The payload of this UDF: the one built before, else a new one, which it keeps.
+    fn payload(&self) -> Result<PythonUDFPayload> {
+        if let Some(payload) = self.built.get() {
+            return Ok(payload.clone());
+        }
+        if let Some(problem) = self.udf.batch_problem() {
+            let name = self.udf.name();
+            return Err(Error::invalid_argument(match problem {
+                // Not reachable through this API: only with_batch_entrypoint calls a UDF per batch.
+                BatchProblem::NoEntrypoint => {
+                    format!(
+                        "Rust UDF '{name}' is called once per batch but has no batch entrypoint"
+                    )
+                }
+                BatchProblem::NoArguments => format!(
+                    "Rust UDF '{name}' has no arguments, so it can't be called once per batch; \
+                     build it without with_batch_entrypoint to call it once per row"
+                ),
+                BatchProblem::Unsupported(ty) => format!(
+                    "Rust UDF '{name}' has an argument or a result of type '{}', so it can't be \
+                     called once per batch; build it without with_batch_entrypoint to call it \
+                     once per row",
+                    ty.descriptor()
+                ),
+            }));
+        }
+        let payload = self.udf.to_payload()?;
+        Ok(self.built.get_or_init(|| payload).clone())
     }
 }
 
@@ -145,9 +211,16 @@ impl UdfRegistration {
     ) -> impl Future<Output = Result<()>> + Send + 'static {
         let session = self.session.clone();
         let name = name.into();
-        let udf = udf.0.clone();
+        let udf = udf.clone();
         async move {
-            let function = off_the_runtime(move || Ok(udf.registration_expression(&name)?)).await?;
+            let payload = match udf.built.get() {
+                Some(payload) => payload.clone(),
+                None => {
+                    let building = udf.clone();
+                    off_the_runtime(move || building.payload()).await?
+                }
+            };
+            let function = udf.udf.registration_with_payload(&name, payload);
             let command = proto::command::CommandType::RegisterFunction(function.to_proto());
             stream::command(session, command).await
         }
@@ -197,7 +270,7 @@ mod tests {
     }
 
     fn with_packer(udf: UserDefinedFunction, packer: PythonPacker) -> UserDefinedFunction {
-        UserDefinedFunction(udf.0.with_packer(packer))
+        UserDefinedFunction::new(udf.udf.with_packer(packer))
     }
 
     fn add(arg_types: Vec<AbiType>) -> UserDefinedFunction {
@@ -227,18 +300,25 @@ mod tests {
                 "an array per batch",
                 with_packer(add(vec![array]), echo.clone()).with_batch_entrypoint("add_batch"),
                 ErrorKind::InvalidArgument,
-                "has type 'array:i64', so it cannot be called once per batch",
+                "Rust UDF 'add' has an argument or a result of type 'array:i64', so it can't be \
+                 called once per batch; build it without with_batch_entrypoint to call it once \
+                 per row",
             ),
             (
                 "no argument per batch",
                 with_packer(add(vec![]), echo.clone()).with_batch_entrypoint("add_batch"),
                 ErrorKind::InvalidArgument,
-                "has no arguments, so it cannot be called once per batch",
+                "Rust UDF 'add' has no arguments, so it can't be called once per batch; build it \
+                 without with_batch_entrypoint to call it once per row",
             ),
         ] {
             let error = udf.call(["x"]).unwrap_err();
             assert_eq!(error.kind(), kind, "{name}");
-            assert!(error.message().contains(message), "{name}: {error}");
+            let text = error.message();
+            match kind {
+                ErrorKind::InvalidArgument => assert_eq!(text, message, "{name}"),
+                _ => assert!(text.contains(message), "{name}: {text}"),
+            }
         }
     }
 
@@ -255,12 +335,12 @@ mod tests {
                 go = go.display()
             ),
         );
-        let udf = with_packer(add(vec![AbiType::I64]), waiting).0;
+        let udf = with_packer(add(vec![AbiType::I64]), waiting);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
         let built = runtime.block_on(async move {
-            let building = off_the_runtime(move || Ok(udf.registration_expression("f")?));
+            let building = off_the_runtime(move || udf.payload());
             let unblocking = async move {
                 tokio::task::yield_now().await;
                 std::fs::write(go, b"").unwrap();

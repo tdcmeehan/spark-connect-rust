@@ -6,10 +6,7 @@
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    parse_macro_input, FnArg, GenericArgument, Item, ItemFn, ItemMod, Pat, PathArguments,
-    ReturnType, Type,
-};
+use syn::{FnArg, GenericArgument, Item, ItemFn, ItemMod, Pat, PathArguments, ReturnType, Type};
 
 /// Turn a module of plain Rust functions into Spark UDFs backed by WebAssembly.
 ///
@@ -58,7 +55,7 @@ use syn::{
 /// a path to that crate as the generated `udf` module sees it, such as the name of the
 /// dependency, renamed or not, or a path to a re-export of it; it may also be written as a
 /// string, `crate = "spark_connect_async"`. Without the option the generated code uses
-/// `spark_connect`, the crate of `apache-spark-connect`.
+/// `spark_connect`, the crate of `apache-spark-connect`. Any other argument is an error.
 ///
 /// ```ignore
 /// use spark_connect_macros::spark_udf;
@@ -73,15 +70,41 @@ use syn::{
 /// ```
 #[proc_macro_attribute]
 pub fn spark_udf(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let options = match Options::parse(attr.into()) {
+    spark_udf_expansion(attr.into(), item.into()).into()
+}
+
+/// What `#[spark_udf(attr)]` makes of `item`: an argument other than `crate` is an error.
+fn spark_udf_expansion(
+    attr: proc_macro2::TokenStream,
+    item: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    expansion(Options::parse(attr), item)
+}
+
+/// What `#[spark_wasm_udf(attr)]` makes of `item`: the expansion of `#[spark_udf(attr)]` if
+/// `attr` is a `crate` option that it accepts, else that of `#[spark_udf]`.
+fn spark_wasm_udf_expansion(
+    attr: proc_macro2::TokenStream,
+    item: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    // Its arguments were ignored before the `crate` option existed, so every attribute that
+    // compiled then still does, and expands as it did.
+    expansion(Ok(Options::parse(attr).unwrap_or_default()), item)
+}
+
+fn expansion(
+    options: syn::Result<Options>,
+    item: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let options = match options {
         Ok(options) => options,
-        Err(e) => return e.to_compile_error().into(),
+        Err(e) => return e.to_compile_error(),
     };
-    let module = parse_macro_input!(item as ItemMod);
-    match expand(module, &options) {
-        Ok(ts) => ts.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
+    let module = match syn::parse2::<ItemMod>(item) {
+        Ok(module) => module,
+        Err(e) => return e.to_compile_error(),
+    };
+    expand(module, &options).unwrap_or_else(|e| e.to_compile_error())
 }
 
 /// The arguments of `#[spark_udf(...)]`.
@@ -117,12 +140,16 @@ impl Options {
 }
 
 /// The old name of [`macro@spark_udf`], kept as a deprecated alias.
+///
+/// It takes the `crate` option of [`macro@spark_udf`], and ignores any other arguments, as it
+/// always has: with them, or with a `crate` option that [`macro@spark_udf`] rejects, it
+/// expands as without arguments.
 #[deprecated(
     note = "renamed `spark_udf`; the `wasm-udf` feature of apache-spark-connect is now `rust-udf`"
 )]
 #[proc_macro_attribute]
 pub fn spark_wasm_udf(attr: TokenStream, item: TokenStream) -> TokenStream {
-    spark_udf(attr, item)
+    spark_wasm_udf_expansion(attr.into(), item.into()).into()
 }
 
 /// Map a Rust type to a `<client>::rust_udf::AbiType` constructor expr.
@@ -470,7 +497,8 @@ fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenSt
 
 #[cfg(test)]
 mod tests {
-    use super::{batch_supported, expand, Options};
+    use super::{batch_supported, expand, spark_udf_expansion, spark_wasm_udf_expansion, Options};
+    use proc_macro2::TokenStream;
     use quote::quote;
 
     fn options(attr: &str) -> syn::Result<Options> {
@@ -509,6 +537,44 @@ mod tests {
                 .map(Option::as_deref)
                 .map_err(|e| e.to_string());
             assert_eq!(parsed, expected.map_err(str::to_string), "{attr}");
+        }
+    }
+
+    #[test]
+    fn the_old_name_ignores_the_arguments_that_the_new_name_rejects() {
+        let module = quote!(
+            mod m {
+                pub fn plus(x: i64) -> i64 {
+                    x
+                }
+            }
+        );
+        let expand = |expansion: fn(TokenStream, TokenStream) -> TokenStream, attr: &str| {
+            expansion(attr.parse().unwrap(), module.clone()).to_string()
+        };
+        let default = expand(spark_udf_expansion, "");
+        let for_the_async_client = expand(spark_udf_expansion, "crate = spark_connect_async");
+        assert_ne!(default, for_the_async_client);
+        assert_eq!(expand(spark_wasm_udf_expansion, ""), default);
+        assert_eq!(
+            expand(spark_wasm_udf_expansion, "crate = spark_connect_async"),
+            for_the_async_client
+        );
+        for attr in [
+            "anything",
+            "x y z",
+            "crate",
+            "crate = 1",
+            "crate = a<T>",
+            "crate = spark_connect_async, anything",
+            "anything = 1, crate = spark_connect_async",
+        ] {
+            let rejected = expand(spark_udf_expansion, attr);
+            assert!(
+                rejected.starts_with(":: core :: compile_error !"),
+                "{attr}: {rejected}"
+            );
+            assert_eq!(expand(spark_wasm_udf_expansion, attr), default, "{attr}");
         }
     }
 

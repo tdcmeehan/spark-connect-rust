@@ -387,35 +387,55 @@ impl UserDefinedFunction {
         self.ret_type.to_data_type()
     }
 
+    /// The UDF's name.
+    #[doc(hidden)]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Why this UDF, whose eval type calls it once per Arrow batch, can't be called so: the
+    /// condition behind the errors of [`to_payload`](Self::to_payload), for a client to word.
+    #[doc(hidden)]
+    pub fn batch_problem(&self) -> Option<BatchProblem> {
+        if self.eval_type != eval_type::SQL_SCALAR_ARROW_UDF {
+            return None;
+        }
+        if self.batch_entrypoint.is_none() {
+            return Some(BatchProblem::NoEntrypoint);
+        }
+        if self.arg_types.is_empty() {
+            return Some(BatchProblem::NoArguments);
+        }
+        let mut types = self.arg_types.iter().chain([&self.ret_type]);
+        types
+            .find(|t| !t.batch_supported())
+            .map(|t| BatchProblem::Unsupported(t.clone()))
+    }
+
     /// Build the JSON spec handed to the Python packer.
     fn build_spec(&self) -> Result<String> {
-        let batch_entrypoint = if self.eval_type == eval_type::SQL_SCALAR_ARROW_UDF {
-            let Some(entrypoint) = &self.batch_entrypoint else {
-                return Err(SparkError::value_msg(format!(
+        if let Some(problem) = self.batch_problem() {
+            return Err(SparkError::value_msg(match problem {
+                BatchProblem::NoEntrypoint => format!(
                     "WASM UDF '{}' has eval type SQL_SCALAR_ARROW_UDF, which needs a batch \
                      entrypoint; set one with with_batch_entrypoint",
                     self.name
-                )));
-            };
-            if self.arg_types.is_empty() {
-                return Err(SparkError::value_msg(format!(
+                ),
+                BatchProblem::NoArguments => format!(
                     "WASM UDF '{}' has no arguments, so it cannot be called once per batch",
                     self.name
-                )));
-            }
-            let mut types = self.arg_types.iter().chain([&self.ret_type]);
-            if let Some(ty) = types.find(|t| !t.batch_supported()) {
-                return Err(SparkError::value_msg(format!(
+                ),
+                BatchProblem::Unsupported(ty) => format!(
                     "WASM UDF '{}' has type '{}', so it cannot be called once per batch; \
                      call it per row with with_eval_type(SQL_ARROW_BATCHED_UDF)",
                     self.name,
                     ty.descriptor()
-                )));
-            }
-            Some(entrypoint)
-        } else {
-            None
-        };
+                ),
+            }));
+        }
+        let batch_entrypoint = (self.eval_type == eval_type::SQL_SCALAR_ARROW_UDF)
+            .then_some(self.batch_entrypoint.as_ref())
+            .flatten();
         let spec = serde_json::json!({
             "wasm_b64": base64::engine::general_purpose::STANDARD.encode(&self.wasm_module),
             "entrypoint": self.entrypoint,
@@ -442,28 +462,48 @@ impl UserDefinedFunction {
         ))
     }
 
+    /// The expression of this UDF under `name`, applied to `args`, with `payload`.
+    fn expression_with_payload(
+        &self,
+        name: &str,
+        args: Vec<Column>,
+        payload: PythonUDFPayload,
+    ) -> CommonInlineUserDefinedFunctionExpression {
+        CommonInlineUserDefinedFunctionExpression::new(
+            name.to_string(),
+            self.deterministic,
+            args.iter().map(|c| c.expression().clone()).collect(),
+            payload,
+        )
+    }
+
     /// Build the [`CommonInlineUserDefinedFunctionExpression`] for the given
     /// argument columns.
     pub fn to_expression(
         &self,
         args: Vec<Column>,
     ) -> Result<CommonInlineUserDefinedFunctionExpression> {
-        Ok(CommonInlineUserDefinedFunctionExpression::new(
-            self.name.clone(),
-            self.deterministic,
-            args.iter().map(|c| c.expression().clone()).collect(),
-            self.to_payload()?,
-        ))
+        Ok(self.expression_with_payload(&self.name, args, self.to_payload()?))
     }
 
     /// Apply the UDF to `args`, producing a [`Column`] — mirroring calling a
     /// PySpark `UserDefinedFunction` on columns (`my_udf(col("x"))`).
     pub fn call<C: Into<Column>>(&self, args: impl IntoIterator<Item = C>) -> Result<Column> {
         let args: Vec<Column> = args.into_iter().map(Into::into).collect();
-        let expr = self.to_expression(args)?;
-        Ok(Column::new(
-            ExpressionNode::CommonInlineUserDefinedFunction(Box::new(expr)).into(),
-        ))
+        Ok(self.call_with_payload(args, self.to_payload()?))
+    }
+
+    /// [`call`](Self::call) with `payload`, which [`to_payload`](Self::to_payload) built before,
+    /// so that a client building it once runs no Python here.
+    #[doc(hidden)]
+    pub fn call_with_payload<C: Into<Column>>(
+        &self,
+        args: impl IntoIterator<Item = C>,
+        payload: PythonUDFPayload,
+    ) -> Column {
+        let args: Vec<Column> = args.into_iter().map(Into::into).collect();
+        let expr = self.expression_with_payload(&self.name, args, payload);
+        Column::new(ExpressionNode::CommonInlineUserDefinedFunction(Box::new(expr)).into())
     }
 
     /// Build the registration expression for this UDF under `name` (no bound
@@ -473,13 +513,32 @@ impl UserDefinedFunction {
         &self,
         name: &str,
     ) -> Result<CommonInlineUserDefinedFunctionExpression> {
-        Ok(CommonInlineUserDefinedFunctionExpression::new(
-            name.to_string(),
-            self.deterministic,
-            vec![],
-            self.to_payload()?,
-        ))
+        Ok(self.registration_with_payload(name, self.to_payload()?))
     }
+
+    /// [`registration_expression`](Self::registration_expression) with `payload`, which
+    /// [`to_payload`](Self::to_payload) built before.
+    #[doc(hidden)]
+    pub fn registration_with_payload(
+        &self,
+        name: &str,
+        payload: PythonUDFPayload,
+    ) -> CommonInlineUserDefinedFunctionExpression {
+        self.expression_with_payload(name, vec![], payload)
+    }
+}
+
+/// Why a UDF can't be called once per Arrow batch: see
+/// [`UserDefinedFunction::batch_problem`].
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchProblem {
+    /// It has no batch entrypoint.
+    NoEntrypoint,
+    /// It has no arguments.
+    NoArguments,
+    /// An argument or the result has this type, which a batch entrypoint can't take or return.
+    Unsupported(AbiType),
 }
 
 /// Default Python version tag, matching how pyspark reports it
