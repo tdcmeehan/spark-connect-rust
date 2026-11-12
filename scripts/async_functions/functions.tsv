@@ -446,7 +446,7 @@ try_parse_url	try_parse_url	url:col, part_to_extract:col, key:?col
 try_subtract	try_subtract	left:col, right:col			
 try_to_number	try_to_number	col:col, format:col			
 uniform	uniform	min:arg, max:arg, seed:?i64			
-when	when	same		old::when(oc("a"), oc("b"))	when("a", "b")
+when	when	same		old::when(oc("a"), oc("b"))	when("a", "b").into()
 xpath	xpath	xml:col, path:col			
 xpath_boolean	xpath_boolean	xml:col, path:col			
 xpath_double	xpath_double	xml:col, path:col			

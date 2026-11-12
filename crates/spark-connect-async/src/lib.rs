@@ -57,7 +57,7 @@ pub mod types {
     pub use spark_connect_core::types::{DataType, StructField};
 }
 
-pub use column::{col, lit, when, Column, IntoArgument, IntoLiteral};
+pub use column::{col, lit, when, CaseWhen, Column, IntoArgument, IntoLiteral};
 pub use dataframe::DataFrame;
 pub use error::{Error, ErrorKind, Result};
 pub use observation::Observation;

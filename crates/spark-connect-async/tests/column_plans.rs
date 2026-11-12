@@ -26,7 +26,7 @@ use spark_connect::expression::SortOrder;
 use spark_connect::functions::when as old_when;
 use spark_connect::window::WindowSpec as OldWindow;
 use spark_connect::{col as oc, lit as ol, Column as Old};
-use spark_connect_async::column::AliasSpec;
+use spark_connect_async::column::{AliasSpec, CaseWhen, IntoArgument};
 use spark_connect_async::types::DataType;
 use spark_connect_async::window::{FrameBound, Window};
 use spark_connect_async::{col, lit, when, Column};
@@ -233,14 +233,21 @@ fn every_column_method_builds_the_expression_of_the_old_api() {
                 .otherwise(lit(30)),
         ),
         (
-            "when of a column",
-            oc("x").when(oc("c"), ol(1)),
-            col("x").when("c", lit(1)),
+            "when, when",
+            old_when(oc("a").lt(ol(1)), ol(10)).when(oc("a").lt(ol(2)), ol(20)),
+            when(col("a").lt(lit(1)), lit(10))
+                .when(col("a").lt(lit(2)), lit(20))
+                .into(),
         ),
         (
-            "otherwise of a column",
-            oc("x").otherwise(ol(1)),
-            col("x").otherwise(lit(1)),
+            "when, otherwise",
+            old_when(oc("c"), ol(1)).otherwise(ol(2)),
+            when("c", lit(1)).otherwise(lit(2)),
+        ),
+        (
+            "when as an argument",
+            old_when(oc("c"), ol(1)),
+            when("c", lit(1)).into_argument(),
         ),
         (
             "over a partition",
@@ -313,5 +320,6 @@ fn columns_convert_into_and_from_the_columns_of_the_old_api() {
 fn columns_and_alias_specs_are_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Column>();
+    assert_send_sync::<CaseWhen>();
     assert_send_sync::<AliasSpec>();
 }

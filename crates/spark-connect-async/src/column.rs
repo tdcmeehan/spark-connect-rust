@@ -294,27 +294,15 @@ impl Column {
         Column(self.0.desc_nulls_last())
     }
 
-    /// Adds the branch of `condition` to the `CASE WHEN` that [`when`] starts: its value is
-    /// that of the first branch whose condition holds. Of a column that is not a `CASE WHEN`,
-    /// it is a `CASE WHEN` of this branch, as [`when`] makes it.
-    pub fn when(self, condition: impl Into<Column>, value: impl Into<Column>) -> Column {
-        Column(self.0.when(to_core(condition), to_core(value)))
-    }
-
     /// The value of the window function or aggregate for each row, over the rows of `window`.
     pub fn over(self, window: Window) -> Column {
         Column(self.0.over(window.into_core()))
     }
-
-    /// The value of the `CASE WHEN` where no condition holds, which is `NULL` without it. A
-    /// column that is not a `CASE WHEN` is returned unchanged.
-    pub fn otherwise(self, value: impl Into<Column>) -> Column {
-        Column(self.0.otherwise(to_core(value)))
-    }
 }
 
-/// A `CASE WHEN` whose value is `value` where `condition` holds; [`Column::when`] adds
-/// branches and [`Column::otherwise`] the value where none holds.
+/// A `CASE WHEN` of one branch: `value` where `condition` holds, and `NULL` elsewhere.
+/// [`CaseWhen::when`] adds branches, and [`CaseWhen::otherwise`] gives the value where none
+/// holds.
 ///
 /// ```
 /// use spark_connect_async::{col, lit, when};
@@ -323,11 +311,67 @@ impl Column {
 ///     .when(col("n").lt(lit(100)), lit("medium"))
 ///     .otherwise(lit("large"));
 /// ```
-pub fn when(condition: impl Into<Column>, value: impl Into<Column>) -> Column {
-    Column(spark_connect_core::column::when(
+pub fn when(condition: impl Into<Column>, value: impl Into<Column>) -> CaseWhen {
+    CaseWhen(spark_connect_core::column::when(
         to_core(condition),
         to_core(value),
     ))
+}
+
+/// A `CASE WHEN`, which [`when`] starts: its value is that of its first branch whose condition
+/// holds, or `NULL` where none does. [`CaseWhen::when`] adds a branch, and
+/// [`CaseWhen::otherwise`] replaces the `NULL` with a value and returns the [`Column`]. A
+/// `CaseWhen` converts into a [`Column`], so it can be given wherever a column is taken.
+///
+/// ```
+/// use spark_connect_async::{col, lit, when, Column};
+///
+/// let group = when(col("age").lt(lit(13)), lit("child"))
+///     .when(col("age").lt(lit(20)), lit("teen"))
+///     .otherwise(lit("adult"));
+/// let minor = Column::from(when(col("age").lt(lit(18)), lit(true)));
+/// ```
+///
+/// Only a `CaseWhen` takes branches, and only until `otherwise`: a [`Column`] has neither
+/// `when` nor `otherwise`, so none of these compiles.
+///
+/// ```compile_fail,E0599
+/// # use spark_connect_async::{col, lit};
+/// let child = col("age").when(col("age").lt(lit(13)), lit(true));
+/// ```
+///
+/// ```compile_fail,E0599
+/// # use spark_connect_async::{col, lit, when};
+/// let group = when(col("age").lt(lit(13)), lit("child"))
+///     .otherwise(lit("adult"))
+///     .when(col("age").lt(lit(20)), lit("teen"));
+/// ```
+///
+/// ```compile_fail,E0599
+/// # use spark_connect_async::{col, lit};
+/// let age = col("age").otherwise(lit(0));
+/// ```
+#[derive(Debug, Clone)]
+pub struct CaseWhen(CoreColumn);
+
+impl CaseWhen {
+    /// Adds a branch after the others: where none of their conditions holds and `condition`
+    /// does, the value is `value`.
+    pub fn when(self, condition: impl Into<Column>, value: impl Into<Column>) -> CaseWhen {
+        CaseWhen(self.0.when(to_core(condition), to_core(value)))
+    }
+
+    /// The `CASE WHEN` with `value` where no condition holds, instead of `NULL`. It is a
+    /// [`Column`], so it takes no more branches.
+    pub fn otherwise(self, value: impl Into<Column>) -> Column {
+        Column(self.0.otherwise(to_core(value)))
+    }
+}
+
+impl From<CaseWhen> for Column {
+    fn from(case_when: CaseWhen) -> Column {
+        Column(case_when.0)
+    }
 }
 
 macro_rules! binary_operators {
@@ -491,7 +535,8 @@ pub fn col(name: &str) -> Column {
 }
 
 /// A value of an argument that is a literal or a column: a Rust value of [`IntoLiteral`],
-/// as [`lit`] makes it, or a [`Column`]. A `&str` is a string, not a column name.
+/// as [`lit`] makes it, or a [`Column`] or [`CaseWhen`]. A `&str` is a string, not a column
+/// name.
 pub trait IntoArgument {
     #[doc(hidden)]
     fn into_argument(self) -> Column;
@@ -506,6 +551,12 @@ impl<T: IntoLiteral> IntoArgument for T {
 impl IntoArgument for Column {
     fn into_argument(self) -> Column {
         self
+    }
+}
+
+impl IntoArgument for CaseWhen {
+    fn into_argument(self) -> Column {
+        self.into()
     }
 }
 

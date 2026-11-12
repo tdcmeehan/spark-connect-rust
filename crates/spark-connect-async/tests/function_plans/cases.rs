@@ -2166,7 +2166,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             name: "when",
             old: || old::when(oc("a"), oc("b")),
-            new: || when("a", "b"),
+            new: || when("a", "b").into(),
         },
         Case {
             name: "xpath",
