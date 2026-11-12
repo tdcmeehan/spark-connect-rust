@@ -505,8 +505,23 @@ fn dataframe_cases() -> Vec<Case> {
         ),
         case!(
             "the session of a DataFrame",
-            |b| b.as_async().range(3).blocking().session().version(),
-            |a| a.range(3).session().version().await
+            |b| {
+                let session = b
+                    .with_tag("etl")
+                    .unwrap()
+                    .as_async()
+                    .range(3)
+                    .blocking()
+                    .session();
+                (session.version(), session.as_async().sql("SET x = 1").run())
+            },
+            |a| {
+                let df = a.with_tag("etl").unwrap().range(3);
+                (
+                    df.session().version().await,
+                    df.session().sql("SET x = 1").await,
+                )
+            }
         ),
     ]
 }
@@ -1013,8 +1028,17 @@ fn catalog_cases() -> Vec<Case> {
         ),
         case!(
             "the session of the catalog",
-            |b| b.catalog().session().version(),
-            |a| a.catalog().session().version().await
+            |b| {
+                let session = b.with_tag("etl").unwrap().catalog().session();
+                (session.version(), session.as_async().sql("SET x = 1").run())
+            },
+            |a| {
+                let catalog = a.with_tag("etl").unwrap().catalog();
+                (
+                    catalog.session().version().await,
+                    catalog.session().sql("SET x = 1").await,
+                )
+            }
         ),
         case!(
             "an async catalog converted",
