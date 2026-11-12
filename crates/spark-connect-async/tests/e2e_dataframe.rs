@@ -207,6 +207,15 @@ async fn numeric_aggregations_take_the_numeric_columns_of_the_schema_of_the_serv
     .await;
 }
 
+/// Whether `actual` is `expected` up to rounding, or both are NaN.
+fn close(actual: f64, expected: f64) -> bool {
+    if expected.is_nan() {
+        actual.is_nan()
+    } else {
+        (actual - expected).abs() < 1e-12
+    }
+}
+
 #[tokio::test]
 async fn statistics_of_numeric_columns_are_the_servers_and_others_are_its_errors() {
     let Some(session) = session().await else {
@@ -241,6 +250,63 @@ async fn statistics_of_numeric_columns_are_the_servers_and_others_are_its_errors
                 .unwrap(),
             [Vec::<f64>::new()]
         );
+
+        for (name, sql, corr, cov) in [
+            (
+                "one row",
+                "SELECT * FROM VALUES (1, 2.0D) AS t(x, y)",
+                f64::NAN,
+                0.0,
+            ),
+            (
+                "a NULL counted as 0",
+                "SELECT * FROM VALUES (1, 2.0D), (2, NULL), (NULL, 6.0D) AS t(x, y)",
+                -0.9819805060619659,
+                -3.0,
+            ),
+            (
+                "a constant column",
+                "SELECT * FROM VALUES (1, 2.0D), (1, 4.0D), (1, 6.0D) AS t(x, y)",
+                f64::NAN,
+                0.0,
+            ),
+        ] {
+            let pairs = within(|| session.sql(sql)).await.unwrap();
+            let stat = pairs.stat();
+            let answers = (
+                within(|| stat.corr("x", "y")).await.unwrap(),
+                within(|| stat.cov("x", "y")).await.unwrap(),
+            );
+            assert!(
+                close(answers.0, corr) && close(answers.1, cov),
+                "{name}: {answers:?}"
+            );
+        }
+        for (name, sql, columns, quantiles) in [
+            (
+                "NULLs and a NaN left out",
+                "SELECT * FROM VALUES (1.0D, 10), (NULL, 20), (CAST('NaN' AS DOUBLE), 30), \
+                 (3.0D, NULL) AS t(v, w)",
+                vec!["v", "w"],
+                vec![vec![1.0, 1.0, 3.0], vec![10.0, 20.0, 30.0]],
+            ),
+            (
+                "a column of NULLs",
+                "SELECT CAST(NULL AS DOUBLE) AS v FROM range(3)",
+                vec!["v"],
+                vec![vec![]],
+            ),
+        ] {
+            let values = within(|| session.sql(sql)).await.unwrap();
+            let stat = values.stat();
+            assert_eq!(
+                within(|| stat.approx_quantile(columns, [0.0, 0.5, 1.0], 0.0))
+                    .await
+                    .unwrap(),
+                quantiles,
+                "{name}"
+            );
+        }
 
         for error in [
             within(|| stat.corr("s", "x")).await.unwrap_err(),

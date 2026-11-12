@@ -261,6 +261,24 @@ async fn the_configuration_version_and_interrupts_of_a_session_are_the_servers()
             Some("200")
         );
         assert_eq!(within(|| conf.get("spark.b15.never")).await.unwrap(), None);
+        for (name, key, value) in [
+            (
+                "a configuration without a default",
+                "spark.sql.streaming.checkpointLocation",
+                None,
+            ),
+            (
+                "a static configuration",
+                "spark.app.name",
+                Some("Spark Connect server"),
+            ),
+        ] {
+            assert_eq!(
+                within(|| conf.get(key)).await.unwrap().as_deref(),
+                value,
+                "{name}"
+            );
+        }
         assert!(within(|| conf.is_modifiable(partitions)).await.unwrap());
         assert!(!within(|| conf.is_modifiable("spark.driver.memory"))
             .await
