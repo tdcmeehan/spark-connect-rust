@@ -32,7 +32,9 @@ enum Repr {
 pub enum ErrorKind {
     /// An argument the client or the server rejected, such as a malformed connection string.
     InvalidArgument,
-    /// The server could not be reached, or refused the connection or its credentials.
+    /// The server could not be reached, or refused the connection or its credentials, or the
+    /// session no longer exists, as after [`Session::stop`](crate::Session::stop) (SQL state
+    /// `08003`).
     Transport,
     /// The server could not resolve the plan, such as a missing table or column.
     Analysis,
@@ -40,7 +42,8 @@ pub enum ErrorKind {
     Parse,
     /// The plan failed while it ran.
     Execution,
-    /// The operation was cancelled.
+    /// The operation was cancelled, as by an interrupt such as
+    /// [`Session::interrupt_all`](crate::Session::interrupt_all) (SQL state `HY008`).
     Cancelled,
     /// The operation did not finish within its deadline.
     Timeout,
@@ -149,6 +152,11 @@ impl Error {
             Some(DEADLINE_EXCEEDED) => return ErrorKind::Timeout,
             Some(UNAVAILABLE | UNAUTHENTICATED | PERMISSION_DENIED) => return ErrorKind::Transport,
             Some(UNIMPLEMENTED) => return ErrorKind::Unsupported,
+            _ => {}
+        }
+        match self.sql_state().as_deref() {
+            Some("HY008") => return ErrorKind::Cancelled,
+            Some("08003") => return ErrorKind::Transport,
             _ => {}
         }
         use SparkErrorKind as K;
@@ -372,6 +380,46 @@ mod tests {
                 error(kind, grpc_code).kind(),
                 expected,
                 "{kind:?} with gRPC code {grpc_code:?}"
+            );
+        }
+        let classed = [
+            (
+                K::Unknown,
+                Some(13),
+                "OPERATION_CANCELED",
+                Some("HY008"),
+                ErrorKind::Cancelled,
+            ),
+            (
+                K::Unknown,
+                Some(13),
+                "INVALID_HANDLE.SESSION_CLOSED",
+                Some("08003"),
+                ErrorKind::Transport,
+            ),
+            (
+                K::Connect,
+                None,
+                "NO_ACTIVE_SESSION",
+                None,
+                ErrorKind::Transport,
+            ),
+            (
+                K::Unknown,
+                Some(13),
+                "INVALID_HANDLE.OPERATION_NOT_FOUND",
+                Some("HY000"),
+                ErrorKind::Internal,
+            ),
+        ];
+        for (kind, grpc_code, condition, sql_state, expected) in classed {
+            let mut error = SparkError::classed(kind, condition, &[]);
+            error.grpc_code = grpc_code;
+            error.sql_state = sql_state.map(str::to_string);
+            assert_eq!(
+                Error::from(error).kind(),
+                expected,
+                "{condition} with SQL state {sql_state:?} and gRPC code {grpc_code:?}"
             );
         }
     }

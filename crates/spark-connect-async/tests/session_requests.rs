@@ -22,7 +22,7 @@
 #[allow(dead_code)]
 mod server;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use prost::Message;
@@ -44,11 +44,11 @@ async fn connect(url: String) -> Session {
     Session::builder().remote(url).connect().await.unwrap()
 }
 
-/// A file named `name` in a directory of the process, the same for both APIs.
+/// A file named `name` in the scratch directory of the tests, the same for both APIs.
 fn artifact(name: &str) -> String {
-    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let dir = DIR.get_or_init(|| tempfile::tempdir().unwrap());
-    let path = dir.path().join(name);
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("session-requests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
     std::fs::write(&path, name.as_bytes()).unwrap();
     path.to_str().unwrap().to_string()
 }
