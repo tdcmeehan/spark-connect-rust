@@ -51,8 +51,9 @@ use syn::{FnArg, GenericArgument, Item, ItemFn, ItemMod, Pat, PathArguments, Ret
 /// `#[spark_udf(crate = spark_connect_async)]` generates the host code for the async
 /// client, `apache-spark-connect-async`, with its `rust-udf` feature: `udf::<name>_udf()`
 /// returns its `rust_udf::UserDefinedFunction`, and `udf::<name>(...)` takes, for each
-/// argument, anything that converts into its `Column`, such as a column name. The value is
-/// a path to that crate as the generated `udf` module sees it, such as the name of the
+/// argument, anything that converts into its `Column`, such as a column name, and keeps one
+/// `UserDefinedFunction` for all its calls, so it builds the payload once per process. The
+/// value is a path to that crate as the generated `udf` module sees it, such as the name of the
 /// dependency, renamed or not, or a path to a re-export of it; it may also be written as a
 /// string, `crate = "spark_connect_async"`. Without the option the generated code uses
 /// `spark_connect`, the crate of `apache-spark-connect`. Any other argument is an error.
@@ -447,13 +448,16 @@ fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenSt
                     #builder().call(::std::vec![#(#params),*])
                 }
             },
-            // The client's `Column` may be its own type, so each argument converts into it.
+            // The client's `Column` may be its own type, so each argument converts into it. Its
+            // UDF value keeps the payload it builds, so one value serves every call.
             Some(_) => quote! {
                 #[doc = #call_doc]
                 pub fn #name(
                     #(#params: impl ::core::convert::Into<#client::Column>),*
                 ) -> #client::Result<#client::Column> {
-                    #builder().call(::std::vec![
+                    static __UDF: ::std::sync::OnceLock<#client::rust_udf::UserDefinedFunction> =
+                        ::std::sync::OnceLock::new();
+                    __UDF.get_or_init(#builder).call(::std::vec![
                         #(::core::convert::Into::<#client::Column>::into(#params)),*
                     ])
                 }
@@ -644,7 +648,9 @@ mod tests {
                     __a0: impl ::core::convert::Into<#client::Column>,
                     __a1: impl ::core::convert::Into<#client::Column>
                 ) -> #client::Result<#client::Column> {
-                    plus_udf().call(::std::vec![
+                    static __UDF: ::std::sync::OnceLock<#client::rust_udf::UserDefinedFunction> =
+                        ::std::sync::OnceLock::new();
+                    __UDF.get_or_init(plus_udf).call(::std::vec![
                         ::core::convert::Into::<#client::Column>::into(__a0),
                         ::core::convert::Into::<#client::Column>::into(__a1)
                     ])

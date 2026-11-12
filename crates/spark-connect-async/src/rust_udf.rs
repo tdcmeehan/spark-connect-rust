@@ -58,8 +58,8 @@
 //! payload with it once: at its first call on columns, on the calling thread, or at its first
 //! registration, on a blocking thread of the runtime. Its clones share that build, and later
 //! calls and registrations reuse it. A build that fails is not kept, so the next call or
-//! registration tries again. The `udf::<name>(...)` functions that `#[spark_udf]` generates
-//! create a new value each time: keep the value of `udf::<name>_udf()` to reuse its build.
+//! registration tries again. Each `udf::<name>(...)` function that `#[spark_udf]` generates
+//! keeps one value for all its calls, so it builds the payload once per process.
 
 use std::fmt;
 use std::future::Future;
@@ -286,7 +286,12 @@ mod tests {
     #[test]
     fn a_udf_that_cannot_be_built_is_an_error_of_its_kind() {
         let dir = tempfile::tempdir().unwrap();
-        let failing = packer(dir.path(), "failing", "echo 'no pyspark here' >&2; exit 3");
+        // It reads the spec first: exiting before core writes it fails the write with EPIPE.
+        let failing = packer(
+            dir.path(),
+            "failing",
+            "cat > /dev/null; echo 'no pyspark here' >&2; exit 3",
+        );
         let echo = packer(dir.path(), "echo", "cat");
         let array = AbiType::Array(Box::new(AbiType::I64));
         for (name, udf, kind, message) in [
