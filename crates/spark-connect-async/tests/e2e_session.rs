@@ -273,6 +273,7 @@ async fn the_configuration_version_and_interrupts_of_a_session_are_the_servers()
         let interrupted = within(|| running.next()).await.unwrap().unwrap_err();
         assert_eq!(interrupted.error_class(), Some("OPERATION_CANCELED"));
         assert_eq!(interrupted.sql_state().as_deref(), Some("HY008"));
+        assert_eq!(interrupted.kind(), ErrorKind::Cancelled, "{interrupted}");
         assert!(within(|| session.interrupt_all()).await.unwrap().is_empty());
         assert!(within(|| session.interrupt_operation(&id))
             .await
@@ -358,6 +359,7 @@ async fn a_stopped_session_is_released_on_the_server_and_every_handle_fails() {
         "{stopped}"
     );
     assert_eq!(stopped.sql_state().as_deref(), Some("08003"));
+    assert_eq!(stopped.kind(), ErrorKind::Transport, "{stopped}");
 
     let again = within(|| Session::builder().remote(&url).connect()).await;
     let closed = match again {
@@ -373,4 +375,5 @@ async fn a_stopped_session_is_released_on_the_server_and_every_handle_fails() {
         Some("INVALID_HANDLE.SESSION_CLOSED"),
         "{closed}"
     );
+    assert_eq!(closed.kind(), ErrorKind::Transport, "{closed}");
 }

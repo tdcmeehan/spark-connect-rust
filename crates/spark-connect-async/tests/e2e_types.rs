@@ -27,7 +27,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use futures::FutureExt;
 use serde::Deserialize;
-use spark_connect_async::{Decimal, Row, Session, Value};
+use spark_connect_async::types::DataType;
+use spark_connect_async::{col, lit, CalendarInterval, Decimal, Row, Session, Value};
 
 /// The longest that a call to the server may take.
 const WAIT: Duration = Duration::from_secs(120);
@@ -112,10 +113,26 @@ const COLUMNS: &[(&str, &str, &str, &str)] = &[
         "INTERVAL '-178956970-8' YEAR TO MONTH",
     ),
     (
+        "calendar",
+        "INTERVAL",
+        "make_interval(1, 2, 3, 4, 5, 6, 7.008009)",
+        "make_interval(0, CAST(-2147483648 AS INT), 0, 2147483647, 0, 0, -9223372036.854775)",
+    ),
+    (
         "intervals",
         "MAP<STRING, ARRAY<INTERVAL DAY TO SECOND>>",
         "map('d', array(INTERVAL '1 02:03:04.5' DAY TO SECOND, NULL))",
         "map('max', array(INTERVAL '106751991 04:00:54.775807' DAY TO SECOND))",
+    ),
+    (
+        "calendars",
+        "STRUCT<i: INTERVAL, a: ARRAY<INTERVAL>, m: MAP<STRING, INTERVAL>>",
+        "named_struct('i', make_interval(0, -14, 0, -3, -1, -2, -3.5), \
+         'a', array(make_interval(0, 1, 0, -1), NULL), \
+         'm', map('k', make_interval(0, 0, 0, 0, 0, 0, -0.000001)))",
+        "named_struct('i', NULL, \
+         'a', array(make_interval(0, 2147483647, 0, CAST(-2147483648 AS INT), \
+         0, 0, 9223372036.854775)), 'm', map('k', NULL))",
     ),
     ("array", "ARRAY<INT>", "array(1, NULL, 3)", "array()"),
     ("map", "MAP<STRING, INT>", "map('b', 1, 'a', NULL)", "map()"),
@@ -192,6 +209,13 @@ struct Variant {
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
+struct Calendars {
+    i: Option<CalendarInterval>,
+    a: Option<Vec<Option<CalendarInterval>>>,
+    m: Option<Vec<(String, Option<CalendarInterval>)>>,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
 struct Types {
     ord: i32,
     boolean: Option<bool>,
@@ -210,7 +234,9 @@ struct Types {
     time: Option<NaiveTime>,
     day_time: Option<i64>,
     year_month: Option<i32>,
+    calendar: Option<CalendarInterval>,
     intervals: Option<Lists>,
+    calendars: Option<Calendars>,
     array: Option<Vec<Option<i32>>>,
     map: Option<Vec<(String, Option<i32>)>>,
     point: Option<Point>,
@@ -219,7 +245,8 @@ struct Types {
     void: Option<i32>,
 }
 
-/// The decimal and temporal columns of the table read as text, and its map by key.
+/// The decimal, temporal and calendar-interval columns of the table read as text, and its map
+/// by key.
 #[derive(Deserialize, Debug, PartialEq)]
 struct Other {
     decimal: Option<String>,
@@ -227,6 +254,7 @@ struct Other {
     timestamp: Option<String>,
     timestamp_ntz: Option<String>,
     time: Option<String>,
+    calendar: Option<String>,
     map: Option<BTreeMap<String, Option<i32>>>,
 }
 
@@ -253,6 +281,9 @@ fn decimal(unscaled: i128) -> Decimal {
 
 const FIRST_MICROS: i64 = 1_709_210_096_123_456;
 const LEAP_DAY: i32 = 19_782;
+/// The most microseconds of a calendar interval that the server can send: Arrow carries
+/// nanoseconds in an `i64`.
+const INTERVAL_MICROS: i64 = i64::MAX / 1_000;
 
 fn expected() -> Vec<Types> {
     let instant = date(2024, 2, 29).and_time(time(12, 34, 56, 123_456));
@@ -275,10 +306,19 @@ fn expected() -> Vec<Types> {
             time: Some(time(12, 34, 56, 123_456)),
             day_time: Some(93_784_500_000),
             year_month: Some(14),
+            calendar: Some(CalendarInterval::new(14, 25, 18_367_008_009)),
             intervals: Some(vec![(
                 "d".to_string(),
                 Some(vec![Some(93_784_500_000), None]),
             )]),
+            calendars: Some(Calendars {
+                i: Some(CalendarInterval::new(-14, -3, -3_723_500_000)),
+                a: Some(vec![Some(CalendarInterval::new(1, -1, 0)), None]),
+                m: Some(vec![(
+                    "k".to_string(),
+                    Some(CalendarInterval::new(0, 0, -1)),
+                )]),
+            }),
             array: Some(vec![Some(1), None, Some(3)]),
             map: Some(vec![("b".to_string(), Some(1)), ("a".to_string(), None)]),
             point: Some(Point {
@@ -316,7 +356,9 @@ fn expected() -> Vec<Types> {
             time: None,
             day_time: None,
             year_month: None,
+            calendar: None,
             intervals: None,
+            calendars: None,
             array: None,
             map: None,
             point: None,
@@ -342,7 +384,17 @@ fn expected() -> Vec<Types> {
             time: Some(time(23, 59, 59, 999_999)),
             day_time: Some(i64::MIN),
             year_month: Some(i32::MIN),
+            calendar: Some(CalendarInterval::new(i32::MIN, i32::MAX, -INTERVAL_MICROS)),
             intervals: Some(vec![("max".to_string(), Some(vec![Some(i64::MAX)]))]),
+            calendars: Some(Calendars {
+                i: None,
+                a: Some(vec![Some(CalendarInterval::new(
+                    i32::MAX,
+                    i32::MIN,
+                    INTERVAL_MICROS,
+                ))]),
+                m: Some(vec![("k".to_string(), None)]),
+            }),
             array: Some(vec![]),
             map: Some(vec![]),
             point: Some(Point { x: None, y: None }),
@@ -396,12 +448,30 @@ async fn every_spark_type_reads_into_its_rust_types_with_nulls_nesting_and_the_o
                 timestamp: Some("2024-02-29T12:34:56.123456Z".to_string()),
                 timestamp_ntz: Some("2024-02-29T12:34:56.123456".to_string()),
                 time: Some("12:34:56.123456".to_string()),
+                calendar: Some(
+                    "1 years 2 months 25 days 5 hours 6 minutes 7.008009 seconds".to_string()
+                ),
                 map: Some(map),
             }
         );
         assert_eq!(
             other[2].decimal.as_deref(),
             Some("-99999999999999999999999999999.999999999")
+        );
+        let texts: Vec<(Option<String>,)> =
+            other.iter().map(|row| (row.calendar.clone(),)).collect();
+        let spark_texts: Vec<(Option<String>,)> =
+            within(|| df.select([col("calendar").cast("string")]).collect_as())
+                .await
+                .unwrap();
+        assert_eq!(texts, spark_texts);
+        let DataType::Struct { fields: columns } = within(|| df.schema()).await.unwrap() else {
+            panic!("the schema is not a struct");
+        };
+        let calendar = columns.iter().find(|column| column.name == "calendar");
+        assert_eq!(
+            calendar.map(|column| &column.data_type),
+            Some(&DataType::CalendarInterval)
         );
         let numbers: Vec<Numbers> = within(|| df.collect_as()).await.unwrap();
         assert_eq!(
@@ -448,6 +518,10 @@ async fn every_spark_type_reads_into_its_rust_types_with_nulls_nesting_and_the_o
         );
         assert_eq!(value("year_month"), &Value::YearMonthInterval(14));
         assert_eq!(
+            value("calendar"),
+            &Value::CalendarInterval(CalendarInterval::new(14, 25, 18_367_008_009))
+        );
+        assert_eq!(
             value("map"),
             &Value::Map(vec![(text("b"), Value::Int(1)), (text("a"), Value::Null)])
         );
@@ -492,11 +566,11 @@ async fn the_rows_of_every_spark_type_sent_back_as_a_dataframe_read_the_same() {
     cleaned_up(&session, async {
         let name = unique("b15_types");
         table(&session, &name).await;
-        // Local rows have no encoding of INTERVAL YEAR TO MONTH.
+        // Local rows have no encoding of INTERVAL YEAR TO MONTH or of INTERVAL.
         let sendable = COLUMNS
             .iter()
             .map(|(name, ..)| *name)
-            .filter(|name| *name != "year_month");
+            .filter(|name| !["year_month", "calendar", "calendars"].contains(name));
         let df = session
             .table(&name)
             .sort(["ord"])
@@ -511,6 +585,33 @@ async fn the_rows_of_every_spark_type_sent_back_as_a_dataframe_read_the_same() {
         .unwrap();
         assert_eq!(within(|| sent.schema()).await.unwrap(), schema);
         assert_eq!(within(|| sent.collect_rows()).await.unwrap(), rows);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn calendar_intervals_written_as_their_text_cast_to_interval_read_back_the_same() {
+    let Some(session) = session().await else {
+        return;
+    };
+    cleaned_up(&session, async {
+        let intervals = [
+            CalendarInterval::new(14, 25, 18_367_008_009),
+            CalendarInterval::new(-14, -3, -3_723_500_000),
+            CalendarInterval::new(1, -1, 0),
+            CalendarInterval::new(0, 0, -1),
+            CalendarInterval::new(0, 0, 0),
+            CalendarInterval::new(i32::MAX, i32::MIN, INTERVAL_MICROS),
+            CalendarInterval::new(i32::MIN, i32::MAX, -INTERVAL_MICROS),
+        ];
+        let written = session.range(1).select(
+            intervals
+                .iter()
+                .map(|interval| lit(interval.to_string()).cast(DataType::CalendarInterval)),
+        );
+        let rows: Vec<Row> = within(|| written.collect_rows()).await.unwrap();
+        let read: Vec<Value> = intervals.into_iter().map(Value::CalendarInterval).collect();
+        assert_eq!(rows[0].values(), read);
     })
     .await;
 }
