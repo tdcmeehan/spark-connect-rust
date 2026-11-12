@@ -523,6 +523,10 @@ async fn a_dropped_checkpoint_removes_its_relation_from_the_server() {
     .await
     .unwrap();
     assert!(found);
+    // Sent after the removals, so that a second one is recorded before they are counted.
+    session.range(3).count().await.unwrap();
+    let removals = recorder.take().into_iter().filter(removed).count();
+    assert_eq!(removals, 1, "removed more than once");
 }
 
 /// A session of `builder` on the recording server, and the server's recorder.
