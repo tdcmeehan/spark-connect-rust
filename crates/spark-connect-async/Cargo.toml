@@ -15,6 +15,7 @@ name = "spark_connect_async"
 [dependencies]
 spark-connect-core = { package = "apache-spark-connect-core", path = "../spark-connect-core", version = "4.3.0" }
 spark-connect-proto = { package = "apache-spark-connect-proto", path = "../spark-connect-proto", version = "4.3.0" }
+spark-connect-blocking = { package = "apache-spark-connect-blocking", path = "../spark-connect-blocking", version = "4.3.0", optional = true }
 arrow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 futures.workspace = true
@@ -26,6 +27,8 @@ datafusion = { workspace = true, optional = true }
 polars = { workspace = true, optional = true }
 
 [features]
+# The blocking module: the client with calls that block, for code that doesn't run async.
+blocking = ["dep:spark-connect-blocking"]
 # DataFrame::to_datafusion, a datafusion::dataframe::DataFrame of the result.
 datafusion = ["dep:datafusion", "spark-connect-core/datafusion"]
 # DataFrame::to_polars, a polars::frame::DataFrame of the result.

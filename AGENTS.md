@@ -265,6 +265,7 @@ Run all of these green before pushing:
 cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
 cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-async --release --features rust-udf --no-run
+cargo test -p apache-spark-connect-async --release --features blocking --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate
 cargo clippy --workspace --all-targets                             # advisory (|| true in CI), but fix errors
 ```

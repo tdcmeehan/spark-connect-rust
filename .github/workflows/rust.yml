@@ -75,8 +75,10 @@ jobs:
         run: cargo build --release
 
       - name: Cargo test (spark-connect, spark-connect-core, spark-connect-blocking and spark-connect-async)
-        # Test the core transport and pure-Rust client crates
-        run: cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release
+        # Test the core transport and pure-Rust client crates, and the async client's blocking API
+        run: |
+          cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release
+          cargo test -p apache-spark-connect-async --features blocking --release
 
       - name: Cargo build/test with optional conversion features (datafusion, polars)
         # Exercises the to_datafusion()/to_polars() conversions, which are gated
@@ -85,6 +87,7 @@ jobs:
           cargo build -p apache-spark-connect --features datafusion,polars --release
           cargo test -p apache-spark-connect --features datafusion,polars --release
           cargo test -p apache-spark-connect-async --features datafusion,polars --release
+          cargo test -p apache-spark-connect-async --features blocking,datafusion,polars --release
 
       - name: No-stub audit
         # Enforce the "100% coverage, no followups" rule
@@ -216,4 +219,4 @@ jobs:
           cargo +1.88 check --locked -p apache-spark-connect -p apache-spark-connect-core \
             -p apache-spark-connect-proto -p apache-spark-connect-macros -p apache-spark-connect-build \
             -p apache-spark-connect-blocking -p apache-spark-connect-async \
-            --features apache-spark-connect/rust-udf,apache-spark-connect-async/rust-udf
+            --features apache-spark-connect/rust-udf,apache-spark-connect-async/rust-udf,apache-spark-connect-async/blocking

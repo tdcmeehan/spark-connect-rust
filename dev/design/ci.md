@@ -21,7 +21,7 @@ Rust CI and Python Connect Tests run on pushes and pull requests targeting `mast
 This workflow validates the pure-Rust implementation:
 
 - **Build**: Compiles `spark-connect`, `spark-connect-core`, and `spark-connect-proto` crates (pyspark-rs is excluded from default cargo operations because it requires maturin + Python environment)
-- **Test**: Runs `cargo test` on `spark-connect`, `spark-connect-core`, `spark-connect-blocking` and `spark-connect-async`
+- **Test**: Runs `cargo test` on `spark-connect`, `spark-connect-core`, `spark-connect-blocking` and `spark-connect-async`, and on `spark-connect-async` with its `blocking` feature
 - **No-stub audit**: Runs `scripts/audit_no_stubs.sh` to enforce the "100% coverage, zero stubs" rule (see [Design notes](architecture.md))
 
 ### Key steps
