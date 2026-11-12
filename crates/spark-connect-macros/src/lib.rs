@@ -48,12 +48,71 @@ use syn::{
 ///
 /// Supported types: `i32`, `i64`, `f32`, `f64`, `bool`, `String`, `Vec<u8>`
 /// (binary), `Vec<T>` (array), and `Option<T>` (nullable), nested arbitrarily.
+///
+/// # The async client
+///
+/// `#[spark_udf(crate = spark_connect_async)]` generates the host code for the async
+/// client, `apache-spark-connect-async`, with its `rust-udf` feature: `udf::<name>_udf()`
+/// returns its `rust_udf::UserDefinedFunction`, and `udf::<name>(...)` takes, for each
+/// argument, anything that converts into its `Column`, such as a column name. The value is
+/// a path to that crate as the generated `udf` module sees it, such as the name of the
+/// dependency, renamed or not, or a path to a re-export of it; it may also be written as a
+/// string, `crate = "spark_connect_async"`. Without the option the generated code uses
+/// `spark_connect`, the crate of `apache-spark-connect`.
+///
+/// ```ignore
+/// use spark_connect_macros::spark_udf;
+///
+/// #[spark_udf(crate = spark_connect_async)]
+/// mod udfs {
+///     pub fn add_one(x: i64) -> i64 { x + 1 }
+/// }
+///
+/// let df = session.range(3).select([udf::add_one("id")?]);
+/// session.udf().register("add_one", &udf::add_one_udf()).await?;
+/// ```
 #[proc_macro_attribute]
-pub fn spark_udf(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn spark_udf(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let options = match Options::parse(attr.into()) {
+        Ok(options) => options,
+        Err(e) => return e.to_compile_error().into(),
+    };
     let module = parse_macro_input!(item as ItemMod);
-    match expand(module) {
+    match expand(module, &options) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// The arguments of `#[spark_udf(...)]`.
+#[derive(Default)]
+struct Options {
+    /// The path of the client crate that the host code names, from `crate = <path>`.
+    client: Option<syn::Path>,
+}
+
+impl Options {
+    fn parse(attr: proc_macro2::TokenStream) -> syn::Result<Options> {
+        let mut options = Options::default();
+        let parser = syn::meta::parser(|meta| {
+            if !meta.path.is_ident("crate") {
+                return Err(meta.error("unsupported #[spark_udf] option; the only one is `crate`"));
+            }
+            if options.client.is_some() {
+                return Err(meta.error("duplicate `crate` option"));
+            }
+            let value = meta.value()?;
+            options.client = Some(if value.peek(syn::LitStr) {
+                value
+                    .parse::<syn::LitStr>()?
+                    .parse_with(syn::Path::parse_mod_style)?
+            } else {
+                syn::Path::parse_mod_style(value)?
+            });
+            Ok(())
+        });
+        syn::parse::Parser::parse2(parser, attr)?;
+        Ok(options)
     }
 }
 
@@ -66,9 +125,12 @@ pub fn spark_wasm_udf(attr: TokenStream, item: TokenStream) -> TokenStream {
     spark_udf(attr, item)
 }
 
-/// Map a Rust type to a `spark_connect::rust_udf::AbiType` constructor expr.
-fn abi_type(ty: &Type) -> Result<proc_macro2::TokenStream, syn::Error> {
-    let root = quote!(::spark_connect::rust_udf::AbiType);
+/// Map a Rust type to a `<client>::rust_udf::AbiType` constructor expr.
+fn abi_type(
+    client: &proc_macro2::TokenStream,
+    ty: &Type,
+) -> Result<proc_macro2::TokenStream, syn::Error> {
+    let root = quote!(#client::rust_udf::AbiType);
     if let Some(ident) = path_ident(ty) {
         match ident.as_str() {
             "i32" => return Ok(quote!(#root::I32)),
@@ -84,11 +146,11 @@ fn abi_type(ty: &Type) -> Result<proc_macro2::TokenStream, syn::Error> {
         if path_ident(inner).as_deref() == Some("u8") {
             return Ok(quote!(#root::Binary));
         }
-        let inner = abi_type(inner)?;
+        let inner = abi_type(client, inner)?;
         return Ok(quote!(#root::Array(::std::boxed::Box::new(#inner))));
     }
     if let Some(inner) = generic_inner(ty, "Option") {
-        let inner = abi_type(inner)?;
+        let inner = abi_type(client, inner)?;
         return Ok(quote!(#root::Nullable(::std::boxed::Box::new(#inner))));
     }
     Err(syn::Error::new_spanned(
@@ -208,8 +270,12 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
     })
 }
 
-fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
+fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenStream, syn::Error> {
     let mod_ident = module.ident.clone();
+    let client = match &options.client {
+        Some(path) => quote!(#path),
+        None => quote!(::spark_connect),
+    };
     let Some((_, items)) = &module.content else {
         return Err(syn::Error::new_spanned(
             &module,
@@ -310,8 +376,11 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
         let name_str = name.to_string();
         let export_str = export.to_string();
         let builder = format_ident!("{}_udf", name);
-        let arg_abis: Vec<_> = arg_tys.iter().map(abi_type).collect::<Result<_, _>>()?;
-        let ret_abi = abi_type(ret_ty)?;
+        let arg_abis: Vec<_> = arg_tys
+            .iter()
+            .map(|ty| abi_type(&client, ty))
+            .collect::<Result<_, _>>()?;
+        let ret_abi = abi_type(&client, ret_ty)?;
         let with_batch = batch_export.as_ref().map(|b| {
             let b = b.to_string();
             quote!(.with_batch_entrypoint(#b))
@@ -319,20 +388,55 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
         let params: Vec<syn::Ident> = (0..arg_tys.len())
             .map(|i| format_ident!("__a{i}"))
             .collect();
-        let builder_doc = format!(
-            "Builder for the `{name_str}` UDF, generated by `#[spark_udf]`. \
-             For advanced configuration (`.as_nondeterministic()`, `.with_packer()`) \
-             before `.call(cols)`; the common case is `{name_str}(cols...)`."
-        );
-        let call_doc = format!(
-            "Apply the `{name_str}` UDF to columns, generated by `#[spark_udf]`. \
-             Takes one column per argument and returns the result column."
-        );
+        let builder_doc = match options.client {
+            None => format!(
+                "Builder for the `{name_str}` UDF, generated by `#[spark_udf]`. \
+                 For advanced configuration (`.as_nondeterministic()`, `.with_packer()`) \
+                 before `.call(cols)`; the common case is `{name_str}(cols...)`."
+            ),
+            Some(_) => format!(
+                "Builder for the `{name_str}` UDF, generated by `#[spark_udf]`, to configure \
+                 it (`.as_nondeterministic()`) before `.call(cols)` or to register it; the \
+                 common case is `{name_str}(cols...)`."
+            ),
+        };
+        let call_doc = match options.client {
+            None => format!(
+                "Apply the `{name_str}` UDF to columns, generated by `#[spark_udf]`. \
+                 Takes one column per argument and returns the result column."
+            ),
+            Some(_) => format!(
+                "Apply the `{name_str}` UDF to columns, generated by `#[spark_udf]`. \
+                 Takes one column per argument, or anything that converts into one, such as \
+                 a column name, and returns the result column."
+            ),
+        };
+        let call = match options.client {
+            None => quote! {
+                #[doc = #call_doc]
+                pub fn #name(
+                    #(#params: ::spark_connect::Column),*
+                ) -> ::spark_connect::Result<::spark_connect::Column> {
+                    #builder().call(::std::vec![#(#params),*])
+                }
+            },
+            // The client's `Column` may be its own type, so each argument converts into it.
+            Some(_) => quote! {
+                #[doc = #call_doc]
+                pub fn #name(
+                    #(#params: impl ::core::convert::Into<#client::Column>),*
+                ) -> #client::Result<#client::Column> {
+                    #builder().call(::std::vec![
+                        #(::core::convert::Into::<#client::Column>::into(#params)),*
+                    ])
+                }
+            },
+        };
         ctors.push(quote! {
             #[doc = #builder_doc]
-            pub fn #builder() -> ::spark_connect::rust_udf::UserDefinedFunction {
+            pub fn #builder() -> #client::rust_udf::UserDefinedFunction {
                 const __MODULE: &[u8] = include_bytes!(env!("WASM_UDFS_MODULE"));
-                ::spark_connect::rust_udf::udf(
+                #client::rust_udf::udf(
                     #name_str,
                     __MODULE.to_vec(),
                     #export_str,
@@ -342,12 +446,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
                 #with_batch
             }
 
-            #[doc = #call_doc]
-            pub fn #name(
-                #(#params: ::spark_connect::Column),*
-            ) -> ::spark_connect::Result<::spark_connect::Column> {
-                #builder().call(::std::vec![#(#params),*])
-            }
+            #call
         });
     }
 
@@ -371,7 +470,145 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::batch_supported;
+    use super::{batch_supported, expand, Options};
+    use quote::quote;
+
+    fn options(attr: &str) -> syn::Result<Options> {
+        Options::parse(attr.parse().unwrap())
+    }
+
+    #[test]
+    fn the_crate_option_is_a_path_or_a_string_of_one_and_nothing_else_is_accepted() {
+        for (attr, expected) in [
+            ("", Ok(None)),
+            (
+                "crate = spark_connect_async",
+                Ok(Some("spark_connect_async")),
+            ),
+            (
+                "crate = \"spark_connect_async\"",
+                Ok(Some("spark_connect_async")),
+            ),
+            (
+                "crate = ::spark_connect_async",
+                Ok(Some(":: spark_connect_async")),
+            ),
+            ("crate = crate::client,", Ok(Some("crate :: client"))),
+            ("crate = a, crate = b", Err("duplicate `crate` option")),
+            (
+                "client = a",
+                Err("unsupported #[spark_udf] option; the only one is `crate`"),
+            ),
+            ("crate", Err("expected `=`")),
+            ("crate = a<T>", Err("expected `,`")),
+            ("crate = \"a b\"", Err("unexpected token")),
+        ] {
+            let parsed = options(attr).map(|o| o.client.map(|p| quote!(#p).to_string()));
+            let parsed = parsed
+                .as_ref()
+                .map(Option::as_deref)
+                .map_err(|e| e.to_string());
+            assert_eq!(parsed, expected.map_err(str::to_string), "{attr}");
+        }
+    }
+
+    #[test]
+    fn the_host_code_names_the_crate_of_the_option_and_converts_the_arguments_into_its_columns() {
+        let module: syn::ItemMod = syn::parse_quote! {
+            mod m {
+                pub fn plus(x: i64, y: Option<i64>) -> Option<i64> {
+                    y.map(|y| x + y)
+                }
+            }
+        };
+        let builder = |client: proc_macro2::TokenStream, doc: &str| {
+            quote! {
+                #[doc = #doc]
+                pub fn plus_udf() -> #client::rust_udf::UserDefinedFunction {
+                    const __MODULE: &[u8] = include_bytes!(env!("WASM_UDFS_MODULE"));
+                    #client::rust_udf::udf(
+                        "plus",
+                        __MODULE.to_vec(),
+                        "spark_udf_plus",
+                        ::std::vec![
+                            #client::rust_udf::AbiType::I64,
+                            #client::rust_udf::AbiType::Nullable(::std::boxed::Box::new(
+                                #client::rust_udf::AbiType::I64
+                            ))
+                        ],
+                        #client::rust_udf::AbiType::Nullable(::std::boxed::Box::new(
+                            #client::rust_udf::AbiType::I64
+                        )),
+                    )
+                    .with_batch_entrypoint("spark_batch_udf_plus")
+                }
+            }
+        };
+        let old_call_doc = "Apply the `plus` UDF to columns, generated by `#[spark_udf]`. Takes \
+                            one column per argument and returns the result column.";
+        let call_doc = "Apply the `plus` UDF to columns, generated by `#[spark_udf]`. Takes one \
+                        column per argument, or anything that converts into one, such as a column \
+                        name, and returns the result column.";
+        let old_builder = builder(
+            quote!(::spark_connect),
+            "Builder for the `plus` UDF, generated by `#[spark_udf]`. For advanced configuration \
+             (`.as_nondeterministic()`, `.with_packer()`) before `.call(cols)`; the common case \
+             is `plus(cols...)`.",
+        );
+        let old = quote! {
+            #old_builder
+            #[doc = #old_call_doc]
+            pub fn plus(
+                __a0: ::spark_connect::Column, __a1: ::spark_connect::Column
+            ) -> ::spark_connect::Result<::spark_connect::Column> {
+                plus_udf().call(::std::vec![__a0, __a1])
+            }
+        };
+        let converted = |client: proc_macro2::TokenStream| {
+            let builder = builder(
+                client.clone(),
+                "Builder for the `plus` UDF, generated by `#[spark_udf]`, to configure it \
+                 (`.as_nondeterministic()`) before `.call(cols)` or to register it; the common \
+                 case is `plus(cols...)`.",
+            );
+            quote! {
+                #builder
+                #[doc = #call_doc]
+                pub fn plus(
+                    __a0: impl ::core::convert::Into<#client::Column>,
+                    __a1: impl ::core::convert::Into<#client::Column>
+                ) -> #client::Result<#client::Column> {
+                    plus_udf().call(::std::vec![
+                        ::core::convert::Into::<#client::Column>::into(__a0),
+                        ::core::convert::Into::<#client::Column>::into(__a1)
+                    ])
+                }
+            }
+        };
+        for (attr, ctors) in [
+            ("", old),
+            (
+                "crate = spark_connect_async",
+                converted(quote!(spark_connect_async)),
+            ),
+            ("crate = \"::a::b\"", converted(quote!(::a::b))),
+        ] {
+            let expanded = expand(module.clone(), &options(attr).unwrap()).unwrap();
+            let file: syn::File = syn::parse2(expanded).unwrap();
+            let [syn::Item::Mod(_), syn::Item::Mod(udf)] = &file.items[..] else {
+                panic!("{attr}: not a module and its `udf` module");
+            };
+            let doc = "UDF constructors generated by `#[spark_udf]` from module `m`.";
+            let expected = quote! {
+                #[cfg(not(target_arch = "wasm32"))]
+                #[doc = #doc]
+                pub mod udf {
+                    #ctors
+                }
+            };
+            assert_eq!(quote!(#udf).to_string(), expected.to_string(), "{attr}");
+        }
+    }
 
     #[test]
     fn batch_supported_accepts_scalars_and_one_option_level_only() {

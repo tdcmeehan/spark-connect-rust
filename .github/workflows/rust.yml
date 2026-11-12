@@ -157,7 +157,7 @@ jobs:
 
       - name: Feature-gated unit tests
         run: |
-          cargo test -p apache-spark-connect -p apache-spark-connect-core --features rust-udf
+          cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-async --features rust-udf
           cargo test -p apache-spark-connect-macros
 
       - name: Build the macro/build helpers and the UDF crates + examples
@@ -177,6 +177,11 @@ jobs:
 
       - name: WASM UDF runners (pyarrow batches, no server)
         run: cargo test --manifest-path tests/wasm-udf/Cargo.toml -- --ignored
+
+      - name: Rust UDFs of the async client
+        # Built with `#[spark_udf(crate = spark_connect_async)]`; the crate's end-to-end test needs
+        # a server and is skipped here.
+        run: cargo test --manifest-path tests/rust-udf-async/Cargo.toml
 
       - name: Deprecated UDF names
         # `#[spark_wasm_udf]`, `spark_connect::wasm_udf` and the `wasm-udf` feature still build,
@@ -210,4 +215,5 @@ jobs:
         run: |
           cargo +1.88 check --locked -p apache-spark-connect -p apache-spark-connect-core \
             -p apache-spark-connect-proto -p apache-spark-connect-macros -p apache-spark-connect-build \
-            -p apache-spark-connect-blocking -p apache-spark-connect-async --features apache-spark-connect/rust-udf
+            -p apache-spark-connect-blocking -p apache-spark-connect-async \
+            --features apache-spark-connect/rust-udf,apache-spark-connect-async/rust-udf

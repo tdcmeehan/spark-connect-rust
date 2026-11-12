@@ -1,0 +1,38 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Rust UDFs of the async client, apache-spark-connect-async: fixture UDFs built with
+# `#[spark_udf(crate = spark_connect_async)]`, the tests of that option, and the tests that run
+# them end to end on a Spark Connect server.
+[package]
+name = "rust-udf-async-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+spark-connect-macros = { package = "apache-spark-connect-macros", path = "../../crates/spark-connect-macros" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+spark-connect-async = { package = "apache-spark-connect-async", path = "../../crates/spark-connect-async", features = ["rust-udf"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[build-dependencies]
+spark-connect-build = { package = "apache-spark-connect-build", path = "../../crates/spark-connect-build" }
+spark-connect-macros = { package = "apache-spark-connect-macros", path = "../../crates/spark-connect-macros" }

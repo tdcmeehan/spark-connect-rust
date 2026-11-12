@@ -264,7 +264,7 @@ Run all of these green before pushing:
 ```
 cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
-cargo test -p apache-spark-connect -p apache-spark-connect-core --release --features rust-udf --no-run
+cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-async --release --features rust-udf --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate
 cargo clippy --workspace --all-targets                             # advisory (|| true in CI), but fix errors
 ```
@@ -323,6 +323,12 @@ Do not rely on the previous version's suite. When bumping to vX.Y.Z:
   `cargo fmt --manifest-path tests/wasm-udf/Cargo.toml`.
 - Registration mirrors pyspark: `spark.udf().register("name", &udf)` (a
   session-side `UdfRegistration` handle), then callable from SQL.
+- The async client (`apache-spark-connect-async`, feature `rust-udf`) builds the same
+  payload through core: `#[spark_udf(crate = spark_connect_async)]` points the macro's
+  host code at it, and `session.udf().register("name", &udf).await` registers one. Its
+  tests are in `tests/rust-udf-async`, also outside the workspace: `cargo test
+  --manifest-path tests/rust-udf-async/Cargo.toml` (the end-to-end test runs only with
+  `SPARK_REMOTE`), formatted with `cargo fmt --manifest-path tests/rust-udf-async/Cargo.toml`.
 - Removing Python on the client entirely would mean pre-baking the cloudpickled
   runner template per Python version and emitting the varying bytes with a Rust
   pickle writer; executor Python+wasmtime is intrinsic to Spark and cannot be removed.

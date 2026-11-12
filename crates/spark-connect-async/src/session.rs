@@ -563,6 +563,10 @@ mod tests {
         assert_send_sync::<crate::pipelines::DefineSql>();
         assert_send_sync::<crate::pipelines::StartRun>();
         assert_send_sync::<crate::pipelines::PipelineEvent>();
+        #[cfg(feature = "rust-udf")]
+        assert_send_sync::<crate::rust_udf::UserDefinedFunction>();
+        #[cfg(feature = "rust-udf")]
+        assert_send_sync::<crate::rust_udf::UdfRegistration>();
         fn assert_send<T: Send>() {}
         assert_send::<crate::RecordBatchStream>();
         assert_send::<crate::streaming::QueryEvents>();
@@ -615,6 +619,11 @@ mod tests {
             assert_send_static(df.write_stream().start("p"));
             assert_send_static(df.write_stream().start_without_path());
             assert_send_static(df.write_stream().to_table("t"));
+            #[cfg(feature = "rust-udf")]
+            assert_send_static(session.udf().register(
+                "f",
+                &crate::rust_udf::udf("f", [], "f", vec![], crate::rust_udf::AbiType::I64),
+            ));
             let graph = session.create_dataflow_graph();
             assert_send_static(graph.into_future());
             let _ = |graph: crate::pipelines::DataflowGraph| {

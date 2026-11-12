@@ -30,9 +30,11 @@ polars = { workspace = true, optional = true }
 datafusion = ["dep:datafusion", "spark-connect-core/datafusion"]
 # DataFrame::to_polars, a polars::frame::DataFrame of the result.
 polars = ["dep:polars", "spark-connect-core/polars"]
+# Rust UDFs (the rust_udf module), compiled to WebAssembly.
+rust-udf = ["spark-connect-core/rust-udf"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
-spark-connect = { package = "apache-spark-connect", path = "../spark-connect", version = "4.3.0" }
+spark-connect = { package = "apache-spark-connect", path = "../spark-connect", version = "4.3.0", features = ["rust-udf"] }
 prost.workspace = true
 tempfile = "3"
