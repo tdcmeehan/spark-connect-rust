@@ -18,6 +18,8 @@
 //! The blocking API sends the requests of the async API for the same calls, as the in-process
 //! server of the old API's request snapshots records them, and its iterators yield what the
 //! async streams yield.
+//!
+//! Each import of a Spark ML trait here is the blocking one, so the async calls name theirs.
 
 #![cfg(feature = "blocking")]
 
@@ -28,6 +30,7 @@ mod support;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use arrow::array::{ArrayRef, Int64Array};
 use arrow::datatypes::{DataType as ArrowType, Field, Schema};
@@ -36,9 +39,16 @@ use futures::future::BoxFuture;
 use futures::StreamExt;
 use prost::Message;
 use spark_connect_async::actions::{Checkpoint, ExplainMode, StorageLevel, TempView};
-use spark_connect_async::blocking;
+use spark_connect_async::blocking::{self, Estimator, Evaluator};
+use spark_connect_async::ml::{
+    self, BinaryClassificationEvaluator, CrossValidator, LinearRegression, LinearSVC,
+    LogisticRegression, MaxAbsScaler, MulticlassClassificationEvaluator, Pipeline,
+    RegressionEvaluator, StandardScaler, StringIndexer, VectorAssembler,
+};
+use spark_connect_async::pipelines::{self, ScdType};
 use spark_connect_async::readwriter::{ParseFormat, SaveMode};
 use spark_connect_async::session::ArtifactKind;
+use spark_connect_async::streaming::{self, OutputMode, Trigger};
 use spark_connect_async::types::DataType;
 use spark_connect_async::{col, lit, DataFrame, Session, Value};
 use spark_connect_proto as proto;
@@ -47,6 +57,9 @@ const SESSION_ID: &str = "00000000-0000-4000-8000-000000000b14";
 
 struct Case {
     name: &'static str,
+    /// Whether the case subscribes to the events of streaming queries, which the server then
+    /// holds until the client removes the subscription.
+    subscribes: bool,
     blocking: fn(&blocking::Session),
     awaited: fn(Session) -> BoxFuture<'static, ()>,
 }
@@ -55,8 +68,12 @@ struct Case {
 /// most requests with no rows.
 macro_rules! case {
     ($name:expr, |$b:ident| $blocking:expr, |$a:ident| $awaited:expr) => {
+        case!($name, false, |$b| $blocking, |$a| $awaited)
+    };
+    ($name:expr, $subscribes:expr, |$b:ident| $blocking:expr, |$a:ident| $awaited:expr) => {
         Case {
             name: $name,
+            subscribes: $subscribes,
             blocking: |$b| {
                 let _ = $blocking;
             },
@@ -1007,8 +1024,583 @@ fn catalog_cases() -> Vec<Case> {
     ]
 }
 
+/// A write of a stream of the rate source to the memory sink, with every setting.
+fn stream_writer(s: &Session) -> streaming::DataStreamWriter {
+    s.read_stream()
+        .format("rate")
+        .option("rowsPerSecond", 5)
+        .load_without_path()
+        .write_stream()
+        .format("memory")
+        .output_mode(OutputMode::Append)
+        .option("k", "v")
+        .partition_by(["value"])
+        .query_name("q")
+        .trigger(Trigger::ProcessingTime("1 second".to_string()))
+}
+
+fn started(s: &blocking::Session) -> blocking::StreamingQuery {
+    stream_writer(s.as_async())
+        .blocking()
+        .start_without_path()
+        .unwrap()
+}
+
+async fn started_async(s: &Session) -> streaming::StreamingQuery {
+    stream_writer(s).start_without_path().await.unwrap()
+}
+
+fn streaming_cases() -> Vec<Case> {
+    vec![
+        case!("streams active", |b| b.streams().active(), |a| a
+            .streams()
+            .active()
+            .await),
+        case!("streams get", |b| b.streams().get("query-id"), |a| a
+            .streams()
+            .get("query-id")
+            .await),
+        case!(
+            "streams await_any_termination",
+            |b| b.streams().await_any_termination(None),
+            |a| a.streams().await_any_termination(None).await
+        ),
+        case!(
+            "streams await_any_termination with a timeout",
+            |b| b
+                .streams()
+                .await_any_termination(Some(Duration::from_secs(2))),
+            |a| a
+                .streams()
+                .await_any_termination(Some(Duration::from_secs(2)))
+                .await
+        ),
+        case!(
+            "streams reset_terminated",
+            |b| b.streams().reset_terminated(),
+            |a| a.streams().reset_terminated().await
+        ),
+        case!(
+            "events, dropped",
+            true,
+            |b| b.streams().events().map(drop),
+            |a| drop(a.streams().events().await)
+        ),
+        case!(
+            "events, read to their end",
+            |b| b.streams().events().map(|events| events.count()),
+            |a| if let Ok(mut events) = a.streams().events().await {
+                while events.next().await.is_some() {}
+            }
+        ),
+        case!(
+            "events, converted",
+            true,
+            |b| crate_session(b)
+                .streams()
+                .blocking()
+                .events()
+                .map(|events| drop(events.into_async().blocking())),
+            |a| drop(a.streams().events().await)
+        ),
+        case!(
+            "start_without_path",
+            |b| stream_writer(b.as_async()).blocking().start_without_path(),
+            |a| stream_writer(&a).start_without_path().await
+        ),
+        case!(
+            "start",
+            |b| stream_writer(b.as_async()).blocking().start("/out"),
+            |a| stream_writer(&a).start("/out").await
+        ),
+        case!(
+            "to_table",
+            |b| stream_writer(b.as_async()).blocking().to_table("t"),
+            |a| stream_writer(&a).to_table("t").await
+        ),
+        case!("query is_active", |b| started(b).is_active(), |a| {
+            started_async(&a).await.is_active().await
+        }),
+        case!("query status", |b| started(b).status(), |a| started_async(
+            &a
+        )
+        .await
+        .status()
+        .await),
+        case!("query stop", |b| started(b).stop(), |a| started_async(&a)
+            .await
+            .stop()
+            .await),
+        case!(
+            "query await_termination",
+            |b| started(b).await_termination(None),
+            |a| started_async(&a).await.await_termination(None).await
+        ),
+        case!(
+            "query await_termination with a timeout",
+            |b| started(b).await_termination(Some(Duration::from_millis(1500))),
+            |a| started_async(&a)
+                .await
+                .await_termination(Some(Duration::from_millis(1500)))
+                .await
+        ),
+        case!("query last_progress", |b| started(b).last_progress(), |a| {
+            started_async(&a).await.last_progress().await
+        }),
+        case!(
+            "query recent_progress",
+            |b| started(b).recent_progress(),
+            |a| started_async(&a).await.recent_progress().await
+        ),
+        case!(
+            "query process_all_available",
+            |b| started(b).process_all_available(),
+            |a| started_async(&a).await.process_all_available().await
+        ),
+        case!("query exception", |b| started(b).exception(), |a| {
+            started_async(&a).await.exception().await
+        }),
+        case!(
+            "query explain",
+            |b| started(b).as_async().explain().run(),
+            |a| started_async(&a).await.explain().await
+        ),
+        case!(
+            "query explain extended",
+            |b| started(b).as_async().explain().extended().run(),
+            |a| started_async(&a).await.explain().extended().await
+        ),
+        case!(
+            "the queries of active",
+            |b| b
+                .streams()
+                .active()
+                .map(|queries| queries.iter().map(|q| q.stop()).collect::<Vec<_>>()),
+            |a| for query in a.streams().active().await.unwrap() {
+                query.stop().await.unwrap();
+            }
+        ),
+        case!(
+            "the query of get",
+            |b| b.streams().get("query-id").map(|q| q.unwrap().status()),
+            |a| a
+                .streams()
+                .get("query-id")
+                .await
+                .unwrap()
+                .unwrap()
+                .status()
+                .await
+        ),
+        case!(
+            "a query converted both ways",
+            |b| started(b).into_async().blocking().recent_progress(),
+            |a| started_async(&a).await.recent_progress().await
+        ),
+    ]
+}
+
+/// Ten rows, a dataset of Spark ML for the recording server, which reads none of them.
+fn rows_of(s: &Session) -> DataFrame {
+    s.range(10)
+}
+
+/// The async model of `estimator`, fitted to `rows_of`.
+async fn fitted<E: ml::Estimator>(estimator: E, s: &Session) -> E::Model {
+    ml::Estimator::fit(&estimator, &rows_of(s)).await.unwrap()
+}
+
+/// A case of the attribute `$attribute` of the model of `$estimator`.
+macro_rules! attribute {
+    ($estimator:expr, $attribute:ident) => {
+        case!(
+            concat!(stringify!($estimator), " ", stringify!($attribute)),
+            |b| $estimator
+                .fit(&rows_of(b.as_async()))
+                .and_then(|model| model.$attribute()),
+            |a| fitted($estimator, &a).await.$attribute().await
+        )
+    };
+}
+
+fn ml_cases() -> Vec<Case> {
+    vec![
+        case!(
+            "fit LinearRegression",
+            |b| LinearRegression::new()
+                .max_iter(2)
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(LinearRegression::new().max_iter(2), &a).await
+        ),
+        case!(
+            "fit LinearSVC",
+            |b| LinearSVC::new().reg_param(0.1).fit(&rows_of(b.as_async())),
+            |a| fitted(LinearSVC::new().reg_param(0.1), &a).await
+        ),
+        case!(
+            "fit LogisticRegression",
+            |b| LogisticRegression::new()
+                .max_iter(3)
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(LogisticRegression::new().max_iter(3), &a).await
+        ),
+        case!(
+            "fit MaxAbsScaler",
+            |b| MaxAbsScaler::new()
+                .input_col("v")
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(MaxAbsScaler::new().input_col("v"), &a).await
+        ),
+        case!(
+            "fit StandardScaler",
+            |b| StandardScaler::new()
+                .input_col("v")
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(StandardScaler::new().input_col("v"), &a).await
+        ),
+        case!(
+            "fit StringIndexer",
+            |b| StringIndexer::new()
+                .input_col("s")
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(StringIndexer::new().input_col("s"), &a).await
+        ),
+        case!(
+            "fit a Pipeline",
+            |b| Pipeline::new()
+                .stage(VectorAssembler::new().input_cols(["id"]).output_col("v"))
+                .stage(StandardScaler::new().input_col("v"))
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(
+                Pipeline::new()
+                    .stage(VectorAssembler::new().input_cols(["id"]).output_col("v"))
+                    .stage(StandardScaler::new().input_col("v")),
+                &a
+            )
+            .await
+        ),
+        case!(
+            "fit a CrossValidator",
+            |b| CrossValidator::new([LinearRegression::new()], RegressionEvaluator::new())
+                .num_folds(2)
+                .seed(7)
+                .fit(&rows_of(b.as_async())),
+            |a| fitted(
+                CrossValidator::new([LinearRegression::new()], RegressionEvaluator::new())
+                    .num_folds(2)
+                    .seed(7),
+                &a
+            )
+            .await
+        ),
+        case!(
+            "evaluate RegressionEvaluator",
+            |b| RegressionEvaluator::new()
+                .metric_name("mae")
+                .evaluate(&rows_of(b.as_async())),
+            |a| ml::Evaluator::evaluate(
+                &RegressionEvaluator::new().metric_name("mae"),
+                &rows_of(&a)
+            )
+            .await
+        ),
+        case!(
+            "evaluate BinaryClassificationEvaluator",
+            |b| BinaryClassificationEvaluator::new()
+                .metric_name("areaUnderPR")
+                .evaluate(&rows_of(b.as_async())),
+            |a| ml::Evaluator::evaluate(
+                &BinaryClassificationEvaluator::new().metric_name("areaUnderPR"),
+                &rows_of(&a)
+            )
+            .await
+        ),
+        case!(
+            "evaluate MulticlassClassificationEvaluator",
+            |b| MulticlassClassificationEvaluator::new()
+                .metric_name("f1")
+                .evaluate(&rows_of(b.as_async())),
+            |a| ml::Evaluator::evaluate(
+                &MulticlassClassificationEvaluator::new().metric_name("f1"),
+                &rows_of(&a)
+            )
+            .await
+        ),
+        attribute!(LogisticRegression::new(), coefficients),
+        attribute!(LogisticRegression::new(), intercept),
+        attribute!(LogisticRegression::new(), coefficient_matrix),
+        attribute!(LogisticRegression::new(), intercept_vector),
+        attribute!(LogisticRegression::new(), num_classes),
+        attribute!(LogisticRegression::new(), num_features),
+        attribute!(LinearSVC::new(), coefficients),
+        attribute!(LinearSVC::new(), intercept),
+        attribute!(LinearSVC::new(), num_classes),
+        attribute!(LinearSVC::new(), num_features),
+        attribute!(LinearRegression::new(), coefficients),
+        attribute!(LinearRegression::new(), intercept),
+        attribute!(LinearRegression::new(), scale),
+        attribute!(LinearRegression::new(), num_features),
+        attribute!(StandardScaler::new(), mean),
+        attribute!(StandardScaler::new(), std),
+        attribute!(MaxAbsScaler::new(), max_abs),
+        attribute!(StringIndexer::new(), labels),
+        case!(
+            "a model converted both ways",
+            |b| LogisticRegression::new()
+                .fit(&rows_of(b.as_async()))
+                .map(|model| model.into_async().blocking().intercept()),
+            |a| fitted(LogisticRegression::new(), &a)
+                .await
+                .intercept()
+                .await
+        ),
+        case!(
+            "a transform of a blocking model",
+            |b| LinearRegression::new()
+                .fit(&rows_of(b.as_async()))
+                .map(|model| {
+                    ml::Transformer::transform(model.as_async(), &rows_of(b.as_async()))
+                        .blocking()
+                        .count()
+                }),
+            |a| ml::Transformer::transform(
+                &fitted(LinearRegression::new(), &a).await,
+                &rows_of(&a)
+            )
+            .count()
+            .await
+        ),
+        case!(
+            "a model of a fitted pipeline",
+            |b| Pipeline::new()
+                .stage(LinearRegression::new())
+                .fit(&rows_of(b.as_async()))
+                .map(|pipeline| {
+                    pipeline
+                        .stage::<ml::LinearRegressionModel>(0)
+                        .unwrap()
+                        .blocking()
+                        .intercept()
+                }),
+            |a| fitted(Pipeline::new().stage(LinearRegression::new()), &a)
+                .await
+                .stage::<ml::LinearRegressionModel>(0)
+                .unwrap()
+                .intercept()
+                .await
+        ),
+    ]
+}
+
+fn graph(s: &blocking::Session) -> blocking::DataflowGraph {
+    s.as_async().create_dataflow_graph().run().unwrap()
+}
+
+async fn graph_async(s: &Session) -> pipelines::DataflowGraph {
+    s.create_dataflow_graph().await.unwrap()
+}
+
+fn pipeline_cases() -> Vec<Case> {
+    vec![
+        case!(
+            "create_dataflow_graph",
+            |b| b
+                .as_async()
+                .create_dataflow_graph()
+                .default_catalog("c")
+                .default_database("d")
+                .sql_conf("k", "v")
+                .run(),
+            |a| a
+                .create_dataflow_graph()
+                .default_catalog("c")
+                .default_database("d")
+                .sql_conf("k", "v")
+                .await
+        ),
+        case!(
+            "define_materialized_view",
+            |b| graph(b)
+                .as_async()
+                .define_materialized_view("mv")
+                .comment("c")
+                .partition_by(["id"])
+                .table_property("k", "v")
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_materialized_view("mv")
+                .comment("c")
+                .partition_by(["id"])
+                .table_property("k", "v")
+                .await
+        ),
+        case!(
+            "define_streaming_table",
+            |b| graph(b)
+                .as_async()
+                .define_streaming_table("st")
+                .format("parquet")
+                .schema("id BIGINT")
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_streaming_table("st")
+                .format("parquet")
+                .schema("id BIGINT")
+                .await
+        ),
+        case!(
+            "define_temporary_view",
+            |b| graph(b)
+                .as_async()
+                .define_temporary_view("tv")
+                .comment("c")
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_temporary_view("tv")
+                .comment("c")
+                .await
+        ),
+        case!(
+            "define_sink",
+            |b| graph(b)
+                .as_async()
+                .define_sink("s", "console")
+                .option("k", "v")
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_sink("s", "console")
+                .option("k", "v")
+                .await
+        ),
+        case!(
+            "define_flow",
+            |b| graph(b)
+                .as_async()
+                .define_flow("f", "mv", b.as_async().range(3))
+                .sql_conf("k", "v")
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_flow("f", "mv", a.range(3))
+                .sql_conf("k", "v")
+                .await
+        ),
+        case!(
+            "define_auto_cdc_flow",
+            |b| graph(b)
+                .as_async()
+                .define_auto_cdc_flow("f", "t", "src", ["id"], col("ts"))
+                .stored_as_scd_type(ScdType::Type2)
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_auto_cdc_flow("f", "t", "src", ["id"], col("ts"))
+                .stored_as_scd_type(ScdType::Type2)
+                .await
+        ),
+        case!(
+            "define_sql",
+            |b| graph(b)
+                .as_async()
+                .define_sql("CREATE MATERIALIZED VIEW mv AS SELECT 1")
+                .file_path("mv.sql")
+                .run(),
+            |a| graph_async(&a)
+                .await
+                .define_sql("CREATE MATERIALIZED VIEW mv AS SELECT 1")
+                .file_path("mv.sql")
+                .await
+        ),
+        case!(
+            "start_run",
+            |b| graph(b)
+                .as_async()
+                .start_run("file:///storage")
+                .full_refresh(["a"])
+                .refresh(["b"])
+                .run()
+                .map(|run| run.count()),
+            |a| {
+                let start = graph_async(&a)
+                    .await
+                    .start_run("file:///storage")
+                    .full_refresh(["a"])
+                    .refresh(["b"]);
+                let mut run = start.await.unwrap();
+                while run.next().await.is_some() {}
+            }
+        ),
+        case!(
+            "start_run, a dry run of every dataset",
+            |b| graph(b)
+                .as_async()
+                .start_run("file:///storage")
+                .full_refresh_all()
+                .dry_run()
+                .run()
+                .map(|run| run.into_async().blocking().count()),
+            |a| {
+                let start = graph_async(&a)
+                    .await
+                    .start_run("file:///storage")
+                    .full_refresh_all()
+                    .dry_run();
+                let mut run = start.await.unwrap();
+                while run.next().await.is_some() {}
+            }
+        ),
+        case!(
+            "the session of a graph",
+            |b| graph(b).session().as_async().sql("SET x = 1").run(),
+            |a| graph_async(&a).await.session().sql("SET x = 1").await
+        ),
+        case!(
+            "a graph converted both ways",
+            |b| graph(b)
+                .into_async()
+                .blocking()
+                .as_async()
+                .define_sql("SELECT 1")
+                .run(),
+            |a| graph_async(&a).await.define_sql("SELECT 1").await
+        ),
+    ]
+}
+
+/// `text` with each UUID replaced: the ids of the operators of Spark ML are random.
+fn without_uuids(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let is_uuid = |at: usize| {
+        bytes.len() >= at + 36
+            && bytes[at..at + 36].iter().enumerate().all(|(i, &byte)| {
+                if matches!(i, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < text.len() {
+        if is_uuid(at) {
+            out.push_str("<uuid>");
+            at += 36;
+        } else {
+            let next = text[at..].chars().next().unwrap();
+            out.push(next);
+            at += next.len_utf8();
+        }
+    }
+    out
+}
+
 /// Each entry as its message, with the operation ids, which the client chooses at random,
-/// removed.
+/// removed, and the UUIDs replaced.
 fn messages(entries: Vec<server::Entry>) -> Vec<String> {
     entries
         .into_iter()
@@ -1016,7 +1608,7 @@ fn messages(entries: Vec<server::Entry>) -> Vec<String> {
             "ExecutePlanRequest" => {
                 let mut request = proto::ExecutePlanRequest::decode(&entry.bytes[..]).unwrap();
                 request.operation_id = None;
-                format!("{request:?}")
+                without_uuids(&format!("{request:?}"))
             }
             "AnalyzePlanRequest" => {
                 let request = proto::AnalyzePlanRequest::decode(&entry.bytes[..]).unwrap();
@@ -1025,6 +1617,108 @@ fn messages(entries: Vec<server::Entry>) -> Vec<String> {
             _ => format!("{entry:?}"),
         })
         .collect()
+}
+
+fn command_of(entry: &server::Entry) -> Option<proto::command::CommandType> {
+    if entry.kind != "ExecutePlanRequest" {
+        return None;
+    }
+    match proto::ExecutePlanRequest::decode(&entry.bytes[..])
+        .ok()?
+        .plan?
+        .op_type?
+    {
+        proto::plan::OpType::Command(command) => command.command_type,
+        _ => None,
+    }
+}
+
+/// The entries of a case, once the server has had what the handles that it dropped send in
+/// the background: the deletes of its models, the drops of its graphs, the removals of its
+/// checkpoints and, for a case that `subscribes`, the removal of its subscription. Those come
+/// last, in the order they came: the other requests may come before or after them.
+fn settled(recorder: &server::Recorder, subscribes: bool) -> Vec<server::Entry> {
+    use proto::command::CommandType as C;
+    use proto::pipeline_command::CommandType as P;
+    use proto::streaming_query_listener_bus_command::Command as Bus;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut entries = Vec::new();
+    loop {
+        entries.extend(recorder.take());
+        let count = |kind: fn(&C) -> bool| {
+            entries
+                .iter()
+                .filter(|entry| command_of(entry).as_ref().is_some_and(kind))
+                .count()
+        };
+        let fits = count(|c| {
+            matches!(
+                c,
+                C::MlCommand(proto::MlCommand {
+                    command: Some(proto::ml_command::Command::Fit(_))
+                })
+            )
+        });
+        let deletes = count(|c| {
+            matches!(
+                c,
+                C::MlCommand(proto::MlCommand {
+                    command: Some(proto::ml_command::Command::Delete(_))
+                })
+            )
+        });
+        let graphs = count(|c| {
+            matches!(
+                c,
+                C::PipelineCommand(proto::PipelineCommand {
+                    command_type: Some(P::CreateDataflowGraph(_))
+                })
+            )
+        });
+        let dropped = count(|c| {
+            matches!(
+                c,
+                C::PipelineCommand(proto::PipelineCommand {
+                    command_type: Some(P::DropDataflowGraph(_))
+                })
+            )
+        });
+        let checkpoints = count(|c| matches!(c, C::CheckpointCommand(_)));
+        let removed = count(|c| matches!(c, C::RemoveCachedRemoteRelationCommand(_)));
+        let unsubscribed = count(|c| {
+            matches!(
+                c,
+                C::StreamingQueryListenerBusCommand(proto::StreamingQueryListenerBusCommand {
+                    command: Some(Bus::RemoveListenerBusListener(_))
+                })
+            )
+        });
+        let done = fits <= deletes
+            && graphs <= dropped
+            && checkpoints <= removed
+            && (!subscribes || unsubscribed > 0);
+        if done || Instant::now() > deadline {
+            entries.sort_by_key(|entry| {
+                command_of(entry).is_some_and(|c| {
+                    matches!(
+                        c,
+                        C::MlCommand(proto::MlCommand {
+                            command: Some(proto::ml_command::Command::Delete(_))
+                        }) | C::PipelineCommand(proto::PipelineCommand {
+                            command_type: Some(P::DropDataflowGraph(_))
+                        }) | C::RemoveCachedRemoteRelationCommand(_)
+                            | C::StreamingQueryListenerBusCommand(
+                                proto::StreamingQueryListenerBusCommand {
+                                    command: Some(Bus::RemoveListenerBusListener(_))
+                                }
+                            )
+                    )
+                })
+            });
+            return entries;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn start() -> (Arc<server::Recorder>, String) {
@@ -1044,25 +1738,30 @@ fn the_blocking_api_sends_the_requests_of_the_async_api() {
         conversion_cases(),
         read_write_cases(),
         catalog_cases(),
+        streaming_cases(),
+        ml_cases(),
+        pipeline_cases(),
     ];
     let mut both = Vec::new();
     for case in cases.into_iter().flatten() {
+        recorder.hold_listener_bus(case.subscribes);
         let session = Session::builder()
             .remote(url.clone())
             .blocking()
             .connect()
             .unwrap();
         (case.blocking)(&session);
-        let blocking = messages(recorder.take());
-        let awaited = runtime.block_on(async {
+        let blocking = messages(settled(&recorder, case.subscribes));
+        runtime.block_on(async {
             let session = Session::builder()
                 .remote(url.clone())
                 .connect()
                 .await
                 .unwrap();
             (case.awaited)(session).await;
-            messages(recorder.take())
         });
+        let awaited = messages(settled(&recorder, case.subscribes));
+        recorder.hold_listener_bus(false);
         assert!(
             !awaited.is_empty(),
             "{}: the async API sent nothing",

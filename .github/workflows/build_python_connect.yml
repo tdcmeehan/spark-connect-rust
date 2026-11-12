@@ -563,15 +563,17 @@ jobs:
           SPARK_REMOTE: sc://localhost:15002
         run: |
           cargo test -p apache-spark-connect-async --features blocking \
-            --test e2e_actions --test e2e_blocking --test e2e_catalog --test e2e_dataframe \
-            --test e2e_ml --test e2e_pipelines --test e2e_session --test e2e_streaming \
-            --test e2e_types \
+            --test e2e_actions --test e2e_blocking --test e2e_blocking_streaming_ml_pipelines \
+            --test e2e_catalog --test e2e_dataframe --test e2e_ml --test e2e_pipelines \
+            --test e2e_session --test e2e_streaming --test e2e_types \
             -- --test-threads=1
 
       - name: Async API Rust UDF e2e test (against the live server)
         env:
           SPARK_REMOTE: sc://localhost:15002
-        run: cargo test --manifest-path tests/rust-udf-async/Cargo.toml --test e2e_rust_udf -- --test-threads=1
+        run: |
+          cargo test --manifest-path tests/rust-udf-async/Cargo.toml \
+            --test e2e_rust_udf --test e2e_blocking_rust_udf -- --test-threads=1
 
   # ---------------------------------------------------------------------------
   # E2E performance benchmark: our client vs reference, same 4.3.0 server.

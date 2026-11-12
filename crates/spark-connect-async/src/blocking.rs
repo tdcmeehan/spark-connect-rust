@@ -33,27 +33,63 @@
 //!
 //! # The blocking forms of the async API
 //!
-//! - [`Session`], [`DataFrame`], [`Catalog`], [`RuntimeConfig`], [`GroupedData`] and
-//!   [`StatFunctions`] have the methods of their async types that return futures, with the same
-//!   names and arguments, and those block: `df.count()?` here is `df.count().await?` there. The
-//!   [`conf`](Session::conf), [`catalog`](Session::catalog) and [`with_tag`](Session::with_tag)
-//!   of a session, and the [`session`](DataFrame::session) of a DataFrame or a catalog, return
+//! - [`Session`], [`DataFrame`], [`Catalog`], [`RuntimeConfig`], [`GroupedData`],
+//!   [`StatFunctions`], [`StreamingQueryManager`], [`StreamingQuery`], the fitted models of
+//!   Spark ML, such as [`LogisticRegressionModel`], and the registration of Rust UDFs, with the
+//!   `rust-udf` feature, have the methods of their async types that return futures, with the
+//!   same names and arguments, and those block: `df.count()?` here is `df.count().await?`
+//!   there. The [`conf`](Session::conf), [`catalog`](Session::catalog),
+//!   [`streams`](Session::streams), `udf` and [`with_tag`](Session::with_tag) of a session, and
+//!   the [`session`](DataFrame::session) of a DataFrame, a catalog or a dataflow graph, return
 //!   blocking values too.
+//! - The fit of an estimator and the evaluation of an evaluator of Spark ML, which the async API
+//!   has as trait methods, block through the traits [`Estimator`] and [`Evaluator`].
+//! - What the server sends in parts is an iterator, each of whose items blocks: the record
+//!   batches of a query ([`RecordBatchIter`]), the events of streaming queries ([`QueryEvents`])
+//!   and those of a run of a pipeline ([`PipelineRun`]).
 //! - Everything else is the async API's alone, such as a DataFrame's transformations and
 //!   columns, the builders of a session or a catalog, and a session's id: a blocking value
 //!   doesn't dereference to its async one. `as_async()` borrows the async value, and
 //!   `into_async()` returns it. A lazy call returns an async value, which `.blocking()` turns
 //!   into its blocking form, so a lazy chain starts with `as_async()` and ends with
 //!   `.blocking()`. [`From`] converts both ways too, so code can mix the two.
-//! - A parameter that takes a DataFrame, such as [`crate::DataFrame::union`]'s or
-//!   [`DataFrame::same_semantics`]'s, takes an async one: pass a blocking DataFrame's
-//!   `as_async()`.
-//! - A builder that async code awaits, such as [`crate::Session::sql`]'s or
-//!   [`crate::catalog::Catalog::list_tables`]'s, has a `run()` method, which sends it and blocks.
+//! - A parameter that takes a DataFrame, such as [`crate::DataFrame::union`]'s,
+//!   [`DataFrame::same_semantics`]'s or [`Estimator::fit`]'s, takes an async one: pass a
+//!   blocking DataFrame's `as_async()`.
+//! - A builder that async code awaits, such as [`crate::Session::sql`]'s,
+//!   [`crate::catalog::Catalog::list_tables`]'s or [`crate::pipelines::DataflowGraph::start_run`]'s,
+//!   has a `run()` method, which sends it and blocks.
 //! - A builder whose last step is a method has a `.blocking()` form with that method, which
 //!   blocks: a session builder's [`connect`](SessionBuilder::connect), a reader's
-//!   [`parse`](DataFrameReader::parse), a writer's saves, and a show's
-//!   [`to_string`](Show::to_string).
+//!   [`parse`](DataFrameReader::parse), a writer's saves, the starts of a stream's
+//!   [`DataStreamWriter`], and a show's [`to_string`](Show::to_string).
+//!
+//! # Waits that only the server ends
+//!
+//! Dropping a future of the async API gives up its wait. A blocking call can't be given up, so
+//! these calls wait for as long as the server does:
+//!
+//! - [`StreamingQuery::await_termination`] and [`StreamingQueryManager::await_any_termination`]
+//!   end at their timeout, or once a query terminates, as one does that fails or that another
+//!   thread [stops](StreamingQuery::stop). [`StreamingQuery::process_all_available`] ends once
+//!   the query has processed the data that its sources had, or once it terminates.
+//! - Each of the three also ends when another thread interrupts the operations of the session
+//!   with [`Session::interrupt_all`], or those of a tag of the handle that made the call with
+//!   [`Session::interrupt_tag`]: the call fails with
+//!   [`ErrorKind::Cancelled`](crate::ErrorKind::Cancelled), and a Spark 4.3.0 server also stops
+//!   the queries that the interrupt reaches, those that the session, or that tag's handle,
+//!   started.
+//! - A `next` of a [`PipelineRun`] ends at the run's next event or at its end, or when another
+//!   thread interrupts the run's operation, with [`Session::interrupt_all`] or with
+//!   [`Session::interrupt_operation`] of its
+//!   [`operation_id`](crate::pipelines::PipelineRun::operation_id): the iterator then gives the
+//!   error and ends, while a Spark 4.3.0 server still runs the pipeline.
+//! - A `next` of [`QueryEvents`] ends at the next event, or when the server ends the
+//!   subscription, as it does when the session stops. An interrupt doesn't end it.
+//! - [`StreamingQueryManager::events`] ends once the server acknowledges the subscription. While
+//!   another client of the same session on the server holds one, a Spark 4.3.0 server doesn't
+//!   answer, even once that client removes it: only the end of the session, such as another
+//!   thread's [`Session::stop`], ends the call, which then fails.
 //!
 //! # Threads and runtimes
 //!
@@ -71,8 +107,10 @@
 //! the call returns.
 //!
 //! Dropping an iterator of results before its end releases its operation on the server, and
-//! dropping the last DataFrame of a checkpoint removes the checkpoint: both are sent on the
-//! runtime of this module, whichever thread or runtime drops them.
+//! dropping the events of streaming queries removes their subscription. Dropping the last handle
+//! of a checkpoint's DataFrame, of a fitted model or of a dataflow graph removes it from the
+//! server. Each is sent on the runtime that made it, which for what a call of this module made is
+//! the runtime of this module, whichever thread or runtime drops it.
 //!
 //! A session connected with the async API keeps its connection on the runtime it connected on,
 //! so its blocking form needs that runtime to keep running. A blocking call on the thread of a
@@ -81,7 +119,12 @@
 
 mod catalog;
 mod dataframe;
+mod ml;
+mod pipelines;
 mod readwriter;
+#[cfg(feature = "rust-udf")]
+mod rust_udf;
+mod streaming;
 
 use std::collections::BTreeMap;
 use std::future::{Future, IntoFuture};
@@ -92,7 +135,15 @@ use spark_connect_core::error::SparkError;
 
 pub use catalog::Catalog;
 pub use dataframe::{DataFrame, GroupedData, RecordBatchIter, Show, StatFunctions};
+pub use ml::{
+    Estimator, Evaluator, LinearRegressionModel, LinearSVCModel, LogisticRegressionModel,
+    MaxAbsScalerModel, StandardScalerModel, StringIndexerModel,
+};
+pub use pipelines::{DataflowGraph, PipelineRun};
 pub use readwriter::{DataFrameReader, DataFrameWriter, DataFrameWriterV2};
+#[cfg(feature = "rust-udf")]
+pub use rust_udf::UdfRegistration;
+pub use streaming::{DataStreamWriter, QueryEvents, StreamingQuery, StreamingQueryManager};
 
 use crate::error::{Error, Result};
 use crate::session::{AddArtifacts, RuntimeConfig as AsyncConfig};
@@ -385,6 +436,105 @@ impl AddArtifacts {
 ///     batches
 /// }
 /// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, streaming};
+///
+/// fn queries(queries: &blocking::StreamingQueryManager) -> &streaming::StreamingQueryManager {
+///     queries
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, streaming};
+///
+/// fn query(query: &blocking::StreamingQuery) -> &streaming::StreamingQuery {
+///     query
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, streaming};
+///
+/// fn events(events: &blocking::QueryEvents) -> &streaming::QueryEvents {
+///     events
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, pipelines};
+///
+/// fn graph(graph: &blocking::DataflowGraph) -> &pipelines::DataflowGraph {
+///     graph
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, pipelines};
+///
+/// fn run(run: &blocking::PipelineRun) -> &pipelines::PipelineRun {
+///     run
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, ml};
+///
+/// fn model(model: &blocking::LogisticRegressionModel) -> &ml::LogisticRegressionModel {
+///     model
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, ml};
+///
+/// fn model(model: &blocking::LinearSVCModel) -> &ml::LinearSVCModel {
+///     model
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, ml};
+///
+/// fn model(model: &blocking::LinearRegressionModel) -> &ml::LinearRegressionModel {
+///     model
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, ml};
+///
+/// fn model(model: &blocking::StandardScalerModel) -> &ml::StandardScalerModel {
+///     model
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, ml};
+///
+/// fn model(model: &blocking::MaxAbsScalerModel) -> &ml::MaxAbsScalerModel {
+///     model
+/// }
+/// ```
+///
+/// ```compile_fail,E0308
+/// use spark_connect_async::{blocking, ml};
+///
+/// fn model(model: &blocking::StringIndexerModel) -> &ml::StringIndexerModel {
+///     model
+/// }
+/// ```
+#[cfg_attr(
+    feature = "rust-udf",
+    doc = "
+```compile_fail,E0308
+use spark_connect_async::{blocking, rust_udf};
+
+fn udf(udf: &blocking::UdfRegistration) -> &rust_udf::UdfRegistration {
+    udf
+}
+```"
+)]
 #[cfg(doctest)]
 struct NoDeref;
 
@@ -409,7 +559,21 @@ mod tests {
         assert_send_sync::<DataFrameWriter>();
         assert_send_sync::<DataFrameWriterV2>();
         assert_send_sync::<Catalog>();
+        assert_send_sync::<StreamingQueryManager>();
+        assert_send_sync::<StreamingQuery>();
+        assert_send_sync::<DataStreamWriter>();
+        assert_send_sync::<DataflowGraph>();
+        assert_send_sync::<LogisticRegressionModel>();
+        assert_send_sync::<LinearSVCModel>();
+        assert_send_sync::<LinearRegressionModel>();
+        assert_send_sync::<StandardScalerModel>();
+        assert_send_sync::<MaxAbsScalerModel>();
+        assert_send_sync::<StringIndexerModel>();
+        #[cfg(feature = "rust-udf")]
+        assert_send_sync::<UdfRegistration>();
         assert_send::<RecordBatchIter>();
+        assert_send::<QueryEvents>();
+        assert_send::<PipelineRun>();
         // Type-checked, never called: it would need a server.
         let _ = |df: DataFrame| {
             fn assert_send_static<T: Send + 'static>(_: T) {}

@@ -466,3 +466,176 @@ fn dropping_a_registration_stops_it_in_either_runtime() {
         });
     }
 }
+
+/// The blocking registrations of the blocking API.
+#[cfg(feature = "blocking")]
+mod blocking_registrations {
+    use spark_connect_async::blocking;
+    use tokio::runtime::{Builder, Runtime};
+
+    use super::*;
+
+    fn connect(url: &str) -> blocking::Session {
+        Session::builder().remote(url).blocking().connect().unwrap()
+    }
+
+    type BlockingCase = (
+        &'static str,
+        fn(&blocking::Session),
+        fn(Session) -> BoxFuture<'static, ()>,
+    );
+
+    #[test]
+    fn a_blocking_registration_sends_the_requests_of_the_async_one() {
+        echo_python();
+        let (recorder, url) = start();
+        let runtime = Runtime::new().unwrap();
+        let cases: [BlockingCase; 4] = [
+            (
+                "register a UDF called per row",
+                |b| b.udf().register("label", &label()).unwrap(),
+                |a| Box::pin(async move { a.udf().register("label", &label()).await.unwrap() }),
+            ),
+            (
+                "register a UDF called per batch",
+                |b| b.udf().register("plus", &plus()).unwrap(),
+                |a| Box::pin(async move { a.udf().register("plus", &plus()).await.unwrap() }),
+            ),
+            (
+                "register a nondeterministic UDF",
+                |b| {
+                    let label = label().as_nondeterministic();
+                    b.udf().register("label", &label).unwrap()
+                },
+                |a| {
+                    Box::pin(async move {
+                        let label = label().as_nondeterministic();
+                        a.udf().register("label", &label).await.unwrap()
+                    })
+                },
+            ),
+            (
+                "an async registration converted both ways",
+                |b| {
+                    let registration = Session::from(b.clone()).udf().blocking();
+                    let registration = registration.into_async().blocking();
+                    registration.register("plus", &plus()).unwrap()
+                },
+                |a| Box::pin(async move { a.udf().register("plus", &plus()).await.unwrap() }),
+            ),
+        ];
+        let mut both = Vec::new();
+        for (name, blocking, awaited) in cases {
+            blocking(&connect(&url));
+            let sent = messages(recorder.take());
+            runtime.block_on(async {
+                awaited(
+                    Session::builder()
+                        .remote(url.clone())
+                        .connect()
+                        .await
+                        .unwrap(),
+                )
+                .await
+            });
+            let awaited = messages(recorder.take());
+            assert!(!awaited.is_empty(), "{name}: the async API sent nothing");
+            both.push((name, awaited, sent));
+        }
+        let differences = support::differences(both);
+        assert!(differences.is_empty(), "{differences}");
+    }
+
+    #[test]
+    fn a_udf_value_builds_its_payload_once_for_both_apis() {
+        echo_python();
+        let (_, url) = start();
+        let session = connect(&url);
+        let runtime = Runtime::new().unwrap();
+        let shared = udf("shared", MODULE, "shared", vec![AbiType::I64], AbiType::I64);
+        session.udf().register("shared", &shared).unwrap();
+        shared.call(["id"]).unwrap();
+        runtime
+            .block_on(session.as_async().udf().register("again", &shared))
+            .unwrap();
+        session.udf().register("twice", &shared.clone()).unwrap();
+        assert_eq!(
+            builds("shared"),
+            1,
+            "built first by a blocking registration"
+        );
+
+        let called = udf("called", MODULE, "called", vec![AbiType::I64], AbiType::I64);
+        called.call(["id"]).unwrap();
+        session.udf().register("called", &called).unwrap();
+        assert_eq!(builds("called"), 1, "built first by a call");
+    }
+
+    /// Where a test makes a blocking call, as in blocking_calls.rs.
+    #[derive(Debug, Clone, Copy)]
+    enum Context {
+        NoRuntime,
+        CurrentThread,
+        CurrentThreadTask,
+        CurrentThreadSpawnBlocking,
+        MultiThread,
+        MultiThreadTask,
+        MultiThreadSpawnBlocking,
+    }
+
+    const CONTEXTS: [Context; 7] = [
+        Context::NoRuntime,
+        Context::CurrentThread,
+        Context::CurrentThreadTask,
+        Context::CurrentThreadSpawnBlocking,
+        Context::MultiThread,
+        Context::MultiThreadTask,
+        Context::MultiThreadSpawnBlocking,
+    ];
+
+    /// What `call` returns, called in `context`, whose runtime has no I/O or time driver.
+    fn run_in<T: Send + 'static>(context: Context, call: impl FnOnce() -> T + Send + 'static) -> T {
+        let current_thread = || Builder::new_current_thread().build().unwrap();
+        let multi_thread = || {
+            Builder::new_multi_thread()
+                .worker_threads(2)
+                .build()
+                .unwrap()
+        };
+        match context {
+            Context::NoRuntime => call(),
+            Context::CurrentThread => current_thread().block_on(async move { call() }),
+            Context::CurrentThreadTask => current_thread()
+                .block_on(async move { tokio::spawn(async move { call() }).await.unwrap() }),
+            Context::CurrentThreadSpawnBlocking => current_thread()
+                .block_on(async move { tokio::task::spawn_blocking(call).await.unwrap() }),
+            Context::MultiThread => multi_thread().block_on(async move { call() }),
+            Context::MultiThreadTask => multi_thread()
+                .block_on(async move { tokio::spawn(async move { call() }).await.unwrap() }),
+            Context::MultiThreadSpawnBlocking => multi_thread()
+                .block_on(async move { tokio::task::spawn_blocking(call).await.unwrap() }),
+        }
+    }
+
+    #[test]
+    fn a_blocking_registration_returns_in_every_context() {
+        echo_python();
+        let (recorder, url) = start();
+        let registered = udf("contexts", MODULE, "contexts", arg_types(), ret_type());
+        for context in CONTEXTS {
+            let (url, registered) = (url.clone(), registered.clone());
+            run_in(context, move || {
+                connect(&url)
+                    .udf()
+                    .register("contexts", &registered)
+                    .unwrap()
+            });
+        }
+        let registrations = messages(recorder.take())
+            .iter()
+            .filter(|message| message.contains("RegisterFunction"))
+            .count();
+        assert_eq!(registrations, CONTEXTS.len());
+        assert_eq!(builds("contexts"), 1);
+    }
+}
