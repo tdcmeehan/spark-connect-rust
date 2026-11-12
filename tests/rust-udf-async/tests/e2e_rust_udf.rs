@@ -18,9 +18,9 @@
 //! Rust UDFs of the async client on a live Spark Connect server, whose Python workers need
 //! `pyarrow` and `wasmtime`. Run with `SPARK_REMOTE` set; skipped otherwise. Each call to the
 //! server has a deadline, and each test stops the sessions it opens, which removes the functions
-//! it registered.
+//! it registered, also when it fails.
 
-use std::future::IntoFuture;
+use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
 use rust_udf_async_tests::udf;
@@ -60,6 +60,17 @@ async fn rows(session: &Session) -> DataFrame {
     within(session.sql(ROWS)).await.unwrap()
 }
 
+/// Runs `body`, then stops `sessions`, also when `body` panics.
+async fn cleaned_up(sessions: &[&Session], body: impl Future<Output = ()> + Send + 'static) {
+    let outcome = tokio::spawn(body).await;
+    for session in sessions {
+        let _ = tokio::time::timeout(DEADLINE, session.stop()).await;
+    }
+    if let Err(error) = outcome {
+        std::panic::resume_unwind(error.into_panic());
+    }
+}
+
 /// The error of running `query` on `session`, wherever the server reports it.
 async fn failure(session: &Session, query: &str) -> Error {
     match within(session.sql(query)).await {
@@ -74,6 +85,10 @@ async fn udfs_run_once_per_batch_or_once_per_row_on_the_server() {
         return;
     };
     let session = session(&remote).await;
+    cleaned_up(&[&session], once_per_batch_or_row(session.clone())).await;
+}
+
+async fn once_per_batch_or_row(session: Session) {
     let rows = rows(&session).await;
     let per_batch = rows.select([
         udf::minus("id", "y").unwrap(),
@@ -132,7 +147,12 @@ async fn a_registered_udf_is_a_temporary_function_of_its_session_alone() {
     let Ok(remote) = std::env::var("SPARK_REMOTE") else {
         return;
     };
-    let session = session(&remote).await;
+    let (session, other) = (session(&remote).await, session(&remote).await);
+    let body = registered_on_its_session(session.clone(), other.clone());
+    cleaned_up(&[&session, &other], body).await;
+}
+
+async fn registered_on_its_session(session: Session, other: Session) {
     let registration = session.udf();
     within(registration.register("rust_udf_f", &udf::label_udf()))
         .await
@@ -158,7 +178,6 @@ async fn a_registered_udf_is_a_temporary_function_of_its_session_alone() {
     let differences: Vec<(Option<i64>,)> = within(in_sql.collect_as()).await.unwrap();
     assert_eq!(differences[..3], [(None,), (Some(-9),), (Some(-18),)]);
 
-    let other = self::session(&remote).await;
     let error = failure(&other, "SELECT rust_udf_f(1, 2)").await;
     assert_eq!(error.kind(), ErrorKind::Analysis, "{error}");
     assert_eq!(error.error_class(), Some("UNRESOLVED_ROUTINE"), "{error}");

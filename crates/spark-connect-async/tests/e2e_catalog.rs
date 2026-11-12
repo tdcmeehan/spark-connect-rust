@@ -19,14 +19,44 @@
 //! passes without running when it is not set.
 
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::future::{Future, IntoFuture};
+use std::panic::AssertUnwindSafe;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures::FutureExt;
 use spark_connect_async::types::{DataType, StructField};
 use spark_connect_async::{ErrorKind, Session};
 
+/// The longest that a test may take, and each of its cleanups.
+const WAIT: Duration = Duration::from_secs(120);
+
 async fn session() -> Option<Session> {
     let remote = std::env::var("SPARK_REMOTE").ok()?;
-    Some(Session::builder().remote(remote).connect().await.unwrap())
+    let connect = Session::builder().remote(remote).connect();
+    Some(tokio::time::timeout(WAIT, connect).await.unwrap().unwrap())
+}
+
+fn unique(prefix: &str) -> String {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    format!("{prefix}_{}", now.as_nanos())
+}
+
+/// Runs `body` until the deadline, then the statements `cleanups`, and stops `session`, which
+/// drops its views, also when `body` panics or does not finish.
+async fn cleaned_up(session: &Session, cleanups: &[String], body: impl Future<Output = ()>) {
+    let outcome = AssertUnwindSafe(tokio::time::timeout(WAIT, body))
+        .catch_unwind()
+        .await;
+    for statement in cleanups {
+        let cleanup = session.sql(statement.as_str()).into_future();
+        let _ = tokio::time::timeout(WAIT, cleanup).await;
+    }
+    let _ = tokio::time::timeout(WAIT, session.stop()).await;
+    match outcome {
+        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(Err(_)) => panic!("the test did not end within {WAIT:?}"),
+        Ok(Ok(())) => {}
+    }
 }
 
 #[tokio::test]
@@ -34,10 +64,18 @@ async fn the_results_of_the_server_are_read_into_rust_types_with_their_nulls() {
     let Some(session) = session().await else {
         return;
     };
+    let db = unique("b9_sales");
+    let cleanups = [format!("DROP DATABASE IF EXISTS {db} CASCADE")];
+    cleaned_up(
+        &session,
+        &cleanups,
+        read_into_rust_types(&session, db.clone()),
+    )
+    .await;
+}
+
+async fn read_into_rust_types(session: &Session, db: String) {
     let catalog = session.catalog();
-    // A run that fails leaves the directories of its tables in the warehouse of the server.
-    let started = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let db = format!("b9_sales_{}", started.as_nanos());
     let orders = format!("{db}.orders");
     catalog
         .create_database(&db)
@@ -197,6 +235,10 @@ async fn a_failed_operation_is_an_error_with_the_condition_of_the_server() {
     let Some(session) = session().await else {
         return;
     };
+    cleaned_up(&session, &[], a_failed_operation(&session)).await;
+}
+
+async fn a_failed_operation(session: &Session) {
     let error = session
         .catalog()
         .get_table("b9_missing.orders")
@@ -205,4 +247,40 @@ async fn a_failed_operation_is_an_error_with_the_condition_of_the_server() {
     assert_eq!(error.kind(), ErrorKind::Analysis);
     assert_eq!(error.error_class(), Some("TABLE_OR_VIEW_NOT_FOUND"));
     assert!(!error.to_string().contains("Exception"), "{error}");
+}
+
+#[tokio::test]
+async fn the_dataframe_of_a_created_table_reads_the_table_at_each_action() {
+    let Some(session) = session().await else {
+        return;
+    };
+    let name = unique("b15_made");
+    let cleanups = [format!("DROP TABLE IF EXISTS {name}")];
+    cleaned_up(&session, &cleanups, async {
+        let catalog = session.catalog();
+        let schema = DataType::from_ddl("a BIGINT").unwrap();
+        let made = catalog
+            .create_table(&name)
+            .source("parquet")
+            .schema(schema)
+            .await
+            .unwrap();
+        assert_eq!(made.count().await.unwrap(), 0);
+        session
+            .sql(format!("INSERT INTO {name} VALUES (1), (2)"))
+            .await
+            .unwrap();
+        assert_eq!(made.count().await.unwrap(), 2);
+        assert_eq!(made.count().await.unwrap(), 2);
+
+        session.sql(format!("DROP TABLE {name}")).await.unwrap();
+        let error = made.count().await.unwrap_err();
+        assert_eq!(
+            error.error_class(),
+            Some("TABLE_OR_VIEW_NOT_FOUND"),
+            "{error}"
+        );
+        assert!(!catalog.table_exists(&name).await.unwrap());
+    })
+    .await;
 }

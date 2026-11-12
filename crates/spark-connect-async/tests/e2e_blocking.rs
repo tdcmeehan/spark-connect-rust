@@ -47,6 +47,17 @@ fn within<T: Send + 'static>(what: &str, call: impl FnOnce() -> T + Send + 'stat
     }
 }
 
+/// Stops its session when it drops, also when the test panics.
+struct Stopped(blocking::Session);
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        let (session, (stopped, waiting)) = (self.0.clone(), mpsc::channel());
+        thread::spawn(move || stopped.send(session.stop()).ok());
+        let _ = waiting.recv_timeout(DEADLINE);
+    }
+}
+
 fn session() -> Option<blocking::Session> {
     let remote = std::env::var("SPARK_REMOTE").ok()?;
     Some(within("connect", move || {
@@ -69,6 +80,7 @@ fn a_blocking_session_queries_writes_reads_back_and_lists_its_catalog() {
     let Some(session) = session() else {
         return;
     };
+    let _stopped = Stopped(session.clone());
     let s = session.clone();
     let people = within("sql", move || {
         s.sql("SELECT id, concat('p', id) AS name FROM range(5)")
