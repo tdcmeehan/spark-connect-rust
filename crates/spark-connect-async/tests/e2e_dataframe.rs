@@ -221,9 +221,9 @@ async fn statistics_of_numeric_columns_are_the_servers_and_others_are_its_errors
         .await
         .unwrap();
         let stat = points.stat();
-        let correlation = within(|| stat.corr("x", "y")).await.unwrap().unwrap();
+        let correlation = within(|| stat.corr("x", "y")).await.unwrap();
         assert!((correlation - 1.0).abs() < 1e-12, "{correlation}");
-        assert_eq!(within(|| stat.cov("x", "y")).await.unwrap(), Some(2.0));
+        assert_eq!(within(|| stat.cov("x", "y")).await.unwrap(), 2.0);
         assert_eq!(
             within(|| stat.approx_quantile(["x", "y"], [0.0, 0.5, 1.0], 0.0))
                 .await
@@ -233,8 +233,8 @@ async fn statistics_of_numeric_columns_are_the_servers_and_others_are_its_errors
 
         let none = points.limit(0).stat();
         let undefined = within(|| none.corr("x", "y")).await.unwrap();
-        assert!(undefined.is_some_and(f64::is_nan), "{undefined:?}");
-        assert_eq!(within(|| none.cov("x", "y")).await.unwrap(), Some(0.0));
+        assert!(undefined.is_nan(), "{undefined}");
+        assert_eq!(within(|| none.cov("x", "y")).await.unwrap(), 0.0);
         assert_eq!(
             within(|| none.approx_quantile(["x"], [0.5], 0.0))
                 .await

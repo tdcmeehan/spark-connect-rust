@@ -411,22 +411,18 @@ impl StatFunctions {
     }
 
     /// The Pearson correlation coefficient of the numeric columns `column1` and `column2`, as
-    /// [`crate::stat::StatFunctions::corr`] computes it.
-    pub fn corr(
-        &self,
-        column1: impl Into<String>,
-        column2: impl Into<String>,
-    ) -> Result<Option<f64>> {
+    /// [`crate::stat::StatFunctions::corr`] computes it: a `NULL` counts as 0, the server answers
+    /// NaN where it is undefined, and an answer that is `NULL` or missing, which a 4.3.0 server
+    /// doesn't send, is an [`ErrorKind::Decode`](crate::ErrorKind::Decode) error.
+    pub fn corr(&self, column1: impl Into<String>, column2: impl Into<String>) -> Result<f64> {
         wait(self.0.corr(column1, column2))
     }
 
     /// The sample covariance of the numeric columns `column1` and `column2`, as
-    /// [`crate::stat::StatFunctions::cov`] computes it.
-    pub fn cov(
-        &self,
-        column1: impl Into<String>,
-        column2: impl Into<String>,
-    ) -> Result<Option<f64>> {
+    /// [`crate::stat::StatFunctions::cov`] computes it: a `NULL` counts as 0, the server answers
+    /// 0.0 where it is undefined, and an answer that is `NULL` or missing, which a 4.3.0 server
+    /// doesn't send, is an [`ErrorKind::Decode`](crate::ErrorKind::Decode) error.
+    pub fn cov(&self, column1: impl Into<String>, column2: impl Into<String>) -> Result<f64> {
         wait(self.0.cov(column1, column2))
     }
 

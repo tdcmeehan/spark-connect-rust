@@ -2,7 +2,8 @@
 
 use std::future::Future;
 
-use futures::TryFutureExt;
+use arrow::record_batch::RecordBatch;
+use futures::{FutureExt, TryFutureExt};
 use std::sync::Arc;
 
 use spark_connect_core::expression::Expression;
@@ -10,7 +11,7 @@ use spark_connect_core::plan::{self, LogicalPlan};
 
 use crate::column::{Column, IntoLiteral};
 use crate::dataframe::{strings, DataFrame};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::options::{random_seed, DropNa, DropRows, Fill, FillValue, Replace};
 
 /// The statistics of [`DataFrame::stat`].
@@ -78,32 +79,36 @@ impl StatFunctions {
 
     /// The Pearson correlation coefficient of the numeric columns `column1` and `column2`,
     /// counting a `NULL` as 0. Where it is undefined, as with fewer than two rows or a column of
-    /// one value, the server answers NaN; `None` stands for a `NULL` answer, which it doesn't send.
+    /// one value, the server answers NaN. An answer that is `NULL` or missing, which a 4.3.0
+    /// server doesn't send, is an [`ErrorKind::Decode`](crate::ErrorKind::Decode) error.
     pub fn corr(
         &self,
         column1: impl Into<String>,
         column2: impl Into<String>,
-    ) -> impl Future<Output = Result<Option<f64>>> + Send + 'static {
-        first_value(self.with_input(|input| LogicalPlan::StatCorr {
+    ) -> impl Future<Output = Result<f64>> + Send + 'static {
+        let answer = self.with_input(|input| LogicalPlan::StatCorr {
             input,
             col1: column1.into(),
             col2: column2.into(),
-        }))
+        });
+        first_value(answer, "correlation")
     }
 
     /// The sample covariance of the numeric columns `column1` and `column2`, counting a `NULL` as
-    /// 0. With fewer than two rows, where it is undefined, the server answers 0.0; `None` stands
-    /// for a `NULL` answer, which it doesn't send.
+    /// 0. With fewer than two rows, where it is undefined, the server answers 0.0. An answer that
+    /// is `NULL` or missing, which a 4.3.0 server doesn't send, is an
+    /// [`ErrorKind::Decode`](crate::ErrorKind::Decode) error.
     pub fn cov(
         &self,
         column1: impl Into<String>,
         column2: impl Into<String>,
-    ) -> impl Future<Output = Result<Option<f64>>> + Send + 'static {
-        first_value(self.with_input(|input| LogicalPlan::StatCov {
+    ) -> impl Future<Output = Result<f64>> + Send + 'static {
+        let answer = self.with_input(|input| LogicalPlan::StatCov {
             input,
             col1: column1.into(),
             col2: column2.into(),
-        }))
+        });
+        first_value(answer, "covariance")
     }
 
     /// The approximate quantiles at `probabilities`, each from 0 to 1, of each of the numeric
@@ -132,11 +137,26 @@ impl StatFunctions {
     }
 }
 
-fn first_value(dataframe: DataFrame) -> impl Future<Output = Result<Option<f64>>> + Send + 'static {
+fn first_value(
+    dataframe: DataFrame,
+    what: &'static str,
+) -> impl Future<Output = Result<f64>> + Send + 'static {
     dataframe
         .limit(1)
-        .collect_as::<(Option<f64>,)>()
-        .map_ok(|rows| rows.into_iter().next().and_then(|(value,)| value))
+        .collect()
+        .map(move |batches| value_of(&batches?, what))
+}
+
+/// The value of the first row of `batches`, the answer of a `what`. A `NULL` or no row is an
+/// error.
+fn value_of(batches: &[RecordBatch], what: &str) -> Result<f64> {
+    for batch in batches {
+        let rows = crate::de::from_record_batch::<(f64,)>(batch)?;
+        if let Some(&(value,)) = rows.first() {
+            return Ok(value);
+        }
+    }
+    Err(Error::decode(format!("the server returned no {what}")))
 }
 
 /// The handling of the missing values of [`DataFrame::na`]: `NULL`s, and NaNs where noted.
@@ -197,5 +217,60 @@ impl NaFunctions {
             replacements: replace.replacements,
             columns: replace.columns,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arrow::array::Float64Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+
+    use super::value_of;
+    use crate::ErrorKind;
+
+    /// An answer of `values` in its one column, `corr`.
+    fn answer(values: Vec<Option<f64>>) -> RecordBatch {
+        let schema = Schema::new(vec![Field::new("corr", DataType::Float64, true)]);
+        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(Float64Array::from(values))]).unwrap()
+    }
+
+    #[test]
+    fn a_statistic_is_the_value_of_the_first_row_of_its_answer() {
+        for (name, batches, expected) in [
+            ("a value", vec![answer(vec![Some(0.5)])], 0.5),
+            ("NaN", vec![answer(vec![Some(f64::NAN)])], f64::NAN),
+            (
+                "an empty batch, then a value",
+                vec![answer(vec![]), answer(vec![Some(-1.0)])],
+                -1.0,
+            ),
+        ] {
+            let value = value_of(&batches, "correlation").unwrap();
+            assert_eq!(value.to_bits(), expected.to_bits(), "{name}: {value}");
+        }
+    }
+
+    #[test]
+    fn a_null_or_missing_answer_of_a_statistic_is_an_error_of_decoding() {
+        for (name, batches, message) in [
+            (
+                "a NULL",
+                vec![answer(vec![None])],
+                "a NULL can only be read into an Option (row 0, column `corr`)",
+            ),
+            (
+                "an empty batch",
+                vec![answer(vec![])],
+                "the server returned no correlation",
+            ),
+            ("no batch", vec![], "the server returned no correlation"),
+        ] {
+            let error = value_of(&batches, "correlation").unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::Decode, "{name}");
+            assert_eq!(error.message(), message, "{name}");
+        }
     }
 }
