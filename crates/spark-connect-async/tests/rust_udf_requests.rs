@@ -493,8 +493,19 @@ mod blocking_registrations {
         let cases: [BlockingCase; 4] = [
             (
                 "register a UDF called per row",
-                |b| b.udf().register("label", &label()).unwrap(),
-                |a| Box::pin(async move { a.udf().register("label", &label()).await.unwrap() }),
+                |b| {
+                    b.with_tag("etl")
+                        .unwrap()
+                        .udf()
+                        .register("label", &label())
+                        .unwrap()
+                },
+                |a| {
+                    Box::pin(async move {
+                        let tagged = a.with_tag("etl").unwrap();
+                        tagged.udf().register("label", &label()).await.unwrap()
+                    })
+                },
             ),
             (
                 "register a UDF called per batch",

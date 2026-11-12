@@ -1076,10 +1076,11 @@ async fn started_async(s: &Session) -> streaming::StreamingQuery {
 
 fn streaming_cases() -> Vec<Case> {
     vec![
-        case!("streams active", |b| b.streams().active(), |a| a
-            .streams()
-            .active()
-            .await),
+        case!(
+            "streams active",
+            |b| b.with_tag("etl").unwrap().streams().active(),
+            |a| a.with_tag("etl").unwrap().streams().active().await
+        ),
         case!("streams get", |b| b.streams().get("query-id"), |a| a
             .streams()
             .get("query-id")
@@ -1579,8 +1580,18 @@ fn pipeline_cases() -> Vec<Case> {
         ),
         case!(
             "the session of a graph",
-            |b| graph(b).session().as_async().sql("SET x = 1").run(),
-            |a| graph_async(&a).await.session().sql("SET x = 1").await
+            |b| {
+                let dataflow = graph(&b.with_tag("etl").unwrap());
+                let session = dataflow.session();
+                (session.version(), session.as_async().sql("SET x = 1").run())
+            },
+            |a| {
+                let dataflow = graph_async(&a.with_tag("etl").unwrap()).await;
+                (
+                    dataflow.session().version().await,
+                    dataflow.session().sql("SET x = 1").await,
+                )
+            }
         ),
         case!(
             "a graph converted both ways",
@@ -1595,7 +1606,8 @@ fn pipeline_cases() -> Vec<Case> {
     ]
 }
 
-/// `text` with each UUID replaced: the ids of the operators of Spark ML are random.
+/// `text` with each UUID replaced, as the ids of the operators of Spark ML are random, but
+/// `SESSION_ID`, so that a request of another session differs.
 fn without_uuids(text: &str) -> String {
     let bytes = text.as_bytes();
     let is_uuid = |at: usize| {
@@ -1611,7 +1623,10 @@ fn without_uuids(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
     while at < text.len() {
-        if is_uuid(at) {
+        if text[at..].starts_with(SESSION_ID) {
+            out.push_str(SESSION_ID);
+            at += SESSION_ID.len();
+        } else if is_uuid(at) {
             out.push_str("<uuid>");
             at += 36;
         } else {
@@ -1624,7 +1639,7 @@ fn without_uuids(text: &str) -> String {
 }
 
 /// Each entry as its message, with the operation ids, which the client chooses at random,
-/// removed, and the UUIDs replaced.
+/// removed, and the UUIDs other than `SESSION_ID` replaced.
 fn messages(entries: Vec<server::Entry>) -> Vec<String> {
     entries
         .into_iter()
