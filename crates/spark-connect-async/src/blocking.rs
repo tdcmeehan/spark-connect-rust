@@ -330,7 +330,8 @@ impl RuntimeConfig {
         wait(self.0.set_all(pairs))
     }
 
-    /// The value of `key`, or `None` if it has none.
+    /// The value of `key` that the session uses, Spark's default included, or `None` if it has
+    /// neither, as [`get`](crate::session::RuntimeConfig::get) of the async configuration says.
     pub fn get(&self, key: impl Into<String>) -> Result<Option<String>> {
         wait(self.0.get(key))
     }

@@ -417,7 +417,10 @@ impl RuntimeConfig {
         async move { Ok(client.set_configs(&pairs, false).await?) }
     }
 
-    /// The value of `key`, or `None` if it has none.
+    /// The value of `key` that the session uses: the value set for it, or else Spark's default
+    /// for it, such as `"200"` for `spark.sql.shuffle.partitions`. `None` if it has neither: a
+    /// configuration without a default that isn't set, or a key that is no configuration, which
+    /// the server reports as `SQL_CONF_NOT_FOUND`.
     pub fn get(
         &self,
         key: impl Into<String>,
@@ -425,8 +428,17 @@ impl RuntimeConfig {
         let client = Arc::clone(&self.client);
         let key = key.into();
         async move {
-            let values = client.get_config_with_defaults(&[(&key, None)]).await?;
-            Ok(values.into_iter().next().flatten())
+            match client.get_configs(&[&key]).await {
+                Ok(values) => Ok(values.into_iter().next().flatten()),
+                Err(error) => {
+                    let error = Error::from(error);
+                    if error.error_class() == Some("SQL_CONF_NOT_FOUND") {
+                        Ok(None)
+                    } else {
+                        Err(error)
+                    }
+                }
+            }
         }
     }
 

@@ -256,7 +256,10 @@ async fn the_configuration_version_and_interrupts_of_a_session_are_the_servers()
             (Some("7"), Some("1"), Some("2"))
         );
         within(|| conf.unset(partitions)).await.unwrap();
-        assert_eq!(within(|| conf.get(partitions)).await.unwrap(), None);
+        assert_eq!(
+            within(|| conf.get(partitions)).await.unwrap().as_deref(),
+            Some("200")
+        );
         assert_eq!(within(|| conf.get("spark.b15.never")).await.unwrap(), None);
         assert!(within(|| conf.is_modifiable(partitions)).await.unwrap());
         assert!(!within(|| conf.is_modifiable("spark.driver.memory"))

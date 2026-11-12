@@ -79,7 +79,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "conf get",
-            old: |s| drop(s.conf().get_with_default("spark.a", None).unwrap()),
+            old: |s| drop(s.conf().get("spark.a").unwrap()),
             new: |url| {
                 Box::pin(async move {
                     connect(url).await.conf().get("spark.a").await.unwrap();
@@ -371,5 +371,211 @@ fn recorded_requests_compare_as_messages_whatever_the_order_of_their_map_entries
     ];
     for (case, new, same) in cases {
         assert_eq!(same_requests(&old, &new), same, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn a_get_answers_the_value_the_session_uses_and_none_where_spark_has_none() {
+    let conf = connect(conf_server::start().await).await.conf();
+    let cases = [
+        ("a key that the session set", "spark.set", Ok(Some("7"))),
+        (
+            "a configuration with a default",
+            "spark.defaulted",
+            Ok(Some("200")),
+        ),
+        (
+            "a configuration without a default",
+            "spark.optional",
+            Ok(None),
+        ),
+        ("a key that is no configuration", "spark.unknown", Ok(None)),
+        (
+            "another error",
+            "spark.failing",
+            Err(Some("INVALID_HANDLE.SESSION_CLOSED")),
+        ),
+    ];
+    for (case, key, expected) in cases {
+        let answer = conf.get(key).await;
+        let answer = match &answer {
+            Ok(value) => Ok(value.as_deref()),
+            Err(error) => Err(error.error_class()),
+        };
+        assert_eq!(answer, expected, "{case}");
+    }
+}
+
+/// A server whose `Config` answers reads of the keys of
+/// `a_get_answers_the_value_the_session_uses_and_none_where_spark_has_none` as the 4.3.0 server
+/// does: a `Get` answers the value set in the session, else the configuration's default, and
+/// fails with `SQL_CONF_NOT_FOUND` for a key that is no configuration, while a `GetWithDefault`
+/// without a default answers only the value set.
+mod conf_server {
+    use std::collections::HashMap;
+    use std::convert::Infallible;
+    use std::task::{Context, Poll};
+
+    use futures::stream;
+    use prost::Message;
+    use spark_connect_core::bytes_codec::BytesCodec;
+    use spark_connect_proto as proto;
+    use tonic::body::Body;
+    use tonic::codegen::{http, BoxFuture, Bytes, Service};
+    use tonic::server::{Grpc, NamedService, UnaryService};
+    use tonic::{Code, Request, Response, Status};
+
+    /// Starts the server on the test's runtime, and returns its connection string.
+    pub async fn start() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("sc://{}", listener.local_addr().unwrap());
+        let incoming = stream::unfold(listener, |listener| async {
+            Some((listener.accept().await.map(|(socket, _)| socket), listener))
+        });
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(ConfServer)
+                .serve_with_incoming(incoming),
+        );
+        url
+    }
+
+    #[derive(Clone)]
+    struct ConfServer;
+
+    impl NamedService for ConfServer {
+        const NAME: &'static str = "spark.connect.SparkConnectService";
+    }
+
+    impl Service<http::Request<Body>> for ConfServer {
+        type Response = http::Response<Body>;
+        type Error = Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: http::Request<Body>) -> Self::Future {
+            let config = request.uri().path() == "/spark.connect.SparkConnectService/Config";
+            Box::pin(async move {
+                Ok(if config {
+                    Grpc::new(BytesCodec).unary(Answers, request).await
+                } else {
+                    Status::unimplemented(request.uri().path().to_string()).into_http()
+                })
+            })
+        }
+    }
+
+    struct Answers;
+
+    impl UnaryService<Vec<u8>> for Answers {
+        type Response = Vec<u8>;
+        type Future = BoxFuture<Response<Vec<u8>>, Status>;
+
+        fn call(&mut self, request: Request<Vec<u8>>) -> Self::Future {
+            let answer = proto::ConfigRequest::decode(&request.into_inner()[..])
+                .map_err(|error| Status::invalid_argument(error.to_string()))
+                .and_then(answer)
+                .map(|response| Response::new(response.encode_to_vec()));
+            Box::pin(async move { answer })
+        }
+    }
+
+    fn answer(request: proto::ConfigRequest) -> Result<proto::ConfigResponse, Status> {
+        use proto::config_request::operation::OpType;
+        let (keys, with_default) = match request.operation.and_then(|operation| operation.op_type) {
+            Some(OpType::Get(get)) => (get.keys, false),
+            Some(OpType::GetWithDefault(get)) => {
+                (get.pairs.into_iter().map(|pair| pair.key).collect(), true)
+            }
+            _ => return Err(Status::unimplemented("not a read of configurations")),
+        };
+        let mut pairs = Vec::new();
+        for key in keys {
+            let value = match (key.as_str(), with_default) {
+                ("spark.set", _) => Some("7"),
+                ("spark.defaulted", false) => Some("200"),
+                ("spark.unknown", false) => {
+                    return Err(server_error(
+                        "org.apache.spark.SparkNoSuchElementException",
+                        "SQL_CONF_NOT_FOUND",
+                        "42K0I",
+                        &format!(
+                            "[SQL_CONF_NOT_FOUND] The SQL config \"{key}\" cannot be found. \
+                             Please verify that the config exists. SQLSTATE: 42K0I"
+                        ),
+                    ))
+                }
+                ("spark.failing", _) => return Err(server_error(
+                    "org.apache.spark.sql.SparkSQLException",
+                    "INVALID_HANDLE.SESSION_CLOSED",
+                    "08003",
+                    "[INVALID_HANDLE.SESSION_CLOSED] The handle is invalid. Session was closed. \
+                         SQLSTATE: 08003",
+                )),
+                _ => None,
+            };
+            pairs.push(proto::KeyValue {
+                key,
+                value: value.map(str::to_string),
+            });
+        }
+        Ok(proto::ConfigResponse {
+            session_id: request.session_id,
+            pairs,
+            ..Default::default()
+        })
+    }
+
+    /// An error that the server raised: an internal status whose details hold its `ErrorInfo`.
+    fn server_error(class: &str, condition: &str, sql_state: &str, message: &str) -> Status {
+        let info = ErrorInfo {
+            reason: class.to_string(),
+            domain: "org.apache.spark".to_string(),
+            metadata: HashMap::from([
+                ("classes".to_string(), format!("[\"{class}\"]")),
+                ("errorClass".to_string(), condition.to_string()),
+                ("sqlState".to_string(), sql_state.to_string()),
+            ]),
+        };
+        let status = RpcStatus {
+            code: Code::Internal as i32,
+            message: message.to_string(),
+            details: vec![RpcAny {
+                type_url: "type.googleapis.com/google.rpc.ErrorInfo".to_string(),
+                value: info.encode_to_vec(),
+            }],
+        };
+        Status::with_details(Code::Internal, message, Bytes::from(status.encode_to_vec()))
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    struct RpcStatus {
+        #[prost(int32, tag = "1")]
+        code: i32,
+        #[prost(string, tag = "2")]
+        message: String,
+        #[prost(message, repeated, tag = "3")]
+        details: Vec<RpcAny>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    struct RpcAny {
+        #[prost(string, tag = "1")]
+        type_url: String,
+        #[prost(bytes = "vec", tag = "2")]
+        value: Vec<u8>,
+    }
+
+    #[derive(Clone, PartialEq, Message)]
+    struct ErrorInfo {
+        #[prost(string, tag = "1")]
+        reason: String,
+        #[prost(string, tag = "2")]
+        domain: String,
+        #[prost(map = "string, string", tag = "3")]
+        metadata: HashMap<String, String>,
     }
 }
