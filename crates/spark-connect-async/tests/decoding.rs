@@ -24,16 +24,18 @@ use std::sync::Arc;
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     DurationMicrosecondArray, Float32Array, Float64Array, Int16Array, Int32Array, Int32Builder,
-    Int64Array, Int8Array, IntervalYearMonthArray, ListArray, MapBuilder, NullArray, StringArray,
-    StringBuilder, StructArray, Time64NanosecondArray, TimestampMicrosecondArray,
-    TimestampNanosecondArray,
+    Int64Array, Int8Array, IntervalMonthDayNanoArray, IntervalMonthDayNanoBuilder,
+    IntervalYearMonthArray, ListArray, MapBuilder, NullArray, StringArray, StringBuilder,
+    StructArray, Time64NanosecondArray, TimestampMicrosecondArray, TimestampNanosecondArray,
 };
-use arrow::datatypes::{i256, DataType as A, Field, Int32Type, Schema};
+use arrow::datatypes::{
+    i256, DataType as A, Field, Int32Type, IntervalMonthDayNano, IntervalMonthDayNanoType, Schema,
+};
 use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use serde::Deserialize;
 use spark_connect_async::de::{from_record_batch, rows};
-use spark_connect_async::{Decimal, ErrorKind, Value};
+use spark_connect_async::{CalendarInterval, Decimal, ErrorKind, Value};
 
 fn batch(columns: Vec<(&str, ArrayRef)>) -> RecordBatch {
     let fields: Vec<Field> = columns
@@ -180,6 +182,14 @@ fn scalars() -> RecordBatch {
             "year_month",
             Arc::new(IntervalYearMonthArray::from(vec![Some(-13), None, Some(0)])),
         ),
+        (
+            "calendar",
+            Arc::new(IntervalMonthDayNanoArray::from(vec![
+                Some(IntervalMonthDayNano::new(14, 25, 18_367_008_009_000)),
+                None,
+                Some(IntervalMonthDayNano::new(i32::MIN, i32::MAX, i64::MAX)),
+            ])),
+        ),
         ("nothing", Arc::new(NullArray::new(3))),
     ])
 }
@@ -205,6 +215,7 @@ struct Scalars {
     time: Option<NaiveTime>,
     day_time: Option<i64>,
     year_month: Option<i32>,
+    calendar: Option<CalendarInterval>,
     nothing: Option<i32>,
 }
 
@@ -234,6 +245,7 @@ fn every_scalar_type_reads_into_its_rust_type_with_nulls() {
             time: Some(NaiveTime::from_hms_nano_opt(0, 0, 0, 1).unwrap()),
             day_time: Some(-1_500_000),
             year_month: Some(-13),
+            calendar: Some(CalendarInterval::new(14, 25, 18_367_008_009)),
             nothing: None,
         }
     );
@@ -259,6 +271,7 @@ fn every_scalar_type_reads_into_its_rust_type_with_nulls() {
             time: None,
             day_time: None,
             year_month: None,
+            calendar: None,
             nothing: None,
         }
     );
@@ -287,6 +300,14 @@ fn every_scalar_type_reads_into_its_rust_type_with_nulls() {
     assert_eq!(
         edge.time,
         Some(NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999).unwrap())
+    );
+    assert_eq!(
+        edge.calendar,
+        Some(CalendarInterval::new(
+            i32::MIN,
+            i32::MAX,
+            9_223_372_036_854_775
+        ))
     );
 }
 
@@ -318,6 +339,7 @@ fn every_scalar_type_reads_into_a_value() {
             Value::Time(NaiveTime::from_hms_nano_opt(0, 0, 0, 1).unwrap()),
             Value::DayTimeInterval(TimeDelta::microseconds(-1_500_000)),
             Value::YearMonthInterval(-13),
+            Value::CalendarInterval(CalendarInterval::new(14, 25, 18_367_008_009)),
             Value::Null,
         ]
     );
@@ -335,6 +357,7 @@ fn temporal_and_decimal_values_read_as_text_and_as_numbers() {
         timestamp: String,
         timestamp_ntz: String,
         time: String,
+        calendar: String,
     }
     #[derive(Deserialize)]
     struct AsNumbers {
@@ -356,7 +379,8 @@ fn temporal_and_decimal_values_read_as_text_and_as_numbers() {
             &text.date,
             &text.timestamp,
             &text.timestamp_ntz,
-            &text.time
+            &text.time,
+            &text.calendar
         ],
         [
             "-1.50",
@@ -365,6 +389,7 @@ fn temporal_and_decimal_values_read_as_text_and_as_numbers() {
             "2023-11-14T22:13:20.123456789Z",
             "1970-01-01T00:00:00.000000001",
             "00:00:00.000000001",
+            "1 years 2 months 25 days 5 hours 6 minutes 7.008009 seconds",
         ]
     );
     let numbers = &from_record_batch::<AsNumbers>(&first).unwrap()[0];
@@ -425,11 +450,49 @@ fn nested() -> RecordBatch {
             Arc::new(StringArray::from(vec!["p", "q", "r"])) as ArrayRef,
         ),
     ]);
+    let intervals = ListArray::from_iter_primitive::<IntervalMonthDayNanoType, _, _>(vec![
+        Some(vec![
+            Some(IntervalMonthDayNano::new(i32::MAX, i32::MIN, i64::MIN)),
+            None,
+        ]),
+        Some(vec![]),
+        None,
+    ]);
+    let mut interval_map = MapBuilder::new(
+        None,
+        StringBuilder::new(),
+        IntervalMonthDayNanoBuilder::new(),
+    );
+    interval_map.keys().append_value("k");
+    interval_map
+        .values()
+        .append_value(IntervalMonthDayNano::new(1, 0, 2_999));
+    interval_map.append(true).unwrap();
+    interval_map.append(true).unwrap();
+    interval_map.append(false).unwrap();
+    let interval_map = interval_map.finish();
+    let interval = IntervalMonthDayNanoArray::from(vec![
+        Some(IntervalMonthDayNano::new(0, 1, 0)),
+        None,
+        Some(IntervalMonthDayNano::new(0, 0, 0)),
+    ]);
+    let with_interval = StructArray::from(vec![
+        (
+            Arc::new(Field::new("i", interval.data_type().clone(), true)),
+            Arc::new(interval) as ArrayRef,
+        ),
+        (
+            Arc::new(Field::new("m", interval_map.data_type().clone(), true)),
+            Arc::new(interval_map) as ArrayRef,
+        ),
+    ]);
     batch(vec![
         ("ints", Arc::new(ints)),
         ("map", Arc::new(map.finish())),
         ("nested", Arc::new(outer)),
         ("pair", Arc::new(pairs)),
+        ("intervals", Arc::new(intervals)),
+        ("with_interval", Arc::new(with_interval)),
     ])
 }
 
@@ -448,12 +511,19 @@ fn arrays_maps_and_structs_nest_and_keep_the_order_of_map_entries() {
     struct Outer {
         a: B,
     }
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct WithInterval {
+        i: Option<CalendarInterval>,
+        m: Option<Vec<(String, CalendarInterval)>>,
+    }
     #[derive(Deserialize)]
     struct Nested {
         ints: Option<Vec<Option<i32>>>,
         map: Option<Vec<(i32, Option<String>)>>,
         nested: Outer,
         pair: (i32, String),
+        intervals: Option<Vec<Option<CalendarInterval>>>,
+        with_interval: WithInterval,
     }
     let rows: Vec<Nested> = from_record_batch(&nested()).unwrap();
     assert_eq!(rows[0].ints, Some(vec![Some(1), None, Some(3)]));
@@ -480,6 +550,25 @@ fn arrays_maps_and_structs_nest_and_keep_the_order_of_map_entries() {
     );
     assert_eq!(rows[1].nested.a.b.c, None);
     assert_eq!(rows[2].pair, (3, "r".to_string()));
+    let extremes = CalendarInterval::new(i32::MAX, i32::MIN, -9_223_372_036_854_775);
+    assert_eq!(rows[0].intervals, Some(vec![Some(extremes), None]));
+    assert_eq!(rows[1].intervals, Some(vec![]));
+    assert_eq!(rows[2].intervals, None);
+    assert_eq!(
+        rows[0].with_interval,
+        WithInterval {
+            i: Some(CalendarInterval::new(0, 1, 0)),
+            m: Some(vec![("k".to_string(), CalendarInterval::new(1, 0, 2))]),
+        }
+    );
+    assert_eq!(
+        rows[1].with_interval,
+        WithInterval {
+            i: None,
+            m: Some(vec![])
+        }
+    );
+    assert_eq!(rows[2].with_interval.m, None);
 
     #[derive(Deserialize)]
     struct Maps {
@@ -513,6 +602,23 @@ fn arrays_maps_and_structs_nest_and_keep_the_order_of_map_entries() {
         panic!("not a struct: {outer:?}");
     };
     assert_eq!(middle.names(), ["b", "s"]);
+    assert_eq!(
+        values[0].get_by_name("intervals"),
+        Some(&Value::Array(vec![
+            Value::CalendarInterval(extremes),
+            Value::Null
+        ]))
+    );
+    let Some(Value::Struct(with_interval)) = values[0].get_by_name("with_interval") else {
+        panic!("not a struct: {:?}", values[0]);
+    };
+    assert_eq!(
+        with_interval.get_by_name("m"),
+        Some(&Value::Map(vec![(
+            Value::String("k".to_string()),
+            Value::CalendarInterval(CalendarInterval::new(1, 0, 2))
+        )]))
+    );
 }
 
 fn rows_of(batch: &RecordBatch) -> Vec<spark_connect_async::Row> {
@@ -545,6 +651,11 @@ fn a_row_reads_as_a_tuple_a_map_a_single_value_or_with_borrowed_text() {
     assert_eq!(maps[0]["name"], "a");
     let ids: Vec<i64> = from_record_batch(&batch.project(&[0]).unwrap()).unwrap();
     assert_eq!(ids, [1, 2]);
+    let scalars = scalars();
+    let calendar = scalars.schema().index_of("calendar").unwrap();
+    let intervals: Vec<CalendarInterval> =
+        from_record_batch(&scalars.slice(0, 1).project(&[calendar]).unwrap()).unwrap();
+    assert_eq!(intervals, [CalendarInterval::new(14, 25, 18_367_008_009)]);
 
     #[derive(Debug, Deserialize, PartialEq)]
     #[serde(rename_all = "lowercase")]

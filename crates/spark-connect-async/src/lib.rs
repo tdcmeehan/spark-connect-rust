@@ -64,3 +64,5 @@ pub use observation::Observation;
 pub use session::{Session, SessionBuilder};
 pub use stream::RecordBatchStream;
 pub use value::{Decimal, Row, Value};
+
+pub use value::CalendarInterval;

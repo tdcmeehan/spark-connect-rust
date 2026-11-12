@@ -17,6 +17,7 @@
 //! | `TIME` | `chrono::NaiveTime` or `String`; `i64` nanoseconds since midnight |
 //! | `INTERVAL DAY TO SECOND` | `i64` microseconds |
 //! | `INTERVAL YEAR TO MONTH` | `i32` months |
+//! | `INTERVAL`, the calendar interval | [`CalendarInterval`] or `String` (Spark's text) |
 //! | `ARRAY` | `Vec<T>`, any sequence |
 //! | `MAP` | any map, or `Vec<(K, V)>`, in the server's order of the entries |
 //! | `STRUCT` | a struct by field name, a tuple by position, or a map |
@@ -50,7 +51,7 @@ use serde::Deserialize;
 use spark_connect_core::types::{DataType as SparkType, StructField};
 
 use crate::error::{Error, Result};
-use crate::value::{Decimal, Row, Value, DECIMAL_PARTS};
+use crate::value::{CalendarInterval, Decimal, Row, Value, CALENDAR_INTERVAL_PARTS, DECIMAL_PARTS};
 
 /// The rows of `batch`, each deserialized into a `T`.
 pub fn from_record_batch<'de, T: Deserialize<'de>>(batch: &'de RecordBatch) -> Result<Vec<T>> {
@@ -299,6 +300,9 @@ fn value_at(array: &ArrayRef, row: usize) -> Result<Value> {
         ArrowType::Interval(IntervalUnit::YearMonth) => {
             Value::YearMonthInterval(array.as_primitive::<IntervalYearMonthType>().value(row))
         }
+        ArrowType::Interval(IntervalUnit::MonthDayNano) => {
+            Value::CalendarInterval(calendar_interval_at(array, row))
+        }
         ArrowType::List(_) | ArrowType::LargeList(_) | ArrowType::FixedSizeList(..) => {
             let (elements, range) = elements_of(array, row);
             let values = range
@@ -469,6 +473,14 @@ fn duration_at(array: &ArrayRef, row: usize) -> Result<TimeDelta> {
     delta.ok_or_else(|| out_of_range("the interval"))
 }
 
+/// The calendar interval at `row`, with its nanoseconds truncated toward zero to microseconds.
+fn calendar_interval_at(array: &ArrayRef, row: usize) -> CalendarInterval {
+    let interval = array
+        .as_primitive::<arrow::datatypes::IntervalMonthDayNanoType>()
+        .value(row);
+    CalendarInterval::new(interval.months, interval.days, interval.nanoseconds / 1_000)
+}
+
 /// The elements of the list at `row` of `array`: the array that holds them, and their indexes
 /// there.
 fn elements_of(array: &ArrayRef, row: usize) -> (&ArrayRef, Range<usize>) {
@@ -589,7 +601,7 @@ impl<'de> Deserializer<'de> for RowDeserializer<'de> {
         name: &'static str,
         visitor: V,
     ) -> Result<V::Value> {
-        if name == DECIMAL_PARTS {
+        if name == DECIMAL_PARTS || name == CALENDAR_INTERVAL_PARTS {
             return self
                 .only_column()?
                 .deserialize_newtype_struct(name, visitor);
@@ -881,6 +893,32 @@ impl<'de> SeqAccess<'de> for DecimalParts {
     }
 }
 
+/// The parts of a calendar interval, for [`CalendarInterval`]'s `Deserialize`.
+struct CalendarIntervalParts {
+    interval: CalendarInterval,
+    next: usize,
+}
+
+impl<'de> SeqAccess<'de> for CalendarIntervalParts {
+    type Error = Error;
+
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>> {
+        self.next += 1;
+        match self.next {
+            1 => seed
+                .deserialize(self.interval.months().into_deserializer())
+                .map(Some),
+            2 => seed
+                .deserialize(self.interval.days().into_deserializer())
+                .map(Some),
+            3 => seed
+                .deserialize(self.interval.microseconds().into_deserializer())
+                .map(Some),
+            _ => Ok(None),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Number {
     Integer,
@@ -1028,6 +1066,9 @@ impl<'de> Deserializer<'de> for ValueDeserializer<'de> {
             ArrowType::Interval(IntervalUnit::YearMonth) => {
                 visitor.visit_i32(array.as_primitive::<IntervalYearMonthType>().value(row))
             }
+            ArrowType::Interval(IntervalUnit::MonthDayNano) => {
+                visitor.visit_string(calendar_interval_at(array, row).to_string())
+            }
             ArrowType::List(_) | ArrowType::LargeList(_) | ArrowType::FixedSizeList(..) => {
                 let (values, range) = elements_of(array, row);
                 visitor.visit_seq(Elements {
@@ -1103,6 +1144,14 @@ impl<'de> Deserializer<'de> for ValueDeserializer<'de> {
             let this = self.non_null()?;
             return visitor.visit_seq(DecimalParts {
                 decimal: decimal_at(this.array, this.index)?,
+                next: 0,
+            });
+        }
+        let calendar = *self.array.data_type() == ArrowType::Interval(IntervalUnit::MonthDayNano);
+        if name == CALENDAR_INTERVAL_PARTS && calendar {
+            let this = self.non_null()?;
+            return visitor.visit_seq(CalendarIntervalParts {
+                interval: calendar_interval_at(this.array, this.index),
                 next: 0,
             });
         }

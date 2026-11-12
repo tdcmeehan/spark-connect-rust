@@ -1,4 +1,5 @@
-//! Values of Spark's types as Rust values: [`Decimal`], [`Value`] and [`Row`].
+//! Values of Spark's types as Rust values: [`Decimal`], [`CalendarInterval`], [`Value`] and
+//! [`Row`].
 
 use std::fmt;
 use std::str::FromStr;
@@ -181,6 +182,116 @@ impl<'de> Visitor<'de> for DecimalVisitor {
     }
 }
 
+/// A value of Spark's `INTERVAL`, its calendar interval: months, days and microseconds, each
+/// counted on its own, since a month has no fixed number of days, nor a day of microseconds.
+///
+/// Read from a result, the nanoseconds that Arrow carries are truncated toward zero to whole
+/// microseconds, as Spark reads them; Spark sends whole microseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CalendarInterval {
+    months: i32,
+    days: i32,
+    microseconds: i64,
+}
+
+impl CalendarInterval {
+    /// The interval of `months`, `days` and `microseconds`.
+    pub fn new(months: i32, days: i32, microseconds: i64) -> CalendarInterval {
+        CalendarInterval {
+            months,
+            days,
+            microseconds,
+        }
+    }
+
+    /// The months, which Spark shows as years and months.
+    pub fn months(&self) -> i32 {
+        self.months
+    }
+
+    /// The days.
+    pub fn days(&self) -> i32 {
+        self.days
+    }
+
+    /// The microseconds, which Spark shows as hours, minutes and seconds.
+    pub fn microseconds(&self) -> i64 {
+        self.microseconds
+    }
+}
+
+/// Spark's text of the interval, as `CAST(… AS STRING)` writes it, such as `1 years 2 months 25
+/// days 5 hours 6 minutes 7.008009 seconds`, or `0 seconds`.
+impl fmt::Display for CalendarInterval {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const MICROS_PER_MINUTE: i64 = 60_000_000;
+        const MICROS_PER_HOUR: i64 = 60 * MICROS_PER_MINUTE;
+        let (months, micros) = (i64::from(self.months), self.microseconds);
+        let mut units: Vec<String> = [
+            (months / 12, "years"),
+            (months % 12, "months"),
+            (i64::from(self.days), "days"),
+            (micros / MICROS_PER_HOUR, "hours"),
+            (micros % MICROS_PER_HOUR / MICROS_PER_MINUTE, "minutes"),
+        ]
+        .into_iter()
+        .filter(|(count, _)| *count != 0)
+        .map(|(count, unit)| format!("{count} {unit}"))
+        .collect();
+        let seconds = micros % MICROS_PER_MINUTE;
+        if seconds != 0 {
+            let sign = if seconds < 0 { "-" } else { "" };
+            let whole = seconds.unsigned_abs() / 1_000_000;
+            let fraction = format!(".{:06}", seconds.unsigned_abs() % 1_000_000);
+            let fraction = fraction.trim_end_matches('0').trim_end_matches('.');
+            units.push(format!("{sign}{whole}{fraction} seconds"));
+        }
+        if units.is_empty() {
+            return f.write_str("0 seconds");
+        }
+        f.write_str(&units.join(" "))
+    }
+}
+
+/// The name under which [`CalendarInterval`] asks a deserializer of this crate for its parts.
+pub(crate) const CALENDAR_INTERVAL_PARTS: &str = "$spark_connect_async::CalendarInterval";
+
+/// Deserializes from a result of a query, or from its parts: the months, the days and the
+/// microseconds.
+impl<'de> Deserialize<'de> for CalendarInterval {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        deserializer.deserialize_newtype_struct(CALENDAR_INTERVAL_PARTS, CalendarIntervalVisitor)
+    }
+}
+
+struct CalendarIntervalVisitor;
+
+impl<'de> Visitor<'de> for CalendarIntervalVisitor {
+    type Value = CalendarInterval;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a calendar interval")
+    }
+
+    fn visit_newtype_struct<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> std::result::Result<CalendarInterval, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> std::result::Result<CalendarInterval, A::Error> {
+        let missing = || de::Error::custom("the parts of a calendar interval are missing");
+        let months = seq.next_element()?.ok_or_else(missing)?;
+        let days = seq.next_element()?.ok_or_else(missing)?;
+        let microseconds = seq.next_element()?.ok_or_else(missing)?;
+        Ok(CalendarInterval::new(months, days, microseconds))
+    }
+}
+
 /// A value of any Spark type, as a row of a result holds it.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -219,6 +330,8 @@ pub enum Value {
     DayTimeInterval(TimeDelta),
     /// `INTERVAL YEAR TO MONTH`, and its narrower forms, in months.
     YearMonthInterval(i32),
+    /// `INTERVAL`, Spark's calendar interval.
+    CalendarInterval(CalendarInterval),
     /// `VARIANT`, as its encoded value and metadata.
     Variant {
         /// The encoded value.
@@ -337,6 +450,7 @@ impl Value {
                     .ok_or_else(|| unsupported("Out-of-range INTERVAL DAY TO SECOND"))?,
             ),
             Value::YearMonthInterval(_) => return Err(unsupported("INTERVAL YEAR TO MONTH")),
+            Value::CalendarInterval(_) => return Err(unsupported("INTERVAL")),
             Value::Variant { value, metadata } => CoreValue::Variant { value, metadata },
             Value::Array(values) => CoreValue::List(into_core_values(values)?),
             Value::Map(entries) => CoreValue::Map(
@@ -370,8 +484,8 @@ pub(crate) fn row_of_metrics<'a>(
     Row::new(keys.into_iter().cloned().collect(), values)
 }
 
-/// The value of a literal of the server. A literal of a type that results do not have here,
-/// such as a calendar interval, is `Value::Null`.
+/// The value of a literal of the server. A literal of a kind that this does not read, such as a
+/// specialized array, is `Value::Null`.
 fn value_of_literal(literal: &spark_connect_proto::expression::Literal) -> Value {
     use spark_connect_proto::data_type::Kind;
     use spark_connect_proto::expression::literal::LiteralType as L;
@@ -411,6 +525,11 @@ fn value_of_literal(literal: &spark_connect_proto::expression::Literal) -> Value
         }
         L::DayTimeInterval(micros) => Value::DayTimeInterval(TimeDelta::microseconds(*micros)),
         L::YearMonthInterval(months) => Value::YearMonthInterval(*months),
+        L::CalendarInterval(interval) => Value::CalendarInterval(CalendarInterval::new(
+            interval.months,
+            interval.days,
+            interval.microseconds,
+        )),
         L::Array(array) => Value::Array(array.elements.iter().map(value_of_literal).collect()),
         L::Map(map) => Value::Map(
             map.keys
@@ -450,7 +569,9 @@ mod tests {
             ..Default::default()
         };
         let observed = spark_connect_proto::execute_plan_response::ObservedMetrics {
-            keys: ["rows", "total", "first", "day"].map(String::from).to_vec(),
+            keys: ["rows", "total", "first", "day", "interval"]
+                .map(String::from)
+                .to_vec(),
             values: vec![
                 literal(L::Long(3)),
                 literal(L::Decimal(
@@ -462,11 +583,26 @@ mod tests {
                 )),
                 literal(L::String("a".to_string())),
                 literal(L::Date(1)),
+                literal(L::CalendarInterval(
+                    spark_connect_proto::expression::literal::CalendarInterval {
+                        months: 14,
+                        days: 25,
+                        microseconds: 18_367_008_009,
+                    },
+                )),
             ],
             ..Default::default()
         };
         let row = row_of_metrics(&observed.keys, &observed.values);
-        assert_eq!(row.names(), ["rows", "total", "first", "day"]);
+        assert_eq!(row.names(), ["rows", "total", "first", "day", "interval"]);
+        assert_eq!(
+            row.get(4),
+            Some(&Value::CalendarInterval(CalendarInterval::new(
+                14,
+                25,
+                18_367_008_009
+            )))
+        );
         assert_eq!(row.get(0), Some(&Value::Long(3)));
         assert_eq!(row.get(1), Some(&Value::Decimal("1.50".parse().unwrap())));
         assert_eq!(
@@ -525,6 +661,39 @@ mod tests {
     fn a_decimal_converts_to_the_nearest_f64() {
         for (text, expected) in [("0.1", 0.1), ("-12.50", -12.5), ("15E+2", 1500.0)] {
             assert_eq!(text.parse::<Decimal>().unwrap().to_f64(), expected);
+        }
+    }
+
+    #[test]
+    fn a_calendar_interval_displays_as_spark_casts_it_to_string() {
+        let cases = [
+            (
+                (14, 25, 18_367_008_009),
+                "1 years 2 months 25 days 5 hours 6 minutes 7.008009 seconds",
+            ),
+            (
+                (-14, -3, -3_723_500_000),
+                "-1 years -2 months -3 days -1 hours -2 minutes -3.5 seconds",
+            ),
+            ((0, 0, 0), "0 seconds"),
+            ((0, 0, -1), "-0.000001 seconds"),
+            ((1, -1, 0), "1 months -1 days"),
+            ((12, 0, 0), "1 years"),
+            ((0, 0, 90_000_000_000), "25 hours"),
+            ((0, 0, 3_600_100_000), "1 hours 0.1 seconds"),
+            ((0, 0, 30_000_000), "30 seconds"),
+            (
+                (i32::MAX, i32::MAX, i64::MAX),
+                "178956970 years 7 months 2147483647 days 2562047788 hours 54.775807 seconds",
+            ),
+            (
+                (i32::MIN, i32::MIN, i64::MIN),
+                "-178956970 years -8 months -2147483648 days -2562047788 hours -54.775808 seconds",
+            ),
+        ];
+        for ((months, days, microseconds), text) in cases {
+            let interval = CalendarInterval::new(months, days, microseconds);
+            assert_eq!(interval.to_string(), text, "{interval:?}");
         }
     }
 }

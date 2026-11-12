@@ -40,7 +40,7 @@ use spark_connect::row::{Row as OldRow, StructValue, Value as Old};
 use spark_connect::SparkSession;
 use spark_connect_async::readwriter::{OptionValue, ParseFormat, SaveMode};
 use spark_connect_async::types::DataType;
-use spark_connect_async::{col, lit, Decimal, ErrorKind, Row, Session, Value};
+use spark_connect_async::{col, lit, CalendarInterval, Decimal, ErrorKind, Row, Session, Value};
 use spark_connect_proto as proto;
 
 const SESSION_ID: &str = "00000000-0000-4000-8000-00000000005e";
@@ -861,6 +861,11 @@ async fn local_rows_that_their_schema_cannot_hold_are_rejected() {
             "a day-time interval beyond its microseconds",
             vec![Value::DayTimeInterval(TimeDelta::MAX)],
             DataType::from_ddl("iv INTERVAL DAY TO SECOND").unwrap(),
+        ),
+        (
+            "a calendar interval, which is not sent as its text",
+            vec![Value::CalendarInterval(CalendarInterval::new(1, 2, 3))],
+            DataType::from_ddl("s STRING").unwrap(),
         ),
         (
             "a schema that is not a struct",
