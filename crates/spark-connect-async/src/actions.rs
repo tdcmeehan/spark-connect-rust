@@ -351,7 +351,7 @@ impl DataFrame {
     /// server; its clones share the answer.
     pub fn schema(&self) -> impl Future<Output = Result<DataType>> + Send + 'static {
         let dataframe = self.clone();
-        async move {
+        Box::pin(async move {
             let cache = dataframe.schema_cache();
             let schema = cache
                 .get_or_try_init(|| {
@@ -359,7 +359,7 @@ impl DataFrame {
                 })
                 .await?;
             Ok(schema.clone())
-        }
+        })
     }
 
     /// The names of the columns of the result.
@@ -378,10 +378,10 @@ impl DataFrame {
         &self,
         mode: ExplainMode,
     ) -> impl Future<Output = Result<String>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::explain(self.session().client(), self.to_relation(), mode.proto())
                 .err_into(),
-        )
+        ))
     }
 
     /// Persists the rows in memory and on disk, as [`StorageLevel::MEMORY_AND_DISK_DESER`].
@@ -395,27 +395,27 @@ impl DataFrame {
         &self,
         level: StorageLevel,
     ) -> impl Future<Output = Result<()>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::persist(self.session().client(), self.to_relation(), level.proto())
                 .err_into(),
-        )
+        ))
     }
 
     /// Stops keeping the rows; with `blocking`, it returns once they are removed.
     pub fn unpersist(&self, blocking: bool) -> impl Future<Output = Result<()>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::unpersist(self.session().client(), self.to_relation(), blocking)
                 .err_into(),
-        )
+        ))
     }
 
     /// Where the server keeps the rows, or [`StorageLevel::NONE`].
     pub fn storage_level(&self) -> impl Future<Output = Result<StorageLevel>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::storage_level(self.session().client(), self.to_relation())
                 .map_ok(StorageLevel::of_proto)
                 .err_into(),
-        )
+        ))
     }
 
     /// Creates the temporary view `name` of this DataFrame.
@@ -478,9 +478,9 @@ impl DataFrame {
 
     /// The files that the query reads, as far as the server can tell.
     pub fn input_files(&self) -> impl Future<Output = Result<Vec<String>>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::input_files(self.session().client(), self.to_relation()).err_into(),
-        )
+        ))
     }
 
     /// Whether this DataFrame and `other` return the same rows by their plans.
@@ -493,21 +493,21 @@ impl DataFrame {
             self.to_relation(),
             other.to_relation(),
         );
-        self.holding(other.holding(same.err_into()))
+        self.holding(other.holding(Box::pin(same.err_into())))
     }
 
     /// A hash of the plan, the same for plans of [`DataFrame::same_semantics`].
     pub fn semantic_hash(&self) -> impl Future<Output = Result<i32>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::semantic_hash(self.session().client(), self.to_relation()).err_into(),
-        )
+        ))
     }
 
     /// Whether the query reads a stream, so that its rows never end.
     pub fn is_streaming(&self) -> impl Future<Output = Result<bool>> + Send + 'static {
-        self.holding(
+        self.holding(Box::pin(
             core_actions::is_streaming(self.session().client(), self.to_relation()).err_into(),
-        )
+        ))
     }
 
     /// Each row as the text of a JSON object.

@@ -673,3 +673,31 @@ async fn a_result_converts_into_a_polars_or_a_datafusion_dataframe() {
         3
     );
 }
+
+// Above the futures that hold no execution of the core inline, and below those that do.
+const FUTURE_SIZE_BOUND: usize = 16 * 1024;
+
+#[test]
+fn the_futures_of_the_actions_are_at_most_16_kib() {
+    fn size<R>(_: impl FnOnce(&DataFrame) -> R) -> usize {
+        std::mem::size_of::<R>()
+    }
+    let sizes = [
+        ("cache", size(|d| d.cache())),
+        ("columns", size(|d| d.columns())),
+        ("explain", size(|d| d.explain(ExplainMode::Simple))),
+        ("input_files", size(|d| d.input_files())),
+        ("is_streaming", size(|d| d.is_streaming())),
+        ("persist", size(|d| d.persist(StorageLevel::NONE))),
+        ("same_semantics", size(|d| d.same_semantics(d))),
+        ("schema", size(|d| d.schema())),
+        ("semantic_hash", size(|d| d.semantic_hash())),
+        ("storage_level", size(|d| d.storage_level())),
+        ("unpersist", size(|d| d.unpersist(false))),
+    ];
+    let larger: Vec<_> = sizes
+        .iter()
+        .filter(|(_, size)| *size > FUTURE_SIZE_BOUND)
+        .collect();
+    assert!(larger.is_empty(), "{larger:?}");
+}
