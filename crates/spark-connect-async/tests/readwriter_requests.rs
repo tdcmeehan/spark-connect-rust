@@ -975,3 +975,15 @@ fn the_maps_of_a_request_are_compared_in_key_order() {
         assert!(differences.is_empty(), "{differences}");
     }
 }
+
+// Above the futures that hold no execution of the core inline, and below those that do.
+const FUTURE_SIZE_BOUND: usize = 16 * 1024;
+
+#[test]
+fn the_future_of_parse_is_at_most_16_kib() {
+    fn size<R>(_: impl FnOnce(&Session, &spark_connect_async::DataFrame) -> R) -> usize {
+        std::mem::size_of::<R>()
+    }
+    let parse = size(|s, d| s.read().parse(ParseFormat::Csv, d));
+    assert!(parse <= FUTURE_SIZE_BOUND, "{parse}");
+}

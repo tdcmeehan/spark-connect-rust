@@ -342,7 +342,7 @@ impl DataFrameReader {
                     Some(DataType::from_json_str(&json)?)
                 }
                 Some(TypeOrDdl::Text(ddl)) => {
-                    Some(core_session::parse_ddl(self.session.client(), ddl).await?)
+                    Some(Box::pin(core_session::parse_ddl(self.session.client(), ddl)).await?)
                 }
             };
             let plan = LogicalPlan::Parse {
