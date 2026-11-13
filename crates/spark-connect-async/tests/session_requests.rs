@@ -579,3 +579,15 @@ mod conf_server {
         metadata: HashMap<String, String>,
     }
 }
+
+// Above the futures that hold no execution of the core inline, and below those that do.
+const FUTURE_SIZE_BOUND: usize = 16 * 1024;
+
+#[test]
+fn the_future_of_version_is_at_most_16_kib() {
+    fn size<R>(_: impl FnOnce(&Session) -> R) -> usize {
+        std::mem::size_of::<R>()
+    }
+    let version = size(|s| s.version());
+    assert!(version <= FUTURE_SIZE_BOUND, "{version}");
+}

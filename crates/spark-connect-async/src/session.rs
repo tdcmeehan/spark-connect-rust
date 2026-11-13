@@ -236,7 +236,9 @@ impl Session {
         async move {
             let version = shared
                 .version
-                .get_or_try_init(|| actions::session::spark_version(Arc::clone(&shared.client)))
+                .get_or_try_init(|| {
+                    Box::pin(actions::session::spark_version(Arc::clone(&shared.client)))
+                })
                 .await?;
             Ok(version.clone())
         }
