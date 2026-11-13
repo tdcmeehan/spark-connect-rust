@@ -351,15 +351,18 @@ impl DataFrame {
     /// server; its clones share the answer.
     pub fn schema(&self) -> impl Future<Output = Result<DataType>> + Send + 'static {
         let dataframe = self.clone();
-        Box::pin(async move {
+        async move {
             let cache = dataframe.schema_cache();
             let schema = cache
                 .get_or_try_init(|| {
-                    core_actions::schema(dataframe.session().client(), dataframe.to_relation())
+                    Box::pin(core_actions::schema(
+                        dataframe.session().client(),
+                        dataframe.to_relation(),
+                    ))
                 })
                 .await?;
             Ok(schema.clone())
-        })
+        }
     }
 
     /// The names of the columns of the result.
