@@ -67,6 +67,16 @@ also why the two are separate implementations that can have separate bugs.
     `pyspark-client` (or `pyspark`) to switch back. See
     [Installation](installation.md) for the exact steps.
 
+## The Rust crates
+
+Rust code uses one of two crates. They share one Rust core, build the same plans for the
+same operations, and talk to the same servers:
+
+| Crate | Import | What it is |
+|---|---|---|
+| `apache-spark-connect` | `spark_connect` | The synchronous API shaped like PySpark's, which `pyspark-client-rust` is built on. |
+| `apache-spark-connect-async` | `spark_connect_async` | An async API shaped for Rust: futures, typed rows through serde, result streams, and one error type (see [The Async API](async/index.md)). |
+
 ## Reporting issues
 
 `pyspark-client-rust` is a **separate implementation**. If you hit a problem while

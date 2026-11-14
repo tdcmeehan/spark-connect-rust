@@ -63,6 +63,7 @@ A Cargo workspace of library crates, plus a Python skin:
 | `apache-spark-connect-core` | `crates/spark-connect-core` | Transport: channel, retries, reattach, artifacts, errors. Plan building: types, rows, expressions, columns, functions, windows, plans. Execution requests and Arrow decoding. The protos of writes, write streams, merge actions, ML and pipeline commands, and WASM UDF construction. The actions of the client as async functions (`actions`): executions, analyses, commands, catalog, streaming, ML and pipelines |
 | `apache-spark-connect-blocking` | `crates/spark-connect-blocking` | `Blocking`: runs a future to completion on the calling thread, also inside a `tokio` runtime of either flavor |
 | `apache-spark-connect` | `crates/spark-connect` | The synchronous DataFrame API: session, dataframe, group, catalog, readwriter, streaming, ML and pipelines, each action one blocking call to the core's; re-exports the core's types, columns, functions and plans |
+| `apache-spark-connect-async` | `crates/spark-connect-async` | The async API: session, DataFrame, columns, functions, catalog, readwriter, streaming, ML and pipelines, each action a future of the core's; typed results and its own error type; with its `blocking` feature, a blocking form of each call |
 | `pyspark-rs` | `crates/pyspark-rs` | PyO3 bindings - builds the `_pyspark` extension module |
 | Python skin | `python/pyspark` | The drop-in `pyspark` package (+ vendored `pyspark.pandas`, `cloudpickle`, `pyspark.testing`) |
 
@@ -74,6 +75,9 @@ flowchart LR
     SC --> PYO3["pyspark-rs (PyO3)"]
     PYO3 --> SKIN["python/pyspark skin"]
     SC --> RUSTAPP["your Rust app"]
+    CORE --> ASYNC["spark-connect-async (async API)"]
+    BLOCKING -.->|"blocking feature"| ASYNC
+    ASYNC --> RUSTAPP
 ```
 
 ## A query's lifecycle

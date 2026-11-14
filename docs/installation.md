@@ -1,6 +1,6 @@
 # Installation
 
-Add the Spark Connect Rust client to your project. The native Rust crate is the primary library; Python support is a drop-in replacement for PySpark.
+Add the Spark Connect Rust client to your project. The native Rust crates are the primary libraries: `apache-spark-connect`, shaped like PySpark, and `apache-spark-connect-async`, an async API shaped for Rust. Python support is a drop-in replacement for PySpark.
 
 ## Rust (Native Crate)
 
@@ -24,6 +24,18 @@ apache-spark-connect = { version = "4.3", features = ["datafusion", "polars"] }
 - Rust 1.88 or later
 - `protobuf-compiler` (e.g., `brew install protobuf` on macOS, `apt-get install protobuf-compiler` on Linux)
 - A running Spark Connect server (see [Configuration and Connection](configuration.md))
+
+### The Async Crate
+
+For async Rust code, add `apache-spark-connect-async`, whose calls are futures, and a Tokio runtime (see [The Async API](async/index.md)):
+
+```toml
+[dependencies]
+apache-spark-connect-async = "4.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Its optional features are `blocking`, `datafusion`, `polars`, and `rust-udf`, and its requirements are those above.
 
 ### Build from Source
 
@@ -105,4 +117,5 @@ The crate and package versions track Apache Spark: version `4.3.x` supports Spar
 ## Next Steps
 
 - [Quickstart](quickstart.md) - write your first Rust query
+- [The Async API](async/index.md) - write async Rust code with the async crate
 - [Configuration and Connection](configuration.md) - connect to a remote or local Spark Connect server

@@ -38,8 +38,8 @@ results as the reference client.
 The reference Spark Connect client is pure Python - it builds protobuf plans,
 manages the gRPC channel, and decodes Arrow results in Python. This project moves
 that work into **Rust**: a synchronous, PySpark-shaped DataFrame API you can use
-directly from Rust, and - through PyO3 - a byte-for-byte compatible `pyspark`
-package for the Python world.
+directly from Rust, an async API shaped for Rust programs, and - through PyO3 - a
+byte-for-byte compatible `pyspark` package for the Python world.
 
 <div class="sc-grid" markdown>
 
@@ -47,6 +47,13 @@ package for the Python world.
 ### Native Rust API
 A synchronous `spark_connect` crate that mirrors PySpark's DataFrame, Column,
 functions, SQL, streaming, and catalog surface.
+</div>
+
+<div class="sc-card" markdown>
+### Async Rust API
+An async `spark_connect_async` crate: futures that stop their query when dropped,
+typed rows through serde, result streams, and one error type. See
+[The Async API](async/index.md).
 </div>
 
 <div class="sc-card" markdown>
@@ -102,6 +109,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+The same program with the async API is in
+[The Async API](async/index.md#a-first-program).
+
 ## Where to next
 
 - **[Installation](installation.md)** - add the Rust crate, or `pip install` the drop-in.
@@ -109,4 +119,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **[DataFrames](dataframes.md)** · **[Columns and Functions](columns-and-functions.md)** · **[SQL](sql.md)** - the core API.
 - **[Reading and Writing](data-sources.md)** · **[Structured Streaming](streaming.md)** · **[Catalog](catalog.md)**.
 - **[Rust UDFs via WebAssembly](udfs.md)** - run Rust functions on the executors.
+- **[The Async API](async/index.md)** - the async Rust client: futures, typed rows, and
+  result streams.
 - **[Architecture](architecture.md)** - how the client is put together.

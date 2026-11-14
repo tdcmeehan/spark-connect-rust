@@ -37,12 +37,22 @@ That brace form still renders as a Rust code block in mkdocs/superfences (unlike
 the backticks literally), and it is not matched by the checker below, so it is not
 compiled.
 
+A block of the async API is fenced as ```{.rust .async}```, which renders as Rust
+too. It is compiled against ``apache-spark-connect-async`` instead, which the script
+builds itself with ``ASYNC_FEATURES``, in a harness that is an ``async fn`` binding
+``session``, ``df``, ``df1`` and ``df2`` the same way. It may name the crates in
+``ASYNC_EXTERNS``. The script takes their rlibs, and the directories of their
+dependencies, from what ``cargo build --message-format=json`` reports, so a block
+compiles against the build it describes. An async block that must be skipped is
+fenced ```{.rust .no-run}``` like any other.
+
 Usage:
     cargo build -p apache-spark-connect
     python scripts/check_doc_snippets.py
 """
 
 import glob
+import json
 import re
 import subprocess
 import sys
@@ -131,6 +141,133 @@ def main() -> int:
                     failures.append((str(rel), first))
 
     print(f"Checked {checked} rust snippet(s); {len(failures)} failed to compile.")
+    for rel, err in failures:
+        print(f"  {rel}: {err}")
+    return max(1 if failures else 0, check_async_blocks())
+
+
+_ASYNC_BLOCK = re.compile(r"^```\{\.rust \.async\}\s*$\n(.*?)^```\s*$", re.DOTALL | re.MULTILINE)
+ASYNC_FEATURES = "blocking,rust-udf"
+# Besides the client: tokio for a runtime, futures for streams of results, serde for
+# typed rows, chrono for dates and timestamps.
+ASYNC_EXTERNS = ("spark_connect_async", "chrono", "futures", "serde", "tokio")
+ASYNC_HARNESS = """#![allow(unused, unused_imports, dead_code, clippy::all)]
+async fn snippet() -> Result<(), Box<dyn std::error::Error>> {{
+    let session = spark_connect_async::Session::builder()
+        .remote("sc://localhost:15002")
+        .connect()
+        .await?;
+    // The ambient names guide fragments assume from a preceding block.
+    let df = session.range(10);
+    let df1 = session.range(10);
+    let df2 = session.range(10);
+    {{
+{body}
+    }}
+    Ok(())
+}}
+
+fn main() {{}}
+"""
+
+
+def async_artifacts() -> tuple[dict[str, Path], list[Path]] | None:
+    """The rlibs of ``ASYNC_EXTERNS`` and the directories of all the artifacts, as cargo
+    reports them for ``cargo build -p apache-spark-connect-async``, fresh units too."""
+    r = subprocess.run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "apache-spark-connect-async",
+            "--features",
+            ASYNC_FEATURES,
+            "--message-format=json",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        print(r.stderr[-4000:])
+        return None
+    rlibs: dict[str, set[Path]] = {}
+    dirs: list[Path] = []
+    for line in r.stdout.splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if msg.get("reason") != "compiler-artifact":
+            continue
+        for name in msg.get("filenames", []):
+            path = Path(name)
+            if (
+                path.suffix in (".rlib", ".rmeta", ".so", ".dylib", ".dll")
+                and path.parent not in dirs
+            ):
+                dirs.append(path.parent)
+            if path.suffix == ".rlib":
+                rlibs.setdefault(msg["target"]["name"], set()).add(path)
+    externs = {}
+    for crate in ASYNC_EXTERNS:
+        found = rlibs.get(crate, set())
+        if len(found) != 1:
+            print(f"!! {len(found)} rlibs of {crate} in the build of apache-spark-connect-async")
+            return None
+        externs[crate] = found.pop()
+    return externs, dirs
+
+
+def check_async_block(
+    code: str, tmpdir: Path, idx: int, externs: dict[str, Path], dirs: list[Path]
+) -> tuple[bool, str]:
+    indented = "\n".join("        " + ln if ln.strip() else ln for ln in code.splitlines())
+    src = tmpdir / f"async_snippet_{idx}.rs"
+    src.write_text(ASYNC_HARNESS.format(body=indented))
+    r = subprocess.run(
+        [
+            "rustc",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "bin",
+            "--emit=metadata",
+            *(arg for d in dirs for arg in ("-L", f"dependency={d}")),
+            *(arg for crate, rlib in externs.items() for arg in ("--extern", f"{crate}={rlib}")),
+            "-o",
+            str(tmpdir / f"async_snippet_{idx}.rmeta"),
+            str(src),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0, r.stderr
+
+
+def check_async_blocks() -> int:
+    blocks = [
+        (Path(md).relative_to(REPO), m.group(1))
+        for md in sorted(glob.glob(str(REPO / "docs" / "**" / "*.md"), recursive=True))
+        for m in _ASYNC_BLOCK.finditer(Path(md).read_text())
+    ]
+    if not blocks:
+        return 0
+    artifacts = async_artifacts()
+    if artifacts is None:
+        print("!! could not build apache-spark-connect-async for its snippets")
+        return 2
+    failures = []
+    with tempfile.TemporaryDirectory() as td:
+        for idx, (rel, code) in enumerate(blocks, 1):
+            ok, err = check_async_block(code, Path(td), idx, *artifacts)
+            if not ok:
+                first = next((ln for ln in err.splitlines() if ln.startswith("error")), err[:200])
+                failures.append((rel, first))
+    print(
+        f"Checked {len(blocks)} async rust snippet(s) against apache-spark-connect-async; "
+        f"{len(failures)} failed to compile."
+    )
     for rel, err in failures:
         print(f"  {rel}: {err}")
     return 1 if failures else 0

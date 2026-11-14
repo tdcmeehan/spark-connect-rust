@@ -22,6 +22,18 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Features
+//!
+//! None is on by default.
+//!
+//! - `blocking`: the `blocking` module.
+//! - `datafusion`: `DataFrame::to_datafusion`, the result as a DataFusion DataFrame.
+//! - `polars`: `DataFrame::to_polars`, the result as a Polars DataFrame.
+//! - `rust-udf`: the `rust_udf` module, functions written in Rust that Spark runs on its
+//!   executors, compiled to WebAssembly.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod actions;
 #[cfg(feature = "blocking")]

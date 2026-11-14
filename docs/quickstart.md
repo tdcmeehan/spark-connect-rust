@@ -74,9 +74,13 @@ extensions of that thread. In a multi-thread runtime the call first hands the th
 tasks to another worker; in a `current_thread` runtime, such as the one of `#[tokio::test]`, the
 runtime's other tasks wait until the call returns.
 
+For async code, the async crate `apache-spark-connect-async` runs the same operations as futures,
+which hold no thread while the server works: see [The Async API](async/index.md).
+
 ## Next Steps
 
 - [DataFrames](dataframes.md) - column operations, joins, window functions
 - [SQL](sql.md) - run SQL queries directly
 - [Reading and Writing](data-sources.md) - work with CSV, Parquet, Delta, and other formats
 - [Configuration and Connection](configuration.md) - connect to remote servers, set session config
+- [The Async API](async/index.md) - the async crate, for async Rust code

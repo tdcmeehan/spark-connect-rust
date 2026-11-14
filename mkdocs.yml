@@ -98,6 +98,19 @@ nav:
       - Catalog: catalog.md
       - Types and Schemas: types.md
       - Rust UDFs via WebAssembly: udfs.md
+  - Async API:
+      - The Async API: async/index.md
+      - Sessions and Configuration: async/sessions.md
+      - DataFrames, Columns and SQL: async/dataframes.md
+      - Results and Cancellation: async/results.md
+      - Types and Values: async/types.md
+      - Reading and Writing: async/data-sources.md
+      - Catalog: async/catalog.md
+      - Structured Streaming: async/streaming.md
+      - Machine Learning and Pipelines: async/ml.md
+      - Rust UDFs: async/udfs.md
+      - Errors: async/errors.md
+      - The Blocking API: async/blocking.md
   - Architecture: architecture.md
   - Reference:
       - Examples: examples.md

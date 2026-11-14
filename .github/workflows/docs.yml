@@ -47,7 +47,7 @@ concurrency:
 jobs:
   # PR-time validation (no deploy): catch nav/link/config regressions with
   # `mkdocs build --strict`, and compile the self-contained Rust snippets in the
-  # guides against the crate so a doc example can't drift out of sync with the API
+  # guides against the crates so a doc example can't drift out of sync with the API
   # (the class of bug that shipped `lit`/`SparkSessionBuilder` examples that did not
   # compile). Runs on forks and non-master refs, where the deploy job never runs.
   validate:
@@ -71,8 +71,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
-      - name: Build the crate (snippet check compiles against its rlib)
-        run: cargo build -p apache-spark-connect
+      - name: Build the crates (snippet check compiles against their rlibs)
+        run: |
+          cargo build -p apache-spark-connect
+          cargo build -p apache-spark-connect-async --features blocking,rust-udf
       - name: Compile the guides' Rust snippets
         run: python scripts/check_doc_snippets.py
 
