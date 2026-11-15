@@ -25,6 +25,7 @@ mod server;
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
+use futures::FutureExt;
 use prost::Message;
 use spark_connect::session::SparkSession;
 use spark_connect_async::session::ArtifactKind;
@@ -314,6 +315,23 @@ async fn the_parameters_of_the_builder_are_those_of_the_connection_string() {
     session.version().await.unwrap();
     assert_eq!(session.session_id(), SESSION_ID);
     assert_eq!(old, recorder.take());
+}
+
+#[tokio::test]
+async fn a_stop_dropped_after_its_release_started_still_releases_the_session() {
+    let recorder = Arc::new(server::Recorder::default());
+    let address = server::start(Arc::clone(&recorder));
+    let session = connect(format!("sc://{address}/;session_id={SESSION_ID}")).await;
+    assert!(session.stop().now_or_never().is_none());
+    let released = tokio::task::spawn_blocking(move || {
+        recorder.wait_for(std::time::Duration::from_secs(10), |entry| {
+            entry.kind == "ReleaseSessionRequest"
+        })
+    })
+    .await
+    .unwrap();
+    assert!(released);
+    assert!(session.is_stopped());
 }
 
 /// A request to read with one option, `key` set to `value`.

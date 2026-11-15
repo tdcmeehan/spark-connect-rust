@@ -245,7 +245,8 @@ impl Session {
     }
 
     /// Releases the session on the server and closes it: later operations of every handle to it
-    /// fail. Stopping a stopped session does nothing.
+    /// fail. Stopping a stopped session does nothing. Once awaited, the release goes on even if
+    /// the future is dropped before it finishes.
     pub fn stop(&self) -> impl Future<Output = Result<()>> + Send + 'static {
         let shared = Arc::clone(&self.shared);
         async move {
@@ -257,7 +258,12 @@ impl Session {
             if shared.client.is_closed() {
                 return Ok(());
             }
-            Ok(shared.client.release_session().await?)
+            let client = Arc::clone(&shared.client);
+            match tokio::spawn(async move { client.release_session().await }).await {
+                Ok(released) => Ok(released?),
+                Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+                Err(error) => Err(SparkError::connect_msg(error.to_string()).into()),
+            }
         }
     }
 
