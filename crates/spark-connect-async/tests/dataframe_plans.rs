@@ -765,12 +765,14 @@ async fn a_sample_by_without_a_seed_draws_one_from_zero_to_i64_max_for_each_call
 }
 
 #[test]
-fn weights_of_a_split_that_are_negative_or_add_up_to_zero_are_rejected() {
-    let cases: [(&[f64], &str, &str); 4] = [
+fn weights_of_a_split_that_are_negative_nan_or_add_up_to_zero_are_rejected() {
+    let cases: [(&[f64], &str, &str); 6] = [
         (&[1.0, -1.0], "weights", "-1"),
         (&[0.0, 0.0], "sum(weights)", "0"),
         (&[], "sum(weights)", "0"),
         (&[-0.5, 2.0], "weights", "-0.5"),
+        (&[1.0, f64::NAN], "weights", "NaN"),
+        (&[f64::NAN], "weights", "NaN"),
     ];
     for (weights, name, value) in cases {
         let error = RandomSplit::try_new(weights.iter().copied()).unwrap_err();

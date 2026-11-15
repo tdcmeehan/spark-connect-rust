@@ -127,11 +127,14 @@ impl RandomSplit {
     /// A split of `weights`, of a random seed.
     ///
     /// Fails with [`ErrorKind::InvalidArgument`](crate::ErrorKind::InvalidArgument) and the
-    /// condition `VALUE_NOT_POSITIVE` for a negative weight, or when the weights do not add up
-    /// to more than zero.
+    /// condition `VALUE_NOT_POSITIVE` for a negative or NaN weight, or when the weights do not
+    /// add up to more than zero.
     pub fn try_new(weights: impl IntoIterator<Item = f64>) -> Result<Self> {
         let mut weights: Vec<f64> = weights.into_iter().collect();
-        if let Some(weight) = weights.iter().find(|weight| **weight < 0.0) {
+        if let Some(weight) = weights
+            .iter()
+            .find(|weight| weight.is_nan() || **weight < 0.0)
+        {
             return Err(not_positive("weights", *weight).into());
         }
         // A sum from -0.0, as `Iterator::sum` starts, would report an empty list's sum as "-0".
