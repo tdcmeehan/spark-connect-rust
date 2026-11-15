@@ -128,7 +128,8 @@ impl RandomSplit {
     ///
     /// Fails with [`ErrorKind::InvalidArgument`](crate::ErrorKind::InvalidArgument) and the
     /// condition `VALUE_NOT_POSITIVE` for a negative or NaN weight, or when the weights do not
-    /// add up to more than zero.
+    /// add up to more than zero, and `VALUE_ALLOWED` when their sum is not finite: an infinite
+    /// weight, or finite weights whose sum overflows `f64`.
     pub fn try_new(weights: impl IntoIterator<Item = f64>) -> Result<Self> {
         let mut weights: Vec<f64> = weights.into_iter().collect();
         if let Some(weight) = weights
@@ -141,6 +142,16 @@ impl RandomSplit {
         let total = weights.iter().fold(0.0, |sum, weight| sum + weight);
         if total <= 0.0 {
             return Err(not_positive("sum(weights)", total).into());
+        }
+        if !total.is_finite() {
+            return Err(SparkError::value(
+                "VALUE_ALLOWED",
+                &[
+                    ("arg_name", "sum(weights)"),
+                    ("disallowed_value", &total.to_string()),
+                ],
+            )
+            .into());
         }
         weights.iter_mut().for_each(|weight| *weight /= total);
         Ok(RandomSplit {

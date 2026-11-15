@@ -765,30 +765,31 @@ async fn a_sample_by_without_a_seed_draws_one_from_zero_to_i64_max_for_each_call
 }
 
 #[test]
-fn weights_of_a_split_that_are_negative_nan_or_add_up_to_zero_are_rejected() {
-    let cases: [(&[f64], &str, &str); 6] = [
-        (&[1.0, -1.0], "weights", "-1"),
-        (&[0.0, 0.0], "sum(weights)", "0"),
-        (&[], "sum(weights)", "0"),
-        (&[-0.5, 2.0], "weights", "-0.5"),
-        (&[1.0, f64::NAN], "weights", "NaN"),
-        (&[f64::NAN], "weights", "NaN"),
+fn weights_of_a_split_that_are_negative_nan_or_add_up_to_zero_or_infinity_are_rejected() {
+    let not_positive = ("VALUE_NOT_POSITIVE", "arg_value");
+    let not_finite = ("VALUE_ALLOWED", "disallowed_value");
+    let cases: [(&[f64], _, &str, &str); 9] = [
+        (&[1.0, -1.0], not_positive, "weights", "-1"),
+        (&[0.0, 0.0], not_positive, "sum(weights)", "0"),
+        (&[], not_positive, "sum(weights)", "0"),
+        (&[-0.5, 2.0], not_positive, "weights", "-0.5"),
+        (&[1.0, f64::NAN], not_positive, "weights", "NaN"),
+        (&[f64::NAN], not_positive, "weights", "NaN"),
+        (&[f64::INFINITY], not_finite, "sum(weights)", "inf"),
+        (&[1.0, f64::INFINITY], not_finite, "sum(weights)", "inf"),
+        (&[f64::MAX, f64::MAX], not_finite, "sum(weights)", "inf"),
     ];
-    for (weights, name, value) in cases {
+    for (weights, (class, value_parameter), name, value) in cases {
         let error = RandomSplit::try_new(weights.iter().copied()).unwrap_err();
         assert_eq!(
             error.kind(),
             spark_connect_async::ErrorKind::InvalidArgument,
             "{weights:?}"
         );
-        assert_eq!(
-            error.error_class(),
-            Some("VALUE_NOT_POSITIVE"),
-            "{weights:?}"
-        );
+        assert_eq!(error.error_class(), Some(class), "{weights:?}");
         let parameters: HashMap<_, _> = error.message_parameters().into_iter().collect();
         assert_eq!(parameters["arg_name"], name, "{weights:?}");
-        assert_eq!(parameters["arg_value"], value, "{weights:?}");
+        assert_eq!(parameters[value_parameter], value, "{weights:?}");
     }
     assert!(RandomSplit::try_new([0.0, 1.0]).is_ok());
 }
