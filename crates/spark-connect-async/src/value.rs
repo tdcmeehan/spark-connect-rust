@@ -116,7 +116,10 @@ impl FromStr for Decimal {
         } else {
             significant.parse().map_err(|_| invalid())?
         };
-        let scale = i32::try_from(fraction.len()).map_err(|_| invalid())? - exponent;
+        let scale = i32::try_from(fraction.len())
+            .ok()
+            .and_then(|digits| digits.checked_sub(exponent))
+            .ok_or_else(invalid)?;
         let scale = i8::try_from(scale).map_err(|_| invalid())?;
         let precision = digits(unscaled).max(u32::try_from(scale).unwrap_or(0));
         let precision = u8::try_from(precision).map_err(|_| invalid())?;
@@ -644,7 +647,17 @@ mod tests {
     #[test]
     fn a_decimal_outside_spark_bounds_or_not_a_number_is_rejected() {
         let too_long = "1".repeat(39);
-        for text in ["", "-", "1.2.3", "1e", "abc", "1,5", &too_long] {
+        for text in [
+            "",
+            "-",
+            "1.2.3",
+            "1e",
+            "abc",
+            "1,5",
+            &too_long,
+            "1e-2147483648",
+            "0.1e-2147483647",
+        ] {
             let error = text.parse::<Decimal>().unwrap_err();
             assert_eq!(error.kind(), ErrorKind::InvalidArgument, "{text:?}");
         }

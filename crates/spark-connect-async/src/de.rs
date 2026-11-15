@@ -435,18 +435,28 @@ fn timestamp_at(array: &ArrayRef, row: usize) -> Result<DateTime<Utc>> {
 }
 
 fn time_at(array: &ArrayRef, row: usize) -> Result<NaiveTime> {
-    let nanos: i64 = match array.data_type() {
-        ArrowType::Time32(TimeUnit::Second) => {
-            i64::from(array.as_primitive::<Time32SecondType>().value(row)) * 1_000_000_000
-        }
-        ArrowType::Time32(_) => {
-            i64::from(array.as_primitive::<Time32MillisecondType>().value(row)) * 1_000_000
-        }
-        ArrowType::Time64(TimeUnit::Microsecond) => {
-            array.as_primitive::<Time64MicrosecondType>().value(row) * 1_000
-        }
-        _ => array.as_primitive::<Time64NanosecondType>().value(row),
+    let (value, unit): (i64, TimeUnit) = match array.data_type() {
+        ArrowType::Time32(TimeUnit::Second) => (
+            array.as_primitive::<Time32SecondType>().value(row).into(),
+            TimeUnit::Second,
+        ),
+        ArrowType::Time32(_) => (
+            array
+                .as_primitive::<Time32MillisecondType>()
+                .value(row)
+                .into(),
+            TimeUnit::Millisecond,
+        ),
+        ArrowType::Time64(TimeUnit::Microsecond) => (
+            array.as_primitive::<Time64MicrosecondType>().value(row),
+            TimeUnit::Microsecond,
+        ),
+        _ => (
+            array.as_primitive::<Time64NanosecondType>().value(row),
+            TimeUnit::Nanosecond,
+        ),
     };
+    let nanos = spark_connect_core::decode::time_nanos(value, unit);
     let seconds = u32::try_from(nanos.div_euclid(1_000_000_000)).ok();
     seconds
         .and_then(|s| {

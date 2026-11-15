@@ -26,7 +26,8 @@ use arrow::array::{
     DurationMicrosecondArray, Float32Array, Float64Array, Int16Array, Int32Array, Int32Builder,
     Int64Array, Int8Array, IntervalMonthDayNanoArray, IntervalMonthDayNanoBuilder,
     IntervalYearMonthArray, ListArray, MapBuilder, NullArray, StringArray, StringBuilder,
-    StructArray, Time64NanosecondArray, TimestampMicrosecondArray, TimestampNanosecondArray,
+    StructArray, Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
+    Time64NanosecondArray, TimestampMicrosecondArray, TimestampNanosecondArray,
 };
 use arrow::datatypes::{
     i256, DataType as A, Field, Int32Type, IntervalMonthDayNano, IntervalMonthDayNanoType, Schema,
@@ -405,6 +406,29 @@ fn temporal_and_decimal_values_read_as_text_and_as_numbers() {
     // Microseconds round down, also before the epoch.
     let edge = &from_record_batch::<AsNumbers>(&batch.slice(2, 1)).unwrap()[0];
     assert_eq!((edge.timestamp, edge.timestamp_ntz), (-1, -1_000_001));
+}
+
+#[test]
+fn a_time_of_every_arrow_unit_reads_as_its_time_of_day() {
+    let batch = batch(vec![
+        ("s", Arc::new(Time32SecondArray::from(vec![3_723]))),
+        (
+            "ms",
+            Arc::new(Time32MillisecondArray::from(vec![3_723_004])),
+        ),
+        (
+            "us",
+            Arc::new(Time64MicrosecondArray::from(vec![3_723_000_005])),
+        ),
+        (
+            "ns",
+            Arc::new(Time64NanosecondArray::from(vec![3_723_000_000_006])),
+        ),
+    ]);
+    let at = |nanos| NaiveTime::from_num_seconds_from_midnight_opt(3_723, nanos).unwrap();
+    let times: Vec<(NaiveTime, NaiveTime, NaiveTime, NaiveTime)> =
+        from_record_batch(&batch).unwrap();
+    assert_eq!(times, [(at(0), at(4_000_000), at(5_000), at(6))]);
 }
 
 /// A batch of nested values: arrays, maps and structs, with empty and null parts.
