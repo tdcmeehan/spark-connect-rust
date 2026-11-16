@@ -19,15 +19,19 @@
 //! types with serde and into `Value`s.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
-    DurationMicrosecondArray, Float32Array, Float64Array, Int16Array, Int32Array, Int32Builder,
-    Int64Array, Int8Array, IntervalMonthDayNanoArray, IntervalMonthDayNanoBuilder,
-    IntervalYearMonthArray, ListArray, MapBuilder, NullArray, StringArray, StringBuilder,
-    StructArray, Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
-    Time64NanosecondArray, TimestampMicrosecondArray, TimestampNanosecondArray,
+    Array, ArrayRef, BinaryArray, BinaryViewArray, BooleanArray, Date32Array, Date64Array,
+    Decimal128Array, Decimal256Array, DurationMicrosecondArray, DurationMillisecondArray,
+    DurationNanosecondArray, DurationSecondArray, FixedSizeBinaryArray, FixedSizeListArray,
+    Float32Array, Float64Array, Int16Array, Int32Array, Int32Builder, Int64Array, Int8Array,
+    IntervalMonthDayNanoArray, IntervalMonthDayNanoBuilder, IntervalYearMonthArray,
+    LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapBuilder, NullArray,
+    StringArray, StringBuilder, StringViewArray, StructArray, Time32MillisecondArray,
+    Time32SecondArray, Time64MicrosecondArray, Time64NanosecondArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
 };
 use arrow::datatypes::{
     i256, DataType as A, Field, Int32Type, IntervalMonthDayNano, IntervalMonthDayNanoType, Schema,
@@ -429,6 +433,165 @@ fn a_time_of_every_arrow_unit_reads_as_its_time_of_day() {
     let times: Vec<(NaiveTime, NaiveTime, NaiveTime, NaiveTime)> =
         from_record_batch(&batch).unwrap();
     assert_eq!(times, [(at(0), at(4_000_000), at(5_000), at(6))]);
+}
+
+fn other_and_standard(other: impl Array + 'static, standard: impl Array + 'static) -> RecordBatch {
+    batch(vec![
+        ("other", Arc::new(other)),
+        ("standard", Arc::new(standard)),
+    ])
+}
+
+fn assert_read_alike<'a, T: Deserialize<'a> + PartialEq + Debug>(
+    encoding: &str,
+    batch: &'a RecordBatch,
+) {
+    let pairs: Vec<(T, T)> = from_record_batch(batch).unwrap_or_else(|e| panic!("{encoding}: {e}"));
+    for (row, (other, standard)) in pairs.iter().enumerate() {
+        assert_eq!(other, standard, "{encoding}, row {row}");
+    }
+}
+
+#[test]
+fn other_arrow_encodings_of_a_type_read_as_its_standard_encoding() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    #[serde(rename_all = "kebab-case")]
+    enum Wind {
+        North,
+        NorthNorthWest,
+    }
+    let texts = || vec![Some("north"), None, Some("north-north-west")];
+    let bytes = || vec![Some(&b"\x00\xff"[..]), None, Some(&b"\x01\x02"[..])];
+    let lists = || {
+        vec![
+            Some(vec![Some(1), None, Some(3)]),
+            None,
+            Some(vec![Some(4), Some(5), Some(6)]),
+        ]
+    };
+    let utc_micros =
+        |micros: Vec<Option<i64>>| TimestampMicrosecondArray::from(micros).with_timezone("UTC");
+    let as_text: fn(&str, &RecordBatch) = |encoding, batch| {
+        assert_read_alike::<Option<String>>(encoding, batch);
+        assert_read_alike::<Option<Wind>>(encoding, batch);
+    };
+    let as_bytes: fn(&str, &RecordBatch) = |encoding, batch| {
+        assert_read_alike::<Option<Vec<u8>>>(encoding, batch);
+        assert_read_alike::<Option<&[u8]>>(encoding, batch);
+    };
+    let as_date: fn(&str, &RecordBatch) = |encoding, batch| {
+        assert_read_alike::<Option<NaiveDate>>(encoding, batch);
+        assert_read_alike::<Option<i32>>(encoding, batch);
+    };
+    let as_instant: fn(&str, &RecordBatch) =
+        |encoding, batch| assert_read_alike::<Option<DateTime<Utc>>>(encoding, batch);
+    let as_micros: fn(&str, &RecordBatch) =
+        |encoding, batch| assert_read_alike::<Option<i64>>(encoding, batch);
+    let as_list: fn(&str, &RecordBatch) =
+        |encoding, batch| assert_read_alike::<Option<Vec<Option<i32>>>>(encoding, batch);
+    let cases = [
+        (
+            "LargeUtf8",
+            other_and_standard(LargeStringArray::from(texts()), StringArray::from(texts())),
+            as_text,
+        ),
+        (
+            "Utf8View",
+            other_and_standard(StringViewArray::from(texts()), StringArray::from(texts())),
+            as_text,
+        ),
+        (
+            "LargeBinary",
+            other_and_standard(LargeBinaryArray::from(bytes()), BinaryArray::from(bytes())),
+            as_bytes,
+        ),
+        (
+            "BinaryView",
+            other_and_standard(BinaryViewArray::from(bytes()), BinaryArray::from(bytes())),
+            as_bytes,
+        ),
+        (
+            "FixedSizeBinary",
+            other_and_standard(
+                FixedSizeBinaryArray::from(bytes()),
+                BinaryArray::from(bytes()),
+            ),
+            as_bytes,
+        ),
+        (
+            "Date64",
+            other_and_standard(
+                Date64Array::from(vec![Some(1_704_067_200_000), None, Some(-86_400_000)]),
+                Date32Array::from(vec![Some(19_723), None, Some(-1)]),
+            ),
+            as_date,
+        ),
+        (
+            "Timestamp(Second)",
+            other_and_standard(
+                TimestampSecondArray::from(vec![Some(1_700_000_000), None, Some(-1)])
+                    .with_timezone("UTC"),
+                utc_micros(vec![Some(1_700_000_000_000_000), None, Some(-1_000_000)]),
+            ),
+            as_instant,
+        ),
+        (
+            "Timestamp(Millisecond)",
+            other_and_standard(
+                TimestampMillisecondArray::from(vec![Some(1_700_000_000_123), None, Some(-1)])
+                    .with_timezone("UTC"),
+                utc_micros(vec![Some(1_700_000_000_123_000), None, Some(-1_000)]),
+            ),
+            as_instant,
+        ),
+        (
+            "Duration(Second)",
+            other_and_standard(
+                DurationSecondArray::from(vec![Some(-2), None, Some(86_400)]),
+                DurationMicrosecondArray::from(vec![Some(-2_000_000), None, Some(86_400_000_000)]),
+            ),
+            as_micros,
+        ),
+        (
+            "Duration(Millisecond)",
+            other_and_standard(
+                DurationMillisecondArray::from(vec![Some(-1_500), None, Some(1)]),
+                DurationMicrosecondArray::from(vec![Some(-1_500_000), None, Some(1_000)]),
+            ),
+            as_micros,
+        ),
+        (
+            "Duration(Nanosecond)",
+            other_and_standard(
+                DurationNanosecondArray::from(vec![Some(-1_500_000_000), None, Some(1_000)]),
+                DurationMicrosecondArray::from(vec![Some(-1_500_000), None, Some(1)]),
+            ),
+            as_micros,
+        ),
+        (
+            "LargeList",
+            other_and_standard(
+                LargeListArray::from_iter_primitive::<Int32Type, _, _>(lists()),
+                ListArray::from_iter_primitive::<Int32Type, _, _>(lists()),
+            ),
+            as_list,
+        ),
+        (
+            "FixedSizeList",
+            other_and_standard(
+                FixedSizeListArray::from_iter_primitive::<Int32Type, _, _>(lists(), 3),
+                ListArray::from_iter_primitive::<Int32Type, _, _>(lists()),
+            ),
+            as_list,
+        ),
+    ];
+    for (encoding, batch, read_alike) in cases {
+        let read = rows(&batch).unwrap_or_else(|e| panic!("{encoding}: {e}"));
+        for (index, row) in read.iter().enumerate() {
+            assert_eq!(row.values()[0], row.values()[1], "{encoding}, row {index}");
+        }
+        read_alike(encoding, &batch);
+    }
 }
 
 /// A batch of nested values: arrays, maps and structs, with empty and null parts.
