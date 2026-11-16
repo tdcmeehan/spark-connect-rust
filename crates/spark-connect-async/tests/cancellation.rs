@@ -42,9 +42,18 @@ async fn connect(server: &Server) -> Session {
         .unwrap()
 }
 
-/// The `ReleaseAll`s of `operation_id`, once the client has had time to send any more.
-async fn releases(server: &Server, operation_id: &str) -> usize {
-    tokio::time::sleep(Duration::from_millis(300)).await;
+/// The `ReleaseAll`s of `operation_id`, once one has come and the server has received a later
+/// request of `session`.
+async fn releases(server: &Server, session: &Session, operation_id: &str) -> usize {
+    let release = Received::ReleaseAll(operation_id.to_string());
+    server.wait_for(|received| *received == release).await;
+    releases_by_now(server, session, operation_id).await
+}
+
+/// The `ReleaseAll`s of `operation_id` that the server received before a later request of
+/// `session`.
+async fn releases_by_now(server: &Server, session: &Session, operation_id: &str) -> usize {
+    session.conf().set("spark.test.later", "1").await.unwrap();
     server
         .received()
         .iter()
@@ -82,7 +91,7 @@ async fn dropped_before_the_server_accepts_it(server: &Server) {
             .await
     );
     assert_eq!(
-        releases(server, &operation_id).await,
+        releases_by_now(server, &session, &operation_id).await,
         0,
         "released before it was accepted"
     );
@@ -93,7 +102,7 @@ async fn dropped_before_the_server_accepts_it(server: &Server) {
             .wait_for(|r| *r == Received::ReleaseAll(id.clone()))
             .await
     );
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
     assert_eq!(
         updates.load(Ordering::SeqCst),
         0,
@@ -108,7 +117,7 @@ async fn dropped_after_the_first_batch(server: &Server) {
     assert_eq!(batches.next().await.unwrap().unwrap().num_rows(), 1);
     let operation_id = batches.operation_id().to_string();
     drop(batches);
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
     assert!(!interrupted(server, &operation_id));
     server.open_gate();
 }
@@ -123,9 +132,12 @@ async fn dropped_after_the_end(server: &Server) {
     }
     assert_eq!(rows, 2);
     let operation_id = batches.operation_id().to_string();
-    let before = releases(server, &operation_id).await;
+    let before = releases(server, &session, &operation_id).await;
     drop(batches);
-    assert_eq!(releases(server, &operation_id).await, before);
+    assert_eq!(
+        releases_by_now(server, &session, &operation_id).await,
+        before
+    );
     assert!(before <= 1);
     assert!(!interrupted(server, &operation_id));
 }
@@ -145,7 +157,7 @@ async fn dropped_while_reattaching(server: &Server) {
     );
     reading.abort();
     assert!(reading.await.unwrap_err().is_cancelled());
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
     assert!(!interrupted(server, &operation_id));
     server.open_gate();
 }
@@ -263,7 +275,7 @@ async fn a_wait_dropped_before_the_server_accepts_it(server: &Server, wait: &str
         "{wait}: not interrupted"
     );
     assert_eq!(
-        releases(server, &operation_id).await,
+        releases_by_now(server, &session, &operation_id).await,
         0,
         "{wait}: released early"
     );
@@ -275,7 +287,7 @@ async fn a_wait_dropped_before_the_server_accepts_it(server: &Server, wait: &str
             .await,
         "{wait}: not released"
     );
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
 }
 
 async fn a_wait_dropped_after_the_server_accepted_it(server: &Server, wait: &str) {
@@ -303,7 +315,7 @@ async fn a_wait_dropped_after_the_server_accepted_it(server: &Server, wait: &str
     );
     waiting.abort();
     assert!(waiting.await.unwrap_err().is_cancelled());
-    assert_eq!(releases(server, &operation_id).await, 1, "{wait}");
+    assert_eq!(releases(server, &session, &operation_id).await, 1, "{wait}");
     assert!(!interrupted(server, &operation_id), "{wait}: interrupted");
     server.open_gate();
 }
@@ -361,7 +373,7 @@ async fn an_ml_call_sent(
     server: &Server,
     call: &str,
     wait: Wait,
-) -> (tokio::task::JoinHandle<()>, String) {
+) -> (tokio::task::JoinHandle<()>, String, Session) {
     let session = connect(server).await;
     let model = LogisticRegression::new()
         .fit(&session.range(3))
@@ -374,11 +386,12 @@ async fn an_ml_call_sent(
         assert!(server.wait_for(|r| matches!(r, Received::Execute(_))).await);
         tokio::task::yield_now().await;
     }
-    (calling, server.operation_id())
+    (calling, server.operation_id(), session)
 }
 
 async fn an_ml_call_dropped_before_the_server_accepts_it(server: &Server, call: &str) {
-    let (calling, operation_id) = an_ml_call_sent(server, call, Wait::BeforeAccepting).await;
+    let (calling, operation_id, session) =
+        an_ml_call_sent(server, call, Wait::BeforeAccepting).await;
     calling.abort();
     assert!(calling.await.unwrap_err().is_cancelled());
     let id = operation_id.clone();
@@ -389,7 +402,7 @@ async fn an_ml_call_dropped_before_the_server_accepts_it(server: &Server, call: 
         "{call}: not interrupted"
     );
     assert_eq!(
-        releases(server, &operation_id).await,
+        releases_by_now(server, &session, &operation_id).await,
         0,
         "{call}: released early"
     );
@@ -401,11 +414,12 @@ async fn an_ml_call_dropped_before_the_server_accepts_it(server: &Server, call: 
             .await,
         "{call}: not released"
     );
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
 }
 
 async fn an_ml_call_dropped_after_the_server_accepted_it(server: &Server, call: &str) {
-    let (calling, operation_id) = an_ml_call_sent(server, call, Wait::AfterTheFirstBatch).await;
+    let (calling, operation_id, session) =
+        an_ml_call_sent(server, call, Wait::AfterTheFirstBatch).await;
     // The client releases each response that it has read.
     let id = operation_id.clone();
     assert!(
@@ -415,7 +429,7 @@ async fn an_ml_call_dropped_after_the_server_accepted_it(server: &Server, call: 
     );
     calling.abort();
     assert!(calling.await.unwrap_err().is_cancelled());
-    assert_eq!(releases(server, &operation_id).await, 1, "{call}");
+    assert_eq!(releases(server, &session, &operation_id).await, 1, "{call}");
     assert!(!interrupted(server, &operation_id), "{call}: interrupted");
     server.open_gate();
 }
@@ -463,7 +477,11 @@ async fn a_start_of_a_run_dropped_before_the_server_accepts_it(server: &Server) 
             .await,
         "not interrupted"
     );
-    assert_eq!(releases(server, &operation_id).await, 0, "released early");
+    assert_eq!(
+        releases_by_now(server, &session, &operation_id).await,
+        0,
+        "released early"
+    );
     server.open_gate();
     let id = operation_id.clone();
     assert!(
@@ -472,7 +490,7 @@ async fn a_start_of_a_run_dropped_before_the_server_accepts_it(server: &Server) 
             .await,
         "not released"
     );
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
 }
 
 async fn the_events_of_a_run_dropped_after_the_first(server: &Server) {
@@ -483,7 +501,7 @@ async fn the_events_of_a_run_dropped_after_the_first(server: &Server) {
     assert!(run.next().await.unwrap().is_ok());
     let operation_id = run.operation_id().to_string();
     drop(run);
-    assert_eq!(releases(server, &operation_id).await, 1);
+    assert_eq!(releases(server, &session, &operation_id).await, 1);
     assert!(!interrupted(server, &operation_id), "interrupted");
     server.open_gate();
 }

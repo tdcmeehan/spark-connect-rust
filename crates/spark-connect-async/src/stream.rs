@@ -352,13 +352,14 @@ impl Stream for RecordBatchStream {
                         this.finished_read(&execution);
                         match step {
                             Ok(Some(batches)) => {
-                                for batch in batches {
-                                    match crate::de::with_names_of(batch, this.schema.as_ref()) {
-                                        Ok(batch) => this.batches.push_back(batch),
-                                        // Never taken: renaming keeps what the IPC reader
-                                        // checked when it read the batch.
-                                        Err(error) => return Poll::Ready(Some(Err(error))),
-                                    }
+                                let schema = this.schema.as_ref();
+                                let renamed: Result<Vec<_>> = batches
+                                    .into_iter()
+                                    .map(|batch| crate::de::with_names_of(batch, schema))
+                                    .collect();
+                                match renamed {
+                                    Ok(renamed) => this.batches.extend(renamed),
+                                    Err(error) => return Poll::Ready(Some(Err(error))),
                                 }
                                 this.state = State::Idle(execution);
                             }
