@@ -157,15 +157,23 @@ impl Operator {
         let session = dataset.session().clone();
         let params = self.params.clone();
         dataset.holding(async move {
-            let info = stream::command_result(session.clone(), command, fitted).await?;
-            match info.and_then(|info| info.r#type) {
-                Some(proto::ml_command_result::ml_operator_info::Type::ObjRef(reference))
-                    if !reference.id.is_empty() =>
-                {
-                    Ok(Fitted::new(reference, session, params))
-                }
-                _ => Err(Error::decode("the server returned no model")),
-            }
+            let owner = session.clone();
+            // Built as its answer comes, so that a fit dropped while the rest of its stream
+            // drains still deletes the model.
+            let model = stream::command_result(session, command, move |response| {
+                Some(match fitted(response)?.r#type {
+                    Some(proto::ml_command_result::ml_operator_info::Type::ObjRef(reference))
+                        if !reference.id.is_empty() =>
+                    {
+                        Some(Fitted::new(reference, owner.clone(), params.clone()))
+                    }
+                    _ => None,
+                })
+            });
+            model
+                .await?
+                .flatten()
+                .ok_or_else(|| Error::decode("the server returned no model"))
         })
     }
 

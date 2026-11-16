@@ -278,6 +278,34 @@ fn a_dropped_model_is_deleted_from_the_runtime_of_its_fit() {
     }
 }
 
+#[test]
+fn a_fit_dropped_after_the_server_answered_it_deletes_its_model() {
+    for flavor in ["current-thread", "multi-thread"] {
+        let server = Server::start();
+        runtime(flavor).block_on(async {
+            let session = connect(&server).await;
+            server.wait_at(Wait::AfterTheFirstBatch);
+            let fitting = tokio::spawn(LogisticRegression::new().fit(&session.range(3)));
+            // The client releases each response that it has read.
+            assert!(
+                server
+                    .wait_for(|r| matches!(r, Received::ReleaseUntil(_)))
+                    .await,
+                "{flavor}: the answer was not read"
+            );
+            server.wait_at(Wait::Never);
+            fitting.abort();
+            assert!(fitting.await.unwrap_err().is_cancelled());
+            assert!(
+                server.wait_for(|r| matches!(r, Received::Delete(_))).await,
+                "{flavor}: the model of the dropped fit was not deleted"
+            );
+            assert_eq!(deletes(&server), [["model-1"]], "{flavor}");
+            server.open_gate();
+        });
+    }
+}
+
 /// What holds a model, and lets it go when it is called.
 type Holder<'a> = Box<dyn FnOnce() + 'a>;
 

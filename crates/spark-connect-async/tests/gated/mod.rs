@@ -20,7 +20,7 @@
 //!
 //! Its listener bus acts as Spark 4.3.0's: it acknowledges a subscription and keeps its stream
 //! open until a removal, and it never answers a subscription while it holds another. Unless an
-//! execution waits after its first batch, the server answers the commands of Spark ML as 4.3.0
+//! execution waits before reattaching, the server answers the commands of Spark ML as 4.3.0
 //! does: a fit with a new model, a fetch of an attribute with a value of its type, and a delete
 //! with the models deleted. It answers the commands of pipelines as 4.3.0 does too: a new graph,
 //! the identifier of each output and flow, and a run whose responses a test can set.
@@ -58,7 +58,8 @@ use proto::expression::literal::LiteralType;
 pub enum Wait {
     /// Before the server answers the ExecutePlan call, so before the client has a stream.
     BeforeAccepting,
-    /// After the first batch, before the rest of the result.
+    /// After the first batch, before the rest of the result; for a command of Spark ML, after
+    /// its answer, before the end of its stream.
     AfterTheFirstBatch,
     /// Nowhere: the whole result at once.
     Never,
@@ -764,9 +765,7 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                             return Ok(Response::new(encoded(vec![complete])));
                         }
                     },
-                    Some(C::MlCommand(command))
-                        if matches!(wait, Wait::Never | Wait::BeforeAccepting) =>
-                    {
+                    Some(C::MlCommand(command)) if wait != Wait::BeforeReattaching => {
                         if let Some(proto::ml_command::Command::Delete(delete)) = &command.command {
                             let ids = delete.obj_refs.iter().map(|r| r.id.clone()).collect();
                             state.receive(Received::Delete(ids));
@@ -776,10 +775,14 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                         }
                         let result = ResponseType::MlCommandResult(state.ml_result(command));
                         let complete = ResponseType::ResultComplete(Default::default());
-                        return Ok(Response::new(encoded(vec![
+                        let responses = vec![
                             respond(&request.session_id, &operation_id, 0, result),
                             respond(&request.session_id, &operation_id, 1, complete),
-                        ])));
+                        ];
+                        return Ok(Response::new(match wait {
+                            Wait::AfterTheFirstBatch => ended_at_the_gate(state, responses),
+                            _ => encoded(responses),
+                        }));
                     }
                     Some(C::PipelineCommand(proto::PipelineCommand {
                         command_type: Some(proto::pipeline_command::CommandType::StartRun(_)),
@@ -961,6 +964,22 @@ fn encoded(responses: Vec<proto::ExecutePlanResponse>) -> ByteStream {
         responses
             .into_iter()
             .map(|response| Ok(response.encode_to_vec())),
+    ))
+}
+
+/// `responses`, the last of them once the gate opens.
+fn ended_at_the_gate(
+    state: Arc<State>,
+    mut responses: Vec<proto::ExecutePlanResponse>,
+) -> ByteStream {
+    let end = responses.pop().map(|end| Ok(end.encode_to_vec()));
+    let end = stream::once(async move {
+        state.pass_the_gate().await;
+        stream::iter(end)
+    });
+    Box::pin(futures::StreamExt::chain(
+        encoded(responses),
+        futures::StreamExt::flatten(end),
     ))
 }
 
