@@ -250,6 +250,27 @@ async fn a_failed_subscription_is_an_error_then_the_end_and_is_removed() {
         .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_that_the_server_ends_before_acknowledging_it_fails_and_is_removed() {
+    let server = Server::start();
+    let session = connect(&server).await;
+    server.end_next_subscription_unacknowledged();
+    let error = tokio::time::timeout(WAIT, session.streams().events())
+        .await
+        .expect("the unacknowledged subscription waits")
+        .err()
+        .expect("the events of a subscription that the server did not acknowledge");
+    assert_eq!(error.kind(), ErrorKind::Decode, "{error}");
+    tokio::time::timeout(WAIT, session.streams().events())
+        .await
+        .expect("no subscription after the unacknowledged one")
+        .unwrap();
+    assert!(
+        removed(&server.received()),
+        "the unacknowledged subscription was not removed"
+    );
+}
+
 #[tokio::test]
 async fn an_unanswered_subscription_waits_and_its_drop_ends_it_without_a_removal() {
     let server = Server::start();
@@ -333,4 +354,19 @@ async fn the_started_event_of_a_query_of_the_session_comes_from_its_start() {
         }
         other => panic!("not the started event: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_plan_that_the_server_does_not_return_is_an_error() {
+    let server = Server::start();
+    let session = connect(&server).await;
+    let query = session
+        .range(3)
+        .write_stream()
+        .format("memory")
+        .start_without_path()
+        .await
+        .unwrap();
+    let error = query.explain().await.unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Decode, "{error}");
 }

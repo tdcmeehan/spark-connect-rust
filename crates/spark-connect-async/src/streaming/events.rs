@@ -186,20 +186,22 @@ pub(crate) async fn subscribe(session: Session) -> Result<QueryEvents> {
             _ = abandonment => return Ok(None),
         };
         let mut events = ListenerEvents::of(execution);
-        match events.wait_until_listener_added().await {
-            Ok(()) => Ok(Some(QueryEvents::new(claim, events, started, task_runtime))),
-            Err(error) => {
-                claim.remove(&task_runtime, events);
-                Err(error)
+        let error = match events.listener_was_added().await {
+            Ok(true) => return Ok(Some(QueryEvents::new(claim, events, started, task_runtime))),
+            Ok(false) => {
+                Error::decode("the server returned no acknowledgement of the subscription")
             }
-        }
+            Err(error) => error.into(),
+        };
+        claim.remove(&task_runtime, events);
+        Err(error)
     });
     let subscribed = subscription.await;
     abandon.dropped = None;
     match subscribed {
         Ok(Ok(Some(events))) => Ok(events),
-        Ok(Ok(None)) => Err(SparkError::connect_msg("the subscription was abandoned").into()),
-        Ok(Err(error)) => Err(error.into()),
+        Ok(Ok(None)) => unreachable!("the task is abandoned only once this future is dropped"),
+        Ok(Err(error)) => Err(error),
         Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
         Err(error) => Err(SparkError::connect_msg(error.to_string()).into()),
     }

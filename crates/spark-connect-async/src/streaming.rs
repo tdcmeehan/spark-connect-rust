@@ -358,6 +358,9 @@ impl DataStreamWriter {
     }
 
     /// Starts the query, which writes to `path`, and returns it once the server has started it.
+    ///
+    /// Dropping the future before it returns may leave the query running on the server:
+    /// [`StreamingQueryManager::active`] finds it.
     pub fn start(
         self,
         path: impl Into<String>,
@@ -367,6 +370,9 @@ impl DataStreamWriter {
 
     /// Starts the query, which writes where the sink's options say, for a sink that takes no
     /// path, such as `memory`, and returns it once the server has started it.
+    ///
+    /// Dropping the future before it returns may leave the query running on the server:
+    /// [`StreamingQueryManager::active`] finds it.
     pub fn start_without_path(
         self,
     ) -> impl Future<Output = Result<StreamingQuery>> + Send + 'static {
@@ -375,6 +381,9 @@ impl DataStreamWriter {
 
     /// Starts the query, which writes to the table `name`, and returns it once the server has
     /// started it.
+    ///
+    /// Dropping the future before it returns may leave the query running on the server:
+    /// [`StreamingQueryManager::active`] finds it.
     pub fn to_table(
         self,
         name: impl Into<String>,
@@ -667,7 +676,7 @@ impl IntoFuture for Explain {
         Box::pin(async move {
             match result.await? {
                 Some(QueryResult::Explain(explain)) => Ok(explain.result),
-                _ => Ok(String::new()),
+                _ => Err(Error::decode("the server returned no plan")),
             }
         })
     }

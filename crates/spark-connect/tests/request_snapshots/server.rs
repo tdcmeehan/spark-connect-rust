@@ -534,15 +534,8 @@ fn held_subscription(
     request: &proto::ExecutePlanRequest,
     ended: tokio::sync::oneshot::Receiver<()>,
 ) -> ByteStream {
-    use proto::execute_plan_response::ResponseType;
     let operation_id = request.operation_id.clone().unwrap_or_default();
-    let added = ResponseType::StreamingQueryListenerEventsResult(
-        proto::StreamingQueryListenerEventsResult {
-            events: Vec::new(),
-            listener_bus_listener_added: Some(true),
-        },
-    );
-    let mut responses = complete(&request.session_id, &operation_id, vec![added]);
+    let mut responses = complete(&request.session_id, &operation_id, vec![listener_added()]);
     let result_complete = responses.pop().unwrap().encode_to_vec();
     let acknowledgement = stream::iter(
         responses
@@ -554,6 +547,16 @@ fn held_subscription(
         Ok(result_complete)
     });
     Box::pin(acknowledgement.chain(end))
+}
+
+/// Spark's acknowledgement of a subscription to the listener bus.
+fn listener_added() -> proto::execute_plan_response::ResponseType {
+    proto::execute_plan_response::ResponseType::StreamingQueryListenerEventsResult(
+        proto::StreamingQueryListenerEventsResult {
+            events: Vec::new(),
+            listener_bus_listener_added: Some(true),
+        },
+    )
 }
 
 fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
@@ -743,6 +746,7 @@ fn relation_results(relation: &proto::Relation) -> Vec<proto::execute_plan_respo
 fn command_results(command: proto::Command) -> Vec<proto::execute_plan_response::ResponseType> {
     use proto::command::CommandType as C;
     use proto::execute_plan_response::{ResponseType as R, SqlCommandResult};
+    use proto::streaming_query_listener_bus_command::Command as Bus;
     let query_id = || proto::StreamingQueryInstanceId {
         id: "query-id".to_string(),
         run_id: "query-run-id".to_string(),
@@ -787,6 +791,9 @@ fn command_results(command: proto::Command) -> Vec<proto::execute_plan_response:
         Some(C::PipelineCommand(command)) => {
             vec![R::PipelineCommandResult(pipeline_result(command))]
         }
+        Some(C::StreamingQueryListenerBusCommand(proto::StreamingQueryListenerBusCommand {
+            command: Some(Bus::AddListenerBusListener(_)),
+        })) => vec![listener_added()],
         _ => Vec::new(),
     }
 }

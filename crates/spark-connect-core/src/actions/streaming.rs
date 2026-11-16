@@ -250,15 +250,23 @@ impl<O: ExecutionObserver> ListenerEvents<O> {
     }
 
     /// Reads the responses until the one that tells that the server added the listener of the
-    /// session (`listener_bus_listener_added`), keeping their events, which [`Self::next`] gives
-    /// first, as PySpark Connect's `_register_server_side_listener` waits for it.
+    /// session (`listener_bus_listener_added`), or to the end of the stream, keeping their
+    /// events, which [`Self::next`] gives first, as PySpark Connect's
+    /// `_register_server_side_listener` waits for it.
     pub async fn wait_until_listener_added(&mut self) -> Result<()> {
+        self.listener_was_added().await.map(drop)
+    }
+
+    /// Reads the responses as [`Self::wait_until_listener_added`] does, and returns whether the
+    /// server added the listener before the stream ended. Not a stable API.
+    #[doc(hidden)]
+    pub async fn listener_was_added(&mut self) -> Result<bool> {
         while let Some(added) = self.next_response().await? {
             if added {
-                break;
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// The next event, or `None` once the server ends the stream.

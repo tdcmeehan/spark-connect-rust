@@ -139,6 +139,7 @@ struct State {
     received: Mutex<Vec<Received>>,
     bus_wait: Mutex<BusWait>,
     bus_gate: Semaphore,
+    ends_unacknowledged: Mutex<bool>,
     subscription: Mutex<Option<Subscription>>,
     models: AtomicUsize,
     graphs: AtomicUsize,
@@ -190,6 +191,7 @@ impl Server {
             received: Mutex::new(Vec::new()),
             bus_wait: Mutex::new(BusWait::Never),
             bus_gate: Semaphore::new(0),
+            ends_unacknowledged: Mutex::new(false),
             subscription: Mutex::new(None),
             models: AtomicUsize::new(0),
             graphs: AtomicUsize::new(0),
@@ -287,6 +289,11 @@ impl Server {
             .take()
             .expect("no subscription");
         subscription.send(ResponseType::ResultComplete(Default::default()));
+    }
+
+    /// Ends the next subscription at once, without its acknowledgement and without holding it.
+    pub fn end_next_subscription_unacknowledged(&self) {
+        *self.state.ends_unacknowledged.lock().unwrap() = true;
     }
 
     /// Fails the stream of the subscription; the bus still holds the subscription.
@@ -530,6 +537,16 @@ impl State {
         session_id: String,
         operation_id: String,
     ) -> Option<ByteStream> {
+        let unacknowledged = std::mem::take(&mut *self.ends_unacknowledged.lock().unwrap());
+        if unacknowledged {
+            let complete = ResponseType::ResultComplete(Default::default());
+            return Some(encoded(vec![respond(
+                &session_id,
+                &operation_id,
+                0,
+                complete,
+            )]));
+        }
         let wait = *self.bus_wait.lock().unwrap();
         if wait == BusWait::BeforeAcknowledging {
             self.pass_the_bus_gate().await;
