@@ -218,7 +218,7 @@ async fn events_come_until_the_server_ends_the_subscription() {
     assert!(next(&mut events).await.is_none());
     assert!(next(&mut events).await.is_none());
     drop(events);
-    tokio::time::timeout(WAIT, session.streams().events())
+    let second = tokio::time::timeout(WAIT, session.streams().events())
         .await
         .expect("no subscription after the end")
         .unwrap();
@@ -226,6 +226,7 @@ async fn events_come_until_the_server_ends_the_subscription() {
         !removed(&server.received()),
         "removed a subscription that the server had ended"
     );
+    drop(second);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -261,7 +262,7 @@ async fn a_subscription_that_the_server_ends_before_acknowledging_it_fails_and_i
         .err()
         .expect("the events of a subscription that the server did not acknowledge");
     assert_eq!(error.kind(), ErrorKind::Decode, "{error}");
-    tokio::time::timeout(WAIT, session.streams().events())
+    let second = tokio::time::timeout(WAIT, session.streams().events())
         .await
         .expect("no subscription after the unacknowledged one")
         .unwrap();
@@ -269,6 +270,7 @@ async fn a_subscription_that_the_server_ends_before_acknowledging_it_fails_and_i
         removed(&server.received()),
         "the unacknowledged subscription was not removed"
     );
+    drop(second);
 }
 
 #[tokio::test]
