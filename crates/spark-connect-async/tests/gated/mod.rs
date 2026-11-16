@@ -140,6 +140,7 @@ pub struct Server {
 struct State {
     wait: Mutex<Wait>,
     gate: Semaphore,
+    ends_with_metrics: Mutex<bool>,
     received: Mutex<Vec<Received>>,
     bus_wait: Mutex<BusWait>,
     bus_gate: Semaphore,
@@ -192,6 +193,7 @@ impl Server {
         let state = Arc::new(State {
             wait: Mutex::new(Wait::Never),
             gate: Semaphore::new(0),
+            ends_with_metrics: Mutex::new(false),
             received: Mutex::new(Vec::new()),
             bus_wait: Mutex::new(BusWait::Never),
             bus_gate: Semaphore::new(0),
@@ -237,6 +239,13 @@ impl Server {
 
     pub fn open_gate(&self) {
         self.state.gate.add_permits(1);
+    }
+
+    /// Ends each result that the server sends at once from now on as Spark 4.3.0 ends it: the
+    /// last batch is followed by the metrics of the plan, then by those of the observation at
+    /// its root, each in a response of its own.
+    pub fn end_results_with_metrics(&self) {
+        *self.state.ends_with_metrics.lock().unwrap() = true;
     }
 
     pub fn received(&self) -> Vec<Received> {
@@ -917,11 +926,23 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                     ..respond(0, ResponseType::ArrowBatch(arrow_batch(0)))
                 };
                 match wait {
-                    Wait::BeforeAccepting | Wait::Never => encoded(vec![
-                        first,
-                        respond(1, ResponseType::ArrowBatch(arrow_batch(1))),
-                        complete(2),
-                    ]),
+                    Wait::BeforeAccepting | Wait::Never => {
+                        let mut responses =
+                            vec![first, respond(1, ResponseType::ArrowBatch(arrow_batch(1)))];
+                        if *state.ends_with_metrics.lock().unwrap() {
+                            let request = proto::ExecutePlanRequest::decode(&bytes[..]).unwrap();
+                            for (index, metrics) in (2..).zip(metrics_at_the_end(&request)) {
+                                responses.push(proto::ExecutePlanResponse {
+                                    session_id: session_id.clone(),
+                                    operation_id: operation_id.clone(),
+                                    response_id: format!("response-{index}"),
+                                    ..metrics
+                                });
+                            }
+                        }
+                        responses.push(complete(responses.len()));
+                        encoded(responses)
+                    }
                     Wait::BeforeReattaching => encoded(vec![first]),
                     Wait::AfterTheFirstBatch => {
                         let rest = vec![
@@ -1050,4 +1071,66 @@ fn arrow_batch(id: i64) -> proto::execute_plan_response::ArrowBatch {
         data: data.into(),
         ..Default::default()
     }
+}
+
+/// The metrics of the plan that the server sends after the last batch of a result, once
+/// [`Server::end_results_with_metrics`] is called: those of a range of the two rows.
+pub fn plan_metrics() -> proto::execute_plan_response::Metrics {
+    use proto::execute_plan_response::metrics::{MetricObject, MetricValue};
+    let output_rows = MetricValue {
+        name: "number of output rows".to_string(),
+        value: 2,
+        metric_type: "sum".to_string(),
+    };
+    proto::execute_plan_response::Metrics {
+        metrics: vec![MetricObject {
+            name: "Range".to_string(),
+            plan_id: 1,
+            parent: 0,
+            execution_metrics: [("numOutputRows".to_string(), output_rows)].into(),
+        }],
+    }
+}
+
+/// What Spark 4.3.0 sends after the last batch of the result of `request`, each in a response
+/// without a type: the metrics of the plan, then those of the observation at its root. Its
+/// metrics here are literals, `lit(value).alias(key)` each, observed as `key` = `value`.
+fn metrics_at_the_end(request: &proto::ExecutePlanRequest) -> Vec<proto::ExecutePlanResponse> {
+    use proto::expression::ExprType;
+    let plan = proto::ExecutePlanResponse {
+        metrics: Some(plan_metrics()),
+        ..Default::default()
+    };
+    let Some(proto::plan::OpType::Root(root)) =
+        request.plan.as_ref().and_then(|p| p.op_type.as_ref())
+    else {
+        return vec![plan];
+    };
+    let Some(proto::relation::RelType::CollectMetrics(collect)) = &root.rel_type else {
+        return vec![plan];
+    };
+    let literal = |metric: &proto::Expression| match &metric.expr_type {
+        Some(ExprType::Alias(alias)) => match &alias.expr.as_ref()?.expr_type {
+            Some(ExprType::Literal(value)) => Some((alias.name.first()?.clone(), value.clone())),
+            _ => None,
+        },
+        _ => None,
+    };
+    let (keys, values) = collect.metrics.iter().filter_map(literal).unzip();
+    let observed = proto::execute_plan_response::ObservedMetrics {
+        name: collect.name.clone(),
+        keys,
+        values,
+        plan_id: root
+            .common
+            .as_ref()
+            .and_then(|c| c.plan_id)
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    let observed = proto::ExecutePlanResponse {
+        observed_metrics: vec![observed],
+        ..Default::default()
+    };
+    vec![plan, observed]
 }

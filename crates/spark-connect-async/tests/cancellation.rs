@@ -210,6 +210,29 @@ async fn a_stream_keeps_its_schema_and_execution_info_while_a_dropped_read_is_pe
 }
 
 #[tokio::test]
+async fn a_stream_read_to_its_end_reports_the_metrics_sent_after_its_last_batch() {
+    use spark_connect_async::{lit, Value};
+    let server = Server::start();
+    server.end_results_with_metrics();
+    let session = connect(&server).await;
+    let observed = session.range(2).observe("metrics", [lit(1).alias("m")]);
+    let mut batches = observed.stream().await.unwrap();
+    assert_eq!(batches.next().await.unwrap().unwrap().num_rows(), 1);
+    let first = batches.execution_info();
+    assert!(first.plan_metrics().is_none() && first.observed_metrics().is_empty());
+    while let Some(batch) = batches.next().await {
+        batch.unwrap();
+    }
+    let info = batches.execution_info();
+    assert_eq!(info.operation_id(), Some(batches.operation_id()));
+    assert_eq!(info.plan_metrics(), Some(&gated::plan_metrics()));
+    let metrics = info.observed_metrics();
+    assert_eq!(metrics.len(), 1, "{metrics:?}");
+    assert_eq!(metrics[0].0, "metrics");
+    assert_eq!(metrics[0].1.get_by_name("m"), Some(&Value::Int(1)));
+}
+
+#[tokio::test]
 async fn a_session_whose_configuration_the_server_rejects_is_released() {
     let server = Server::start();
     let error = Session::builder()

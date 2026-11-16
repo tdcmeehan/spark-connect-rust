@@ -1222,7 +1222,7 @@ fn ntz_text(value: NaiveDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::{Int32Array, ListArray, MapBuilder, StringBuilder};
+    use arrow::array::{Int32Array, LargeListArray, ListArray, MapBuilder, StringBuilder};
     use spark_connect_core::types::StructField;
 
     use super::*;
@@ -1248,11 +1248,22 @@ mod tests {
             Arc::new(inner.clone()),
             None,
         );
+        let large_list = LargeListArray::new(
+            Arc::new(Field::new("item", inner.data_type().clone(), true)),
+            arrow::buffer::OffsetBuffer::from_lengths([1]),
+            Arc::new(inner.clone()),
+            None,
+        );
         let mut map = MapBuilder::new(None, StringBuilder::new(), StringBuilder::new());
         map.keys().append_value("k");
         map.values().append_value("v");
         map.append(true).unwrap();
-        let columns: Vec<ArrayRef> = vec![Arc::new(inner), Arc::new(list), Arc::new(map.finish())];
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(inner),
+            Arc::new(list),
+            Arc::new(map.finish()),
+            Arc::new(large_list.clone()),
+        ];
         let arrow_schema = Schema::new(
             columns
                 .iter()
@@ -1266,6 +1277,15 @@ mod tests {
         };
         let string = || SparkType::String {
             collation: "UTF8_BINARY".to_string(),
+        };
+        let large_points = || {
+            spark_field(
+                "large_points",
+                SparkType::Array {
+                    element_type: Box::new(struct_of("z")),
+                    contains_null: true,
+                },
+            )
         };
         let schema = SparkType::Struct {
             fields: vec![
@@ -1285,6 +1305,7 @@ mod tests {
                         value_contains_null: true,
                     },
                 ),
+                large_points(),
             ],
         };
 
@@ -1297,10 +1318,15 @@ mod tests {
             y: i32,
         }
         #[derive(Deserialize, Debug, PartialEq)]
+        struct Z {
+            z: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
         struct Named {
             point: X,
             points: Vec<Y>,
             labels: Vec<(String, String)>,
+            large_points: Vec<Z>,
         }
         let renamed = with_names_of(batch.clone(), Some(&schema)).unwrap();
         let rows: Vec<Named> = from_record_batch(&renamed).unwrap();
@@ -1310,9 +1336,32 @@ mod tests {
                 point: X { x: 7 },
                 points: vec![Y { y: 7 }],
                 labels: vec![("k".to_string(), "v".to_string())],
+                large_points: vec![Z { z: 7 }],
             }]
         );
         let unnamed = with_names_of(batch, None).unwrap();
         assert!(from_record_batch::<Named>(&unnamed).is_err());
+
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct LargePoints {
+            large_points: Vec<Z>,
+        }
+        let field = Field::new("large_points", large_list.data_type().clone(), true);
+        let named_on_top = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![field])),
+            vec![Arc::new(large_list)],
+        )
+        .unwrap();
+        let schema = SparkType::Struct {
+            fields: vec![large_points()],
+        };
+        let renamed = with_names_of(named_on_top, Some(&schema)).unwrap();
+        let rows: Vec<LargePoints> = from_record_batch(&renamed).unwrap();
+        assert_eq!(
+            rows,
+            [LargePoints {
+                large_points: vec![Z { z: 7 }],
+            }]
+        );
     }
 }
