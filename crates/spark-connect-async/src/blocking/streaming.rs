@@ -4,9 +4,7 @@
 use std::future::IntoFuture;
 use std::time::Duration;
 
-use futures::StreamExt;
-
-use super::{runtime, wait, Session};
+use super::{blocking_next, runtime, wait, Session};
 use crate::error::{Error, Result};
 use crate::streaming::{self, QueryEvent, QueryProgress, QueryStatus};
 
@@ -65,7 +63,10 @@ impl StreamingQueryManager {
     /// the server has acknowledged the subscription. It fails with
     /// [`ErrorKind::Unsupported`](crate::ErrorKind::Unsupported) while the session has one.
     pub fn events(&self) -> Result<QueryEvents> {
-        wait(self.0.events()).map(QueryEvents)
+        wait(self.0.events()).map(|stream| QueryEvents {
+            stream,
+            ended: false,
+        })
     }
 }
 
@@ -256,10 +257,11 @@ impl streaming::Explain {
 ///
 /// The events, the errors and the end are those of the async
 /// [`crate::streaming::QueryEvents`] that it reads, which [`into_async`](QueryEvents::into_async)
-/// returns. Dropping the iterator removes the subscription on the server, from the runtime that
-/// it was made on: the runtime of this module, for the iterator of
-/// [`StreamingQueryManager::events`]. A `next` can't be given up: see
-/// [the waits](super#waits-that-only-the-server-ends) for what ends it.
+/// returns. If the runtime of the module fails to start, the iterator gives that error and then
+/// ends, and the next blocking call tries to start the runtime again. Dropping the iterator
+/// removes the subscription on the server, from the runtime that it was made on: the runtime of
+/// this module, for the iterator of [`StreamingQueryManager::events`]. A `next` can't be given
+/// up: see [the waits](super#waits-that-only-the-server-ends) for what ends it.
 ///
 /// ```no_run
 /// # fn run(session: spark_connect_async::blocking::Session) -> spark_connect_async::Result<()> {
@@ -274,18 +276,21 @@ impl streaming::Explain {
 /// # Ok(())
 /// # }
 /// ```
-pub struct QueryEvents(streaming::QueryEvents);
+pub struct QueryEvents {
+    stream: streaming::QueryEvents,
+    ended: bool,
+}
 
 impl QueryEvents {
     /// The stream of events that this iterator reads, borrowed.
     pub fn as_async(&self) -> &streaming::QueryEvents {
-        &self.0
+        &self.stream
     }
 
     /// The stream of events that this iterator reads, with the events not read yet, as
     /// [`From`] converts it.
     pub fn into_async(self) -> streaming::QueryEvents {
-        self.0
+        self.stream
     }
 }
 
@@ -293,28 +298,31 @@ impl Iterator for QueryEvents {
     type Item = Result<QueryEvent>;
 
     fn next(&mut self) -> Option<Result<QueryEvent>> {
-        match runtime() {
-            Ok(runtime) => runtime.block_on(self.0.next()),
-            Err(error) => Some(Err(error)),
-        }
+        blocking_next(&mut self.ended, runtime(), &mut self.stream)
     }
 }
 
 impl From<streaming::QueryEvents> for QueryEvents {
     fn from(events: streaming::QueryEvents) -> Self {
-        QueryEvents(events)
+        QueryEvents {
+            stream: events,
+            ended: false,
+        }
     }
 }
 
 impl From<QueryEvents> for streaming::QueryEvents {
     fn from(events: QueryEvents) -> Self {
-        events.0
+        events.stream
     }
 }
 
 impl streaming::QueryEvents {
     /// The blocking form of these events: an iterator whose items block until they arrive.
     pub fn blocking(self) -> QueryEvents {
-        QueryEvents(self)
+        QueryEvents {
+            stream: self,
+            ended: false,
+        }
     }
 }

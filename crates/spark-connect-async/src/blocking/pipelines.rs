@@ -2,9 +2,7 @@
 
 use std::future::IntoFuture;
 
-use futures::StreamExt;
-
-use super::{runtime, wait, Session};
+use super::{blocking_next, runtime, wait, Session};
 use crate::error::Result;
 use crate::pipelines::{self, Identifier, PipelineEvent};
 
@@ -110,7 +108,10 @@ impl pipelines::StartRun {
     /// Starts the run, as awaiting it does, and blocks until the server has accepted it; returns
     /// the iterator of its events.
     pub fn run(self) -> Result<PipelineRun> {
-        wait(self.into_future()).map(PipelineRun)
+        wait(self.into_future()).map(|stream| PipelineRun {
+            stream,
+            ended: false,
+        })
     }
 }
 
@@ -119,20 +120,25 @@ impl pipelines::StartRun {
 ///
 /// The events, the errors and the end are those of the async
 /// [`crate::pipelines::PipelineRun`] that it reads, which [`as_async`](PipelineRun::as_async)
-/// borrows for its operation id. Dropping the iterator before its end releases the operation on
-/// the server, from the runtime that started it, and the iterator keeps its graph. A `next` can't
-/// be given up: see [the waits](super#waits-that-only-the-server-ends) for what ends it.
-pub struct PipelineRun(pipelines::PipelineRun);
+/// borrows for its operation id. If the runtime of the module fails to start, the iterator gives
+/// that error and then ends, and the next blocking call tries to start the runtime again.
+/// Dropping the iterator before its end releases the operation on the server, from the runtime
+/// that started it, and the iterator keeps its graph. A `next` can't be given up: see
+/// [the waits](super#waits-that-only-the-server-ends) for what ends it.
+pub struct PipelineRun {
+    stream: pipelines::PipelineRun,
+    ended: bool,
+}
 
 impl PipelineRun {
     /// The run that this iterator reads, borrowed: its operation id.
     pub fn as_async(&self) -> &pipelines::PipelineRun {
-        &self.0
+        &self.stream
     }
 
     /// The run that this iterator reads, with the events not read yet, as [`From`] converts it.
     pub fn into_async(self) -> pipelines::PipelineRun {
-        self.0
+        self.stream
     }
 }
 
@@ -140,28 +146,31 @@ impl Iterator for PipelineRun {
     type Item = Result<PipelineEvent>;
 
     fn next(&mut self) -> Option<Result<PipelineEvent>> {
-        match runtime() {
-            Ok(runtime) => runtime.block_on(self.0.next()),
-            Err(error) => Some(Err(error)),
-        }
+        blocking_next(&mut self.ended, runtime(), &mut self.stream)
     }
 }
 
 impl From<pipelines::PipelineRun> for PipelineRun {
     fn from(run: pipelines::PipelineRun) -> Self {
-        PipelineRun(run)
+        PipelineRun {
+            stream: run,
+            ended: false,
+        }
     }
 }
 
 impl From<PipelineRun> for pipelines::PipelineRun {
     fn from(run: PipelineRun) -> Self {
-        run.0
+        run.stream
     }
 }
 
 impl pipelines::PipelineRun {
     /// The blocking form of this run: an iterator whose events block until they arrive.
     pub fn blocking(self) -> PipelineRun {
-        PipelineRun(self)
+        PipelineRun {
+            stream: self,
+            ended: false,
+        }
     }
 }
