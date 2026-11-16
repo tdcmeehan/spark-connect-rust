@@ -155,7 +155,8 @@ jobs:
           # alone never executed those tests, so its files reflected only incidental e2e coverage
           # (e.g. error.rs at ~35%), dragging the total below 90%.
           cargo llvm-cov --no-cfg-coverage --no-report -p apache-spark-connect -p apache-spark-connect-core \
-            -p apache-spark-connect-blocking -p apache-spark-connect-async
+            -p apache-spark-connect-blocking -p apache-spark-connect-async \
+            --features apache-spark-connect-async/blocking,apache-spark-connect-async/rust-udf,apache-spark-connect-async/datafusion,apache-spark-connect-async/polars
           SPARK_REMOTE=sc://localhost:15002 \
             cargo llvm-cov --no-cfg-coverage --no-report -p apache-spark-connect \
               --test e2e_functions --test e2e_columns --test e2e_dataframe \

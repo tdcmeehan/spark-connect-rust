@@ -130,6 +130,7 @@ use std::collections::BTreeMap;
 use std::future::{Future, IntoFuture};
 use std::sync::OnceLock;
 
+use futures::{Stream, StreamExt};
 use spark_connect_blocking::Blocking;
 use spark_connect_core::error::SparkError;
 
@@ -169,6 +170,28 @@ fn runtime() -> Result<&'static Blocking> {
 /// those of `spawn_blocking` have small ones.
 fn wait<T>(future: impl Future<Output = Result<T>>) -> Result<T> {
     runtime()?.block_on(Box::pin(future))
+}
+
+/// The next item of `stream` for an iterator of the module, which a runtime that failed to
+/// start ends with its error, as an error ends a `RecordBatchStream`.
+fn blocking_next<S, T>(
+    ended: &mut bool,
+    runtime: Result<&Blocking>,
+    stream: &mut S,
+) -> Option<Result<T>>
+where
+    S: Stream<Item = Result<T>> + Unpin,
+{
+    if *ended {
+        return None;
+    }
+    match runtime {
+        Ok(runtime) => runtime.block_on(stream.next()),
+        Err(error) => {
+            *ended = true;
+            Some(Err(error))
+        }
+    }
 }
 
 /// A session with a Spark Connect server, whose calls block until the server answers.
@@ -580,5 +603,18 @@ mod tests {
             fn assert_send_static<T: Send + 'static>(_: T) {}
             assert_send_static(df.stream_as::<(i64,)>().unwrap());
         };
+    }
+
+    #[test]
+    fn an_iterator_ends_at_the_error_of_a_runtime_that_failed_to_start() {
+        let failed = || Err(Error::from(SparkError::connect_msg("the runtime failed")));
+        let started = Blocking::new().unwrap();
+        let mut stream = futures::stream::iter([Ok(1)]);
+        let mut ended = false;
+        let first = blocking_next(&mut ended, failed(), &mut stream);
+        assert!(matches!(first, Some(Err(_))), "{first:?}");
+        assert!(blocking_next(&mut ended, failed(), &mut stream).is_none());
+        assert!(blocking_next(&mut ended, Ok(&started), &mut stream).is_none());
+        assert_eq!(started.block_on(stream.next()).map(Result::unwrap), Some(1));
     }
 }

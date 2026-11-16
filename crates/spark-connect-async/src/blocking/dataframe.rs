@@ -4,11 +4,11 @@ use std::future::IntoFuture;
 use std::pin::Pin;
 
 use arrow::record_batch::RecordBatch;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use serde::de::DeserializeOwned;
 use spark_connect_core::types::DataType;
 
-use super::{runtime, wait, Session};
+use super::{blocking_next, runtime, wait, Session};
 use crate::actions::{Checkpoint, ExplainMode, StorageLevel, TempView};
 use crate::error::Result;
 use crate::group::Grouped;
@@ -65,7 +65,7 @@ impl DataFrame {
     /// accepted it. Dropping the iterator before its end releases the operation on the server,
     /// which stops it.
     pub fn stream(&self) -> Result<RecordBatchIter> {
-        wait(self.0.stream()).map(RecordBatchIter)
+        wait(self.0.stream()).map(RecordBatchStream::blocking)
     }
 
     /// Runs the query, and returns the iterator of its rows as values of `T`, which
@@ -74,7 +74,10 @@ impl DataFrame {
     pub fn stream_as<T: DeserializeOwned + Send + 'static>(
         &self,
     ) -> Result<impl Iterator<Item = Result<T>> + Send + 'static> {
-        wait(self.0.stream_as::<T>()).map(|rows| Blocked(Box::pin(rows)))
+        wait(self.0.stream_as::<T>()).map(|rows| Blocked {
+            stream: Box::pin(rows),
+            ended: false,
+        })
     }
 
     /// The record batches of the result.
@@ -223,7 +226,9 @@ impl crate::DataFrame {
 }
 
 /// The record batches of the result of a query, read as the iterator is advanced: each
-/// [`next`](Iterator::next) blocks until the server sends the next batch.
+/// [`next`](Iterator::next) blocks until the server sends the next batch. An error ends it: no
+/// batch follows it. When the error is that the runtime of the module failed to start, the next
+/// blocking call tries to start it again.
 ///
 /// Dropping it before its end releases the operation on the server, which stops it. The
 /// operation id, schema and execution info are its [`RecordBatchStream`]'s, which
@@ -239,19 +244,22 @@ impl crate::DataFrame {
 /// # Ok(())
 /// # }
 /// ```
-pub struct RecordBatchIter(RecordBatchStream);
+pub struct RecordBatchIter {
+    stream: RecordBatchStream,
+    ended: bool,
+}
 
 impl RecordBatchIter {
     /// The stream that this iterator reads, borrowed: its operation id, schema and execution
     /// info.
     pub fn as_async(&self) -> &RecordBatchStream {
-        &self.0
+        &self.stream
     }
 
     /// The stream that this iterator reads, with the batches not read yet, as [`From`]
     /// converts it.
     pub fn into_async(self) -> RecordBatchStream {
-        self.0
+        self.stream
     }
 }
 
@@ -259,43 +267,43 @@ impl Iterator for RecordBatchIter {
     type Item = Result<RecordBatch>;
 
     fn next(&mut self) -> Option<Result<RecordBatch>> {
-        match runtime() {
-            Ok(runtime) => runtime.block_on(self.0.next()),
-            Err(error) => Some(Err(error)),
-        }
+        blocking_next(&mut self.ended, runtime(), &mut self.stream)
     }
 }
 
 impl From<RecordBatchStream> for RecordBatchIter {
     fn from(stream: RecordBatchStream) -> Self {
-        RecordBatchIter(stream)
+        stream.blocking()
     }
 }
 
 impl From<RecordBatchIter> for RecordBatchStream {
     fn from(batches: RecordBatchIter) -> Self {
-        batches.0
+        batches.stream
     }
 }
 
 impl RecordBatchStream {
     /// The blocking form of this stream: an iterator whose items block until they arrive.
     pub fn blocking(self) -> RecordBatchIter {
-        RecordBatchIter(self)
+        RecordBatchIter {
+            stream: self,
+            ended: false,
+        }
     }
 }
 
 /// The items of a stream, each read by a blocking call.
-struct Blocked<S>(Pin<Box<S>>);
+struct Blocked<S> {
+    stream: Pin<Box<S>>,
+    ended: bool,
+}
 
 impl<S: Stream<Item = Result<T>>, T> Iterator for Blocked<S> {
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Result<T>> {
-        match runtime() {
-            Ok(runtime) => runtime.block_on(self.0.next()),
-            Err(error) => Some(Err(error)),
-        }
+        blocking_next(&mut self.ended, runtime(), &mut self.stream)
     }
 }
 
