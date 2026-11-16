@@ -79,21 +79,28 @@ fn spark_udf_expansion(
     attr: proc_macro2::TokenStream,
     item: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
-    expansion(Options::parse(attr), item)
+    expansion("spark_udf", Options::parse(attr), item)
 }
 
 /// What `#[spark_wasm_udf(attr)]` makes of `item`: the expansion of `#[spark_udf(attr)]` if
-/// `attr` is a `crate` option that it accepts, else that of `#[spark_udf]`.
+/// `attr` is a `crate` option that it accepts, else that of `#[spark_udf]`, with errors and
+/// docs that name `#[spark_wasm_udf]`.
 fn spark_wasm_udf_expansion(
     attr: proc_macro2::TokenStream,
     item: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     // Its arguments were ignored before the `crate` option existed, so every attribute that
     // compiled then still does, and expands as it did.
-    expansion(Ok(Options::parse(attr).unwrap_or_default()), item)
+    expansion(
+        "spark_wasm_udf",
+        Ok(Options::parse(attr).unwrap_or_default()),
+        item,
+    )
 }
 
+/// What the attribute `#[attribute]` makes of `item` with `options`; its errors and docs name it.
 fn expansion(
+    attribute: &str,
     options: syn::Result<Options>,
     item: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
@@ -105,7 +112,7 @@ fn expansion(
         Ok(module) => module,
         Err(e) => return e.to_compile_error(),
     };
-    expand(module, &options).unwrap_or_else(|e| e.to_compile_error())
+    expand(module, &options, attribute).unwrap_or_else(|e| e.to_compile_error())
 }
 
 /// The arguments of `#[spark_udf(...)]`.
@@ -157,6 +164,7 @@ pub fn spark_wasm_udf(attr: TokenStream, item: TokenStream) -> TokenStream {
 fn abi_type(
     client: &proc_macro2::TokenStream,
     ty: &Type,
+    attribute: &str,
 ) -> Result<proc_macro2::TokenStream, syn::Error> {
     let root = quote!(#client::rust_udf::AbiType);
     if let Some(ident) = path_ident(ty) {
@@ -174,17 +182,19 @@ fn abi_type(
         if path_ident(inner).as_deref() == Some("u8") {
             return Ok(quote!(#root::Binary));
         }
-        let inner = abi_type(client, inner)?;
+        let inner = abi_type(client, inner, attribute)?;
         return Ok(quote!(#root::Array(::std::boxed::Box::new(#inner))));
     }
     if let Some(inner) = generic_inner(ty, "Option") {
-        let inner = abi_type(client, inner)?;
+        let inner = abi_type(client, inner, attribute)?;
         return Ok(quote!(#root::Nullable(::std::boxed::Box::new(#inner))));
     }
     Err(syn::Error::new_spanned(
         ty,
-        "#[spark_udf] supports i32/i64/f32/f64/bool/String/Vec<u8>/Vec<T>/Option<T> \
-         (use owned types, e.g. `String` not `&str`)",
+        format!(
+            "#[{attribute}] supports i32/i64/f32/f64/bool/String/Vec<u8>/Vec<T>/Option<T> \
+             (use owned types, e.g. `String` not `&str`)"
+        ),
     ))
 }
 
@@ -234,17 +244,17 @@ struct Udf {
     ret_ty: Type,
 }
 
-fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
+fn collect_udf(func: &ItemFn, attribute: &str) -> Result<Udf, syn::Error> {
     if func.sig.asyncness.is_some() {
         return Err(syn::Error::new_spanned(
             &func.sig,
-            "#[spark_udf] cannot be applied to async functions",
+            format!("#[{attribute}] cannot be applied to async functions"),
         ));
     }
     if !func.sig.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &func.sig.generics,
-            "#[spark_udf] cannot be applied to generic functions",
+            format!("#[{attribute}] cannot be applied to generic functions"),
         ));
     }
     let name = func.sig.ident.clone();
@@ -262,7 +272,7 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
             FnArg::Receiver(r) => {
                 return Err(syn::Error::new_spanned(
                     r,
-                    "#[spark_udf] cannot be applied to methods (`self`)",
+                    format!("#[{attribute}] cannot be applied to methods (`self`)"),
                 ))
             }
         }
@@ -270,7 +280,7 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
     if arg_tys.is_empty() {
         return Err(syn::Error::new_spanned(
             &func.sig,
-            "#[spark_udf] requires at least one argument",
+            format!("#[{attribute}] requires at least one argument"),
         ));
     }
     let ret_ty = match &func.sig.output {
@@ -278,7 +288,7 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
         ReturnType::Default => {
             return Err(syn::Error::new_spanned(
                 &func.sig,
-                "#[spark_udf] requires a return type",
+                format!("#[{attribute}] requires a return type"),
             ))
         }
     };
@@ -298,7 +308,11 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
     })
 }
 
-fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenStream, syn::Error> {
+fn expand(
+    mut module: ItemMod,
+    options: &Options,
+    attribute: &str,
+) -> Result<proc_macro2::TokenStream, syn::Error> {
     let mod_ident = module.ident.clone();
     let client = match &options.client {
         Some(path) => quote!(#path),
@@ -307,21 +321,21 @@ fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenSt
     let Some((_, items)) = &module.content else {
         return Err(syn::Error::new_spanned(
             &module,
-            "#[spark_udf] must be applied to an inline module with a body",
+            format!("#[{attribute}] must be applied to an inline module with a body"),
         ));
     };
 
     let udfs: Vec<Udf> = items
         .iter()
         .filter_map(|it| match it {
-            Item::Fn(f) => Some(collect_udf(f)),
+            Item::Fn(f) => Some(collect_udf(f, attribute)),
             _ => None,
         })
         .collect::<Result<_, _>>()?;
     if udfs.is_empty() {
         return Err(syn::Error::new_spanned(
             &module,
-            "#[spark_udf] module contains no functions",
+            format!("#[{attribute}] module contains no functions"),
         ));
     }
 
@@ -406,9 +420,9 @@ fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenSt
         let builder = format_ident!("{}_udf", name);
         let arg_abis: Vec<_> = arg_tys
             .iter()
-            .map(|ty| abi_type(&client, ty))
+            .map(|ty| abi_type(&client, ty, attribute))
             .collect::<Result<_, _>>()?;
-        let ret_abi = abi_type(&client, ret_ty)?;
+        let ret_abi = abi_type(&client, ret_ty, attribute)?;
         let with_batch = batch_export.as_ref().map(|b| {
             let b = b.to_string();
             quote!(.with_batch_entrypoint(#b))
@@ -418,23 +432,23 @@ fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenSt
             .collect();
         let builder_doc = match options.client {
             None => format!(
-                "Builder for the `{name_str}` UDF, generated by `#[spark_udf]`. \
+                "Builder for the `{name_str}` UDF, generated by `#[{attribute}]`. \
                  For advanced configuration (`.as_nondeterministic()`, `.with_packer()`) \
                  before `.call(cols)`; the common case is `{name_str}(cols...)`."
             ),
             Some(_) => format!(
-                "Builder for the `{name_str}` UDF, generated by `#[spark_udf]`, to configure \
+                "Builder for the `{name_str}` UDF, generated by `#[{attribute}]`, to configure \
                  it (`.as_nondeterministic()`) before `.call(cols)` or to register it; the \
                  common case is `{name_str}(cols...)`."
             ),
         };
         let call_doc = match options.client {
             None => format!(
-                "Apply the `{name_str}` UDF to columns, generated by `#[spark_udf]`. \
+                "Apply the `{name_str}` UDF to columns, generated by `#[{attribute}]`. \
                  Takes one column per argument and returns the result column."
             ),
             Some(_) => format!(
-                "Apply the `{name_str}` UDF to columns, generated by `#[spark_udf]`. \
+                "Apply the `{name_str}` UDF to columns, generated by `#[{attribute}]`. \
                  Takes one column per argument, or anything that converts into one, such as \
                  a column name, and returns the result column."
             ),
@@ -481,7 +495,7 @@ fn expand(mut module: ItemMod, options: &Options) -> Result<proc_macro2::TokenSt
         });
     }
 
-    let doc = format!("UDF constructors generated by `#[spark_udf]` from module `{mod_ident}`.");
+    let doc = format!("UDF constructors generated by `#[{attribute}]` from module `{mod_ident}`.");
     Ok(quote! {
         // Off wasm32 the exported UDF functions are called only from the
         // `#[cfg(target_arch = "wasm32")]` wrappers injected above, so on the host
@@ -556,8 +570,9 @@ mod tests {
         let expand = |expansion: fn(TokenStream, TokenStream) -> TokenStream, attr: &str| {
             expansion(attr.parse().unwrap(), module.clone()).to_string()
         };
-        let default = expand(spark_udf_expansion, "");
-        let for_the_async_client = expand(spark_udf_expansion, "crate = spark_connect_async");
+        let default = renamed(expand(spark_udf_expansion, ""));
+        let for_the_async_client =
+            renamed(expand(spark_udf_expansion, "crate = spark_connect_async"));
         assert_ne!(default, for_the_async_client);
         assert_eq!(expand(spark_wasm_udf_expansion, ""), default);
         assert_eq!(
@@ -579,6 +594,50 @@ mod tests {
                 "{attr}: {rejected}"
             );
             assert_eq!(expand(spark_wasm_udf_expansion, attr), default, "{attr}");
+        }
+    }
+
+    /// `expanded`, the output of `#[spark_udf]`, as `#[spark_wasm_udf]` writes it.
+    fn renamed(expanded: String) -> String {
+        expanded.replace("#[spark_udf]", "#[spark_wasm_udf]")
+    }
+
+    #[test]
+    fn the_old_name_names_itself_in_its_errors_and_docs() {
+        let expand = |expansion: fn(TokenStream, TokenStream) -> TokenStream, module: &str| {
+            expansion(TokenStream::new(), module.parse().unwrap()).to_string()
+        };
+        for module in [
+            "mod m { pub fn plus(x: &str) -> i64 { 1 } }",
+            "mod m { pub async fn plus(x: i64) -> i64 { x } }",
+            "mod m { pub fn plus<T>(x: i64) -> i64 { x } }",
+            "mod m { pub fn plus(&self) -> i64 { 1 } }",
+            "mod m { pub fn plus() -> i64 { 1 } }",
+            "mod m { pub fn plus(x: i64) {} }",
+            "mod m;",
+            "mod m { const X: i64 = 1; }",
+        ] {
+            let error = expand(spark_wasm_udf_expansion, module);
+            assert!(error.contains("#[spark_wasm_udf] "), "{module}: {error}");
+            assert_eq!(
+                error,
+                renamed(expand(spark_udf_expansion, module)),
+                "{module}"
+            );
+        }
+        let docs = expand(
+            spark_wasm_udf_expansion,
+            "mod m { pub fn plus(x: i64) -> i64 { x } }",
+        );
+        for doc in [
+            "Builder for the `plus` UDF, generated by `#[spark_wasm_udf]`. For advanced \
+             configuration (`.as_nondeterministic()`, `.with_packer()`) before `.call(cols)`; the \
+             common case is `plus(cols...)`.",
+            "Apply the `plus` UDF to columns, generated by `#[spark_wasm_udf]`. Takes one column \
+             per argument and returns the result column.",
+            "UDF constructors generated by `#[spark_wasm_udf]` from module `m`.",
+        ] {
+            assert!(docs.contains(&format!("{doc:?}")), "{doc}: {docs}");
         }
     }
 
@@ -665,7 +724,7 @@ mod tests {
             ),
             ("crate = \"::a::b\"", converted(quote!(::a::b))),
         ] {
-            let expanded = expand(module.clone(), &options(attr).unwrap()).unwrap();
+            let expanded = expand(module.clone(), &options(attr).unwrap(), "spark_udf").unwrap();
             let file: syn::File = syn::parse2(expanded).unwrap();
             let [syn::Item::Mod(_), syn::Item::Mod(udf)] = &file.items[..] else {
                 panic!("{attr}: not a module and its `udf` module");
