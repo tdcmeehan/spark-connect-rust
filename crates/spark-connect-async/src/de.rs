@@ -1222,7 +1222,9 @@ fn ntz_text(value: NaiveDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::{Int32Array, LargeListArray, ListArray, MapBuilder, StringBuilder};
+    use arrow::array::{
+        Int32Array, LargeListArray, ListArray, MapBuilder, StringArray, StringBuilder,
+    };
     use spark_connect_core::types::StructField;
 
     use super::*;
@@ -1259,8 +1261,8 @@ mod tests {
         map.values().append_value("v");
         map.append(true).unwrap();
         let columns: Vec<ArrayRef> = vec![
-            Arc::new(inner),
-            Arc::new(list),
+            Arc::new(inner.clone()),
+            Arc::new(list.clone()),
             Arc::new(map.finish()),
             Arc::new(large_list.clone()),
         ];
@@ -1322,6 +1324,14 @@ mod tests {
             z: i32,
         }
         #[derive(Deserialize, Debug, PartialEq)]
+        struct W {
+            w: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct U {
+            u: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
         struct Named {
             point: X,
             points: Vec<Y>,
@@ -1342,26 +1352,65 @@ mod tests {
         let unnamed = with_names_of(batch, None).unwrap();
         assert!(from_record_batch::<Named>(&unnamed).is_err());
 
-        #[derive(Deserialize, Debug, PartialEq)]
-        struct LargePoints {
-            large_points: Vec<Z>,
-        }
-        let field = Field::new("large_points", large_list.data_type().clone(), true);
-        let named_on_top = RecordBatch::try_new(
-            Arc::new(Schema::new(vec![field])),
-            vec![Arc::new(large_list)],
-        )
-        .unwrap();
-        let schema = SparkType::Struct {
-            fields: vec![large_points()],
+        let named_on_top = |column: ArrayRef, field: StructField| {
+            let arrow_field = Field::new(&field.name, column.data_type().clone(), true);
+            let batch =
+                RecordBatch::try_new(Arc::new(Schema::new(vec![arrow_field])), vec![column])
+                    .unwrap();
+            let schema = SparkType::Struct {
+                fields: vec![field],
+            };
+            with_names_of(batch, Some(&schema)).unwrap()
         };
-        let renamed = with_names_of(named_on_top, Some(&schema)).unwrap();
-        let rows: Vec<LargePoints> = from_record_batch(&renamed).unwrap();
-        assert_eq!(
-            rows,
-            [LargePoints {
-                large_points: vec![Z { z: 7 }],
-            }]
+        let array_of = |element| SparkType::Array {
+            element_type: Box::new(element),
+            contains_null: true,
+        };
+        let points = named_on_top(
+            Arc::new(list),
+            spark_field("points", array_of(struct_of("y"))),
         );
+        let rows: Vec<(Vec<Y>,)> = from_record_batch(&points).unwrap();
+        assert_eq!(rows, [(vec![Y { y: 7 }],)]);
+        let large = named_on_top(Arc::new(large_list), large_points());
+        let rows: Vec<(Vec<Z>,)> = from_record_batch(&large).unwrap();
+        assert_eq!(rows, [(vec![Z { z: 7 }],)]);
+
+        let entries = StructArray::from(vec![
+            (
+                Arc::new(Field::new("keys", ArrowType::Utf8, false)),
+                Arc::new(StringArray::from(vec!["k"])) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("values", inner.data_type().clone(), true)),
+                Arc::new(inner.clone()) as ArrayRef,
+            ),
+        ]);
+        let scores = MapArray::new(
+            Arc::new(Field::new("entries", entries.data_type().clone(), false)),
+            arrow::buffer::OffsetBuffer::from_lengths([1]),
+            entries,
+            None,
+            false,
+        );
+        let map_of_structs = SparkType::Map {
+            key_type: Box::new(string()),
+            value_type: Box::new(struct_of("w")),
+            value_contains_null: true,
+        };
+        let scores = named_on_top(Arc::new(scores), spark_field("scores", map_of_structs));
+        let rows: Vec<(Vec<(String, W)>,)> = from_record_batch(&scores).unwrap();
+        assert_eq!(rows, [(vec![("k".to_string(), W { w: 7 })],)]);
+
+        let udt = SparkType::Udt {
+            type_str: "location".to_string(),
+            jvm_class: None,
+            python_class: None,
+            serialized_python_class: None,
+            sql_type: Some(Box::new(struct_of("u"))),
+        };
+        let located = named_on_top(Arc::new(inner), spark_field("location", udt));
+        let rows: Vec<(U,)> = from_record_batch(&located).unwrap();
+        assert_eq!(rows, [(U { u: 7 },)]);
     }
 }
