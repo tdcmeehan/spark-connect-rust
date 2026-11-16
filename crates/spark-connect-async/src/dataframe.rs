@@ -755,10 +755,13 @@ impl DataFrame {
         metrics: impl IntoIterator<Item = impl Into<Column>>,
     ) -> DataFrame {
         let observation = observation.into().into_core();
-        let name = observation
-            .name_to_observe()
-            .unwrap_or_else(|_| observation.name().unwrap_or_default());
-        observation.start();
+        let name = match observation.name_to_observe() {
+            Ok(name) => {
+                observation.start();
+                name
+            }
+            Err(_) => observation.name().unwrap_or_default(),
+        };
         self.with_plan(LogicalPlan::Observe {
             input: self.input(),
             name,

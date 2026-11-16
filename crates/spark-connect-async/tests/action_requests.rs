@@ -535,6 +535,58 @@ async fn connected(builder: SessionBuilder) -> (Arc<server::Recorder>, Session) 
     (recorder, builder.remote(url).connect().await.unwrap())
 }
 
+#[tokio::test]
+async fn a_decode_error_names_its_row_among_the_rows_of_every_batch() {
+    struct Zero;
+    impl<'de> serde::Deserialize<'de> for Zero {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            match i64::deserialize(deserializer)? {
+                0 => Ok(Zero),
+                id => Err(serde::de::Error::custom(format!("{id} is not 0"))),
+            }
+        }
+    }
+    let (_, url) = start();
+    let session = Session::builder().remote(url).connect().await.unwrap();
+    let three = session.sql(server::THREE_BATCHES).await.unwrap();
+    let collected = three.collect_as::<(Zero,)>().await.err().unwrap();
+    assert_eq!(collected.message(), "1 is not 0 (row 1, column `id`)");
+    let streamed: Vec<_> = three.stream_as::<(Zero,)>().await.unwrap().collect().await;
+    let errors: Vec<String> = streamed
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|error| error.message())
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            "1 is not 0 (row 1, column `id`)",
+            "2 is not 0 (row 2, column `id`)"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_observation_observed_again_keeps_its_metrics_until_an_action_reports_new_ones() {
+    use spark_connect_async::value::Value;
+    use spark_connect_async::{lit, Observation};
+    let (_, url) = start();
+    let session = Session::builder().remote(url).connect().await.unwrap();
+    let observation = Observation::new("metrics");
+    let metric = || observation.get().unwrap().get_by_name("m").cloned();
+    let first = session.range(3).observe(&observation, [lit(1).alias("m")]);
+    first.collect().await.unwrap();
+    assert_eq!(metric(), Some(Value::Int(1)));
+    let again = session.range(3).observe(&observation, [lit(2).alias("m")]);
+    assert_eq!(
+        metric(),
+        Some(Value::Int(1)),
+        "observed again, it lost them"
+    );
+    again.collect().await.unwrap();
+    assert_eq!(metric(), Some(Value::Int(2)));
+}
+
 #[test]
 fn progress_handlers_and_hooks_run_on_the_thread_that_polls_in_either_runtime() {
     for multi_thread in [false, true] {

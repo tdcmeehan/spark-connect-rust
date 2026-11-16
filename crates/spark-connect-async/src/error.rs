@@ -135,6 +135,15 @@ impl Error {
         self
     }
 
+    /// This error of decoding a batch, as of the rows of the whole result, where `earlier` rows
+    /// came in the batches before it.
+    pub(crate) fn after_rows(mut self, earlier: usize) -> Error {
+        if let Repr::Decode { row: Some(row), .. } = &mut *self.0 {
+            *row += earlier;
+        }
+        self
+    }
+
     fn spark(&self) -> Option<&SparkError> {
         match &*self.0 {
             Repr::Spark(error) => Some(error),

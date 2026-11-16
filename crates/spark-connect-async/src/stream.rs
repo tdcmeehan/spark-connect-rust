@@ -262,7 +262,7 @@ enum State {
 ///
 /// Dropping the stream before its end releases the operation on the server, which stops it.
 /// The column names of each batch, nested ones included, are those of the schema that the
-/// server sends with the result.
+/// server sends with the result. An error ends the stream: no batch follows it.
 pub struct RecordBatchStream {
     state: State,
     batches: VecDeque<RecordBatch>,
@@ -309,8 +309,14 @@ impl RecordBatchStream {
     pub(crate) fn rows_as<T: DeserializeOwned + Send + 'static>(
         self,
     ) -> impl Stream<Item = Result<T>> + Send + 'static {
-        self.flat_map(|batch| {
-            match batch.and_then(|batch| crate::de::from_record_batch::<T>(&batch)) {
+        let mut earlier = 0;
+        self.flat_map(move |batch| {
+            let rows = batch.and_then(|batch| {
+                let first = earlier;
+                earlier += batch.num_rows();
+                crate::de::from_record_batch::<T>(&batch).map_err(|error| error.after_rows(first))
+            });
+            match rows {
                 Ok(rows) => futures::stream::iter(rows.into_iter().map(Ok)).left_stream(),
                 Err(error) => futures::stream::iter([Err(error)]).right_stream(),
             }
@@ -349,6 +355,8 @@ impl Stream for RecordBatchStream {
                                 for batch in batches {
                                     match crate::de::with_names_of(batch, this.schema.as_ref()) {
                                         Ok(batch) => this.batches.push_back(batch),
+                                        // Never taken: renaming keeps what the IPC reader
+                                        // checked when it read the batch.
                                         Err(error) => return Poll::Ready(Some(Err(error))),
                                     }
                                 }

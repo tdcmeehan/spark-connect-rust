@@ -293,7 +293,8 @@ impl DataFrame {
             let mut batches = stream.await?;
             let mut rows = Vec::new();
             while let Some(batch) = batches.next().await {
-                rows.extend(read(&batch?)?);
+                let earlier = rows.len();
+                rows.extend(read(&batch?).map_err(|error| error.after_rows(earlier))?);
             }
             Ok(rows)
         }

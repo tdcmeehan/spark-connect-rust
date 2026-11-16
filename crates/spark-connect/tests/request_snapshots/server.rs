@@ -559,6 +559,7 @@ fn held_subscription(
 fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
     use proto::plan::OpType;
     let operation_id = request.operation_id.clone().unwrap_or_default();
+    let mut observed = Vec::new();
     let results = match request.plan.and_then(|plan| plan.op_type) {
         Some(OpType::Root(relation)) => match sql_query(&relation) {
             Some(THREE_BATCHES) => return batches(&request.session_id, &operation_id, 3, None),
@@ -566,7 +567,10 @@ fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanR
                 let failure = Status::invalid_argument("the execution failed");
                 return batches(&request.session_id, &operation_id, 1, Some(failure));
             }
-            _ => relation_results(&relation),
+            _ => {
+                observed = observed_literals(&relation);
+                relation_results(&relation)
+            }
         },
         Some(OpType::Command(command)) if reports_progress(&command) => {
             let results = command_results(command);
@@ -575,10 +579,47 @@ fn execute(request: proto::ExecutePlanRequest) -> Vec<Result<proto::ExecutePlanR
         Some(OpType::Command(command)) => command_results(command),
         _ => Vec::new(),
     };
-    complete(&request.session_id, &operation_id, results)
-        .into_iter()
-        .map(Ok)
-        .collect()
+    let mut responses = complete(&request.session_id, &operation_id, results);
+    responses[0].observed_metrics = observed;
+    responses.into_iter().map(Ok).collect()
+}
+
+/// The metrics observed for a root `CollectMetrics` relation whose metrics are all literals,
+/// `lit(value).alias(key)` each, as `key` = `value`; none for any other relation.
+fn observed_literals(
+    relation: &proto::Relation,
+) -> Vec<proto::execute_plan_response::ObservedMetrics> {
+    use proto::expression::ExprType;
+    let Some(proto::relation::RelType::CollectMetrics(collect)) = &relation.rel_type else {
+        return Vec::new();
+    };
+    let literal = |metric: &proto::Expression| match &metric.expr_type {
+        Some(ExprType::Alias(alias)) => match &alias.expr.as_ref()?.expr_type {
+            Some(ExprType::Literal(value)) => Some((alias.name.first()?.clone(), value.clone())),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(metrics) = collect
+        .metrics
+        .iter()
+        .map(literal)
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Vec::new();
+    };
+    let (keys, values) = metrics.into_iter().unzip();
+    vec![proto::execute_plan_response::ObservedMetrics {
+        name: collect.name.clone(),
+        keys,
+        values,
+        plan_id: relation
+            .common
+            .as_ref()
+            .and_then(|common| common.plan_id)
+            .unwrap_or_default(),
+        ..Default::default()
+    }]
 }
 
 fn reports_progress(command: &proto::Command) -> bool {
