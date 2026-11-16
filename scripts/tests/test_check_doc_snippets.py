@@ -66,5 +66,37 @@ class CheckDocSnippetsTests(unittest.TestCase):
                 self.assertIn(diagnostic, error)
 
 
+class AsyncBlockTests(unittest.TestCase):
+    def test_async_pattern_yields_only_the_async_bodies_in_order(self):
+        text = (
+            "# Guide\n"
+            "\n"
+            "```{.rust .async}\n"
+            "let first = session.range(3);\n"
+            "```\n"
+            "\n"
+            "```rust\n"
+            "let plain = 1;\n"
+            "```\n"
+            "\n"
+            "```{.rust .no-run}\n"
+            "let skipped = 2;\n"
+            "```\n"
+            "\n"
+            "```{.rust .async}\n"
+            "let second = df.count().await?;\n"
+            "let rows = second;\n"
+            "```\n"
+        )
+        bodies = [m.group(1) for m in checker._ASYNC_BLOCK.finditer(text)]
+        self.assertEqual(
+            bodies,
+            [
+                "let first = session.range(3);\n",
+                "let second = df.count().await?;\nlet rows = second;\n",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
