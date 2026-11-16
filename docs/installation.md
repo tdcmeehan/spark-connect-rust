@@ -35,7 +35,7 @@ apache-spark-connect-async = "4.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Its optional features are `blocking`, `datafusion`, `polars`, and `rust-udf`, and its requirements are those above.
+Its optional features are `blocking`, `datafusion`, `polars`, and `rust-udf`, and its requirements are those above, except that the `polars` feature needs Rust 1.91 or later.
 
 ### Build from Source
 

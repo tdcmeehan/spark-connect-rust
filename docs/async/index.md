@@ -30,8 +30,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 Building it needs what the other crate needs (see [Installation](../installation.md)): Rust
-1.88 or later and `protobuf-compiler`. Its features add the rest of the API, and none is on
-by default:
+1.88 or later, or 1.91 or later with the `polars` feature, and `protobuf-compiler`. Its
+features add the rest of the API, and none is on by default:
 
 | Feature | What it adds |
 |---|---|

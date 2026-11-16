@@ -31,9 +31,10 @@ query.stop().await?;
 ```
 
 `start` writes to a path, `start_without_path` to a sink that has none, and `to_table` to a
-table. A trigger runs micro-batches at an interval (`ProcessingTime`), once (`Once`), or on
-the data that is there when the query starts (`AvailableNow`); `Continuous` and `RealTime`
-process continuously, or in real time.
+table. A start whose future is dropped before it returns may leave the query running on the
+server, and `session.streams().active()` lists it. A trigger runs micro-batches at an interval
+(`ProcessingTime`), once (`Once`), or on the data that is there when the query starts
+(`AvailableNow`); `Continuous` and `RealTime` process continuously, or in real time.
 
 ## Queries
 
