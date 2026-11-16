@@ -31,7 +31,8 @@ use arrow::array::{
     LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapBuilder, NullArray,
     StringArray, StringBuilder, StringViewArray, StructArray, Time32MillisecondArray,
     Time32SecondArray, Time64MicrosecondArray, Time64NanosecondArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt16Array,
+    UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow::datatypes::{
     i256, DataType as A, Field, Int32Type, IntervalMonthDayNano, IntervalMonthDayNanoType, Schema,
@@ -350,6 +351,49 @@ fn every_scalar_type_reads_into_a_value() {
     );
     assert!(rows[1].values().iter().all(|value| *value == Value::Null));
     assert_eq!(rows[0].get_by_name("int"), Some(&Value::Int(3)));
+}
+
+#[test]
+fn an_unsigned_integer_reads_into_its_rust_type_but_not_into_a_value() {
+    let batch = batch(vec![
+        (
+            "u8",
+            Arc::new(UInt8Array::from(vec![Some(u8::MAX), Some(1), None])),
+        ),
+        (
+            "u16",
+            Arc::new(UInt16Array::from(vec![Some(u16::MAX), Some(2), None])),
+        ),
+        (
+            "u32",
+            Arc::new(UInt32Array::from(vec![Some(u32::MAX), Some(3), None])),
+        ),
+        (
+            "u64",
+            Arc::new(UInt64Array::from(vec![Some(u64::MAX), Some(4), None])),
+        ),
+    ]);
+    type Unsigned = (Option<u8>, Option<u16>, Option<u32>, Option<u64>);
+    let read: Vec<Unsigned> = from_record_batch(&batch).unwrap();
+    assert_eq!(
+        read,
+        [
+            (
+                Some(u8::MAX),
+                Some(u16::MAX),
+                Some(u32::MAX),
+                Some(u64::MAX)
+            ),
+            (Some(1), Some(2), Some(3), Some(4)),
+            (None, None, None, None),
+        ]
+    );
+    for (index, field) in batch.schema().fields().iter().enumerate() {
+        let error = rows(&batch.project(&[index]).unwrap()).unwrap_err();
+        let text = format!("the Arrow type {} cannot be read", field.data_type());
+        assert_eq!(error.kind(), ErrorKind::Decode, "{text}");
+        assert!(error.to_string().contains(&text), "{error}");
+    }
 }
 
 #[test]
