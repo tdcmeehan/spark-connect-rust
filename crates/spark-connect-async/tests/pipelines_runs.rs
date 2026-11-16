@@ -294,6 +294,36 @@ fn a_dropped_graph_is_removed_from_the_runtime_that_created_it() {
     }
 }
 
+#[test]
+fn a_creation_dropped_after_the_server_answered_it_removes_its_graph() {
+    for flavor in ["current-thread", "multi-thread"] {
+        let server = Server::start();
+        runtime(flavor).block_on(async {
+            let session = connect(&server).await;
+            server.wait_at(Wait::AfterTheFirstBatch);
+            let creating = tokio::spawn(session.create_dataflow_graph().into_future());
+            // The client releases each response that it has read.
+            assert!(
+                server
+                    .wait_for(|r| matches!(r, Received::ReleaseUntil(_)))
+                    .await,
+                "{flavor}: the answer was not read"
+            );
+            server.wait_at(Wait::Never);
+            creating.abort();
+            assert!(creating.await.unwrap_err().is_cancelled());
+            assert!(
+                server
+                    .wait_for(|r| matches!(r, Received::DropGraph(_)))
+                    .await,
+                "{flavor}: the graph of the dropped creation was not removed"
+            );
+            assert_eq!(drops(&server), ["graph-1"], "{flavor}");
+            server.open_gate();
+        });
+    }
+}
+
 /// What holds a graph, and lets it go when it is called.
 type Holder<'a> = Box<dyn FnOnce() + 'a>;
 

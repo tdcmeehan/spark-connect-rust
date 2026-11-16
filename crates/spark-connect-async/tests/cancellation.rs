@@ -526,3 +526,36 @@ fn dropping_the_start_or_the_events_of_a_run_stops_them_once_in_either_runtime()
         });
     }
 }
+
+#[test]
+fn a_checkpoint_dropped_after_the_server_answered_it_removes_its_relation() {
+    for flavor in ["current-thread", "multi-thread"] {
+        let mut runtime = match flavor {
+            "current-thread" => tokio::runtime::Builder::new_current_thread(),
+            _ => tokio::runtime::Builder::new_multi_thread(),
+        };
+        runtime.enable_all().build().unwrap().block_on(async {
+            let server = Server::start();
+            let session = connect(&server).await;
+            server.wait_at(Wait::AfterTheFirstBatch);
+            let checkpoint = spark_connect_async::actions::Checkpoint::default();
+            let checkpointing = tokio::spawn(session.range(3).checkpoint(checkpoint));
+            // The client releases each response that it has read.
+            assert!(
+                server
+                    .wait_for(|r| matches!(r, Received::ReleaseUntil(_)))
+                    .await,
+                "{flavor}: the answer was not read"
+            );
+            server.wait_at(Wait::Never);
+            checkpointing.abort();
+            assert!(checkpointing.await.is_err_and(|error| error.is_cancelled()));
+            let removal = Received::RemoveCachedRelation("checkpointed".to_string());
+            assert!(
+                server.wait_for(|r| *r == removal).await,
+                "{flavor}: the relation of the dropped checkpoint was not removed"
+            );
+            server.open_gate();
+        });
+    }
+}

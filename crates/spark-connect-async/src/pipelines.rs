@@ -105,10 +105,14 @@ impl IntoFuture for CreateDataflowGraph {
             core::create_dataflow_graph(self.default_catalog, self.default_database, self.sql_conf);
         let session = self.session;
         async move {
-            let id = stream::command_result(session.clone(), command, core_actions::graph_id)
-                .await?
-                .ok_or_else(|| Error::decode("the server returned no dataflow graph"))?;
-            Ok(DataflowGraph::new(id, session))
+            let owner = session.clone();
+            // Built as its answer comes, so that a creation dropped while the rest of its stream
+            // drains still removes the graph.
+            stream::command_result(session, command, move |response| {
+                core_actions::graph_id(response).map(|id| DataflowGraph::new(id, owner.clone()))
+            })
+            .await?
+            .ok_or_else(|| Error::decode("the server returned no dataflow graph"))
         }
         .boxed()
     }
@@ -128,7 +132,6 @@ pub struct DataflowGraph {
 /// The graph that the server keeps, which the last handle to drop removes.
 struct Kept {
     id: String,
-    /// Dropped before `plans`, so the graph is removed before what its flows refer to.
     removal: stream::RemoveOnDrop,
     /// The plans of the DataFrames that the flows of the graph were defined from. The server
     /// reads them when a run runs the flows, so the graph keeps what they refer to, such as the

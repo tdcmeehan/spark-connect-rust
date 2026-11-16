@@ -23,7 +23,8 @@
 //! execution waits before reattaching, the server answers the commands of Spark ML as 4.3.0
 //! does: a fit with a new model, a fetch of an attribute with a value of its type, and a delete
 //! with the models deleted. It answers the commands of pipelines as 4.3.0 does too: a new graph,
-//! the identifier of each output and flow, and a run whose responses a test can set.
+//! the identifier of each output and flow, and a run whose responses a test can set. It answers
+//! a checkpoint with the relation that it caches, and records the removal of the relation.
 
 // Each test binary uses a part of the server.
 #![allow(dead_code)]
@@ -58,8 +59,8 @@ use proto::expression::literal::LiteralType;
 pub enum Wait {
     /// Before the server answers the ExecutePlan call, so before the client has a stream.
     BeforeAccepting,
-    /// After the first batch, before the rest of the result; for a command of Spark ML, after
-    /// its answer, before the end of its stream.
+    /// After the first batch, before the rest of the result; for a command of Spark ML, the
+    /// creation of a graph or a checkpoint, after its answer, before the end of its stream.
     AfterTheFirstBatch,
     /// Nowhere: the whole result at once.
     Never,
@@ -101,6 +102,8 @@ pub enum Received {
     Delete(Vec<String>),
     /// A drop of the dataflow graph of this id.
     DropGraph(String),
+    /// A removal of the cached relation of this id.
+    RemoveCachedRelation(String),
 }
 
 /// A response of a run of a pipeline that a test sets with [`Server::run_with`].
@@ -616,6 +619,13 @@ fn command_of(request: &proto::ExecutePlanRequest) -> Option<&proto::command::Co
     }
 }
 
+fn creates_a_graph(command: &proto::PipelineCommand) -> bool {
+    matches!(
+        command.command_type,
+        Some(proto::pipeline_command::CommandType::CreateDataflowGraph(_))
+    )
+}
+
 #[derive(Clone)]
 struct Gated(Arc<State>);
 
@@ -814,7 +824,8 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                         ))));
                     }
                     Some(C::PipelineCommand(command))
-                        if matches!(wait, Wait::Never | Wait::BeforeAccepting) =>
+                        if matches!(wait, Wait::Never | Wait::BeforeAccepting)
+                            || (wait == Wait::AfterTheFirstBatch && creates_a_graph(command)) =>
                     {
                         if wait == Wait::BeforeAccepting {
                             state.pass_the_gate().await;
@@ -822,10 +833,40 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                         let result =
                             ResponseType::PipelineCommandResult(state.pipeline_result(command));
                         let complete = ResponseType::ResultComplete(Default::default());
-                        return Ok(Response::new(encoded(vec![
+                        let responses = vec![
                             respond(&request.session_id, &operation_id, 0, result),
                             respond(&request.session_id, &operation_id, 1, complete),
-                        ])));
+                        ];
+                        return Ok(Response::new(match wait {
+                            Wait::AfterTheFirstBatch => ended_at_the_gate(state, responses),
+                            _ => encoded(responses),
+                        }));
+                    }
+                    Some(C::CheckpointCommand(_))
+                        if matches!(wait, Wait::Never | Wait::AfterTheFirstBatch) =>
+                    {
+                        let result =
+                            ResponseType::CheckpointCommandResult(proto::CheckpointCommandResult {
+                                relation: Some(proto::CachedRemoteRelation {
+                                    relation_id: "checkpointed".to_string(),
+                                }),
+                            });
+                        let complete = ResponseType::ResultComplete(Default::default());
+                        let responses = vec![
+                            respond(&request.session_id, &operation_id, 0, result),
+                            respond(&request.session_id, &operation_id, 1, complete),
+                        ];
+                        return Ok(Response::new(match wait {
+                            Wait::AfterTheFirstBatch => ended_at_the_gate(state, responses),
+                            _ => encoded(responses),
+                        }));
+                    }
+                    Some(C::RemoveCachedRemoteRelationCommand(remove)) => {
+                        let id = remove.relation.as_ref().map(|r| r.relation_id.clone());
+                        state.receive(Received::RemoveCachedRelation(id.unwrap_or_default()));
+                        let complete = ResponseType::ResultComplete(Default::default());
+                        let complete = respond(&request.session_id, &operation_id, 0, complete);
+                        return Ok(Response::new(encoded(vec![complete])));
                     }
                     Some(C::WriteStreamOperationStart(start)) => {
                         let started = proto::WriteStreamOperationStartResult {

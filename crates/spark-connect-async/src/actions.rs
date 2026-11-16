@@ -453,23 +453,29 @@ impl DataFrame {
         });
         let session = self.session().clone();
         self.holding(async move {
-            let relation_id =
-                stream::command_result(session.clone(), command, |response| match response {
+            let cache = session.clone();
+            // Kept as its answer comes, so that a checkpoint dropped while the rest of its stream
+            // drains still removes the relation.
+            let (relation_id, owner) =
+                stream::command_result(session.clone(), command, move |response| match response {
                     proto::execute_plan_response::ResponseType::CheckpointCommandResult(result) => {
-                        result.relation.map(|relation| relation.relation_id)
+                        let relation_id = result.relation?.relation_id;
+                        let remove = proto::command::CommandType::RemoveCachedRemoteRelationCommand(
+                            proto::RemoveCachedRemoteRelationCommand {
+                                relation: Some(proto::CachedRemoteRelation {
+                                    relation_id: relation_id.clone(),
+                                }),
+                            },
+                        );
+                        Some((
+                            relation_id,
+                            stream::RemoveOnDrop::new(cache.clone(), remove),
+                        ))
                     }
                     _ => None,
                 })
                 .await?
                 .ok_or_else(|| Error::decode("the server returned no checkpoint"))?;
-            let remove = proto::command::CommandType::RemoveCachedRemoteRelationCommand(
-                proto::RemoveCachedRemoteRelationCommand {
-                    relation: Some(proto::CachedRemoteRelation {
-                        relation_id: relation_id.clone(),
-                    }),
-                },
-            );
-            let owner = stream::RemoveOnDrop::new(session.clone(), remove);
             Ok(DataFrame::new(
                 session,
                 LogicalPlan::CachedRemoteRelation {
