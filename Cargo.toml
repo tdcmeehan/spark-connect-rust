@@ -20,6 +20,7 @@ resolver = "2"
 members = [
     "crates/spark-connect-proto",
     "crates/spark-connect-core",
+    "crates/spark-connect-blocking",
     "crates/spark-connect",
     "crates/spark-connect-macros",
     "crates/spark-connect-build",
@@ -47,6 +48,7 @@ exclude = [
 default-members = [
     "crates/spark-connect-proto",
     "crates/spark-connect-core",
+    "crates/spark-connect-blocking",
     "crates/spark-connect",
     "crates/spark-connect-macros",
     "crates/spark-connect-build",

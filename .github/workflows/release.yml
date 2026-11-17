@@ -335,8 +335,8 @@ jobs:
         # shows whether the packaged crate has them.
         run: |
           set -euo pipefail
-          for c in apache-spark-connect-proto apache-spark-connect-core apache-spark-connect \
-                   apache-spark-connect-macros apache-spark-connect-build; do
+          for c in apache-spark-connect-proto apache-spark-connect-core apache-spark-connect-blocking \
+                   apache-spark-connect apache-spark-connect-macros apache-spark-connect-build; do
             files=$(cargo package --list --allow-dirty -p "$c")
             for f in LICENSE NOTICE; do
               if ! grep -qx "$f" <<<"$files"; then
@@ -352,6 +352,7 @@ jobs:
           cargo publish --dry-run \
             -p apache-spark-connect-proto \
             -p apache-spark-connect-core \
+            -p apache-spark-connect-blocking \
             -p apache-spark-connect \
             -p apache-spark-connect-macros \
             -p apache-spark-connect-build
@@ -501,8 +502,8 @@ jobs:
         # shows whether the packaged crate has them.
         run: |
           set -euo pipefail
-          for c in apache-spark-connect-proto apache-spark-connect-core apache-spark-connect \
-                   apache-spark-connect-macros apache-spark-connect-build; do
+          for c in apache-spark-connect-proto apache-spark-connect-core apache-spark-connect-blocking \
+                   apache-spark-connect apache-spark-connect-macros apache-spark-connect-build; do
             files=$(cargo package --list --allow-dirty -p "$c")
             for f in LICENSE NOTICE; do
               if ! grep -qx "$f" <<<"$files"; then
@@ -527,8 +528,8 @@ jobs:
         run: |
           set -euo pipefail
           # The macros and build crates are what a Rust UDF depends on (docs/udfs.md).
-          CRATES=(apache-spark-connect-proto apache-spark-connect-core apache-spark-connect
-                  apache-spark-connect-macros apache-spark-connect-build)
+          CRATES=(apache-spark-connect-proto apache-spark-connect-core apache-spark-connect-blocking
+                  apache-spark-connect apache-spark-connect-macros apache-spark-connect-build)
           VER="${{ needs.resolve.outputs.version }}"
           # Skip any crate already on crates.io at this version so a re-run is idempotent.
           pkgs=()
