@@ -2,14 +2,20 @@
 //! `pyspark.sql.connect.shell.progress`: the progress handlers of the session are called with
 //! each progress of the server that has tasks, and once more, as done, when the execution ends.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::client::{InflightHandle, ReattachableResponseStream};
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::runtime::CallbackGuard;
+use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
 use spark_connect_proto as proto;
 
-use crate::session::{FallibleProgressHandler, ProgressHandlers};
+use crate::dataframe::ExecutionSlot;
+use crate::observation::Observation;
+use crate::profiler::PythonAccumulators;
+use crate::session::{
+    ExecutionInfo, FallibleProgressHandler, ObservationMetricsCheck, ProgressHandlers, SparkSession,
+};
 
 /// The progress of a stage of an execution, as PySpark's `StageInfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +170,16 @@ impl ProgressTracker {
         Ok(())
     }
 
+    /// The progress of `response`, if it is one (see [`ProgressTracker::update`]).
+    fn observe(&mut self, response: &proto::ExecutePlanResponse) -> Result<()> {
+        if let Some(proto::execute_plan_response::ResponseType::ExecutionProgress(progress)) =
+            &response.response_type
+        {
+            return self.update(progress, &response.operation_id);
+        }
+        Ok(())
+    }
+
     fn notify(&self, done: bool) -> Result<()> {
         // Clone handlers out of the registry lock so callbacks can add or remove handlers.
         let handlers: Vec<FallibleProgressHandler> = self
@@ -207,12 +223,90 @@ impl Drop for ProgressTracker {
     }
 }
 
+/// The observer of an execution of a session that the core runs: the progress of the execution
+/// for the handlers of the session, the observed metrics for the Observations of the executed
+/// plan and the Python accumulators, and the record of the execution as the session's most
+/// recent one.
+pub(crate) struct SessionObserver {
+    handlers: ProgressHandlers,
+    observations: Vec<(String, Observation)>,
+    check: Arc<Mutex<Option<ObservationMetricsCheck>>>,
+    accumulators: PythonAccumulators,
+    last_execution: ExecutionSlot,
+    progress: Option<ProgressTracker>,
+}
+
+impl SessionObserver {
+    /// The observer of an execution about to start, with its progress for `handlers`, whose
+    /// observed metrics set `observations`. It fails with a `RecursionError` when the callbacks
+    /// that run queries are nested too deep on this thread.
+    pub(crate) fn start(
+        session: &SparkSession,
+        handlers: ProgressHandlers,
+        observations: &[(String, Observation)],
+    ) -> Result<Self> {
+        check_callback_depth()?;
+        Ok(SessionObserver {
+            handlers,
+            observations: observations.to_vec(),
+            check: session.observation_metrics_check_slot(),
+            accumulators: session.python_accumulators().clone(),
+            last_execution: session.last_execution_slot(),
+            progress: None,
+        })
+    }
+}
+
+impl ExecutionObserver for SessionObserver {
+    fn on_start(&mut self, operation_id: &str) {
+        self.progress = Some(ProgressTracker::with_handlers(
+            Arc::clone(&self.handlers),
+            Some(operation_id.to_string()),
+        ));
+    }
+
+    fn on_response(&mut self, response: &proto::ExecutePlanResponse) -> Result<()> {
+        match &mut self.progress {
+            Some(progress) => progress.observe(response),
+            None => Ok(()),
+        }
+    }
+
+    fn on_observed_metrics(
+        &mut self,
+        metrics: &[proto::execute_plan_response::ObservedMetrics],
+    ) -> Result<()> {
+        let check = self.check.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        crate::dataframe::set_observations(
+            check.as_ref(),
+            &self.accumulators,
+            &self.observations,
+            metrics,
+        )
+    }
+
+    fn on_complete(&mut self, info: &ExecutionInfo) -> Result<()> {
+        if let Some(progress) = &mut self.progress {
+            progress.finish()?;
+        }
+        *self.last_execution.lock().unwrap() = Some(info.clone());
+        Ok(())
+    }
+
+    fn on_failure(&mut self, error: SparkError) -> SparkError {
+        match &mut self.progress {
+            Some(progress) => progress.finish_after(error),
+            None => error,
+        }
+    }
+}
+
 /// The responses of an execution, with its progress for the handlers of the session: each
 /// `ExecutionProgress` updates it, and it ends when the stream is dropped.
 pub(crate) struct ExecutionStream {
     stream: ReattachableResponseStream,
     progress: ProgressTracker,
-    chunks: crate::arrow_chunks::ArrowChunkAssembler,
+    chunks: spark_connect_core::arrow_chunks::ArrowChunkAssembler,
 }
 
 impl ExecutionStream {
@@ -244,9 +338,9 @@ impl ExecutionStream {
 
     /// As [`ExecutionStream::message`], waiting on the calling thread, which the handlers are
     /// called on, as PySpark calls them on the thread that iterates the responses: also inside
-    /// a `current_thread` runtime, where the response is awaited on a thread of its own.
+    /// a `current_thread` runtime.
     pub(crate) fn next_message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = spark_connect_core::runtime::block_on(self.stream.message());
+        let response = crate::blocking::block_on(self.stream.message());
         // On a worker of a multi-thread runtime, the handlers block in place, as the wait did.
         match tokio::runtime::Handle::try_current() {
             Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
@@ -275,12 +369,8 @@ impl ExecutionStream {
             Err(error) => return Err(self.progress.finish_after(error)),
         };
         if let Some(response) = &response {
-            if let Some(proto::execute_plan_response::ResponseType::ExecutionProgress(progress)) =
-                &response.response_type
-            {
-                if let Err(error) = self.progress.update(progress, &response.operation_id) {
-                    return Err(self.progress.finish_after(error));
-                }
+            if let Err(error) = self.progress.observe(response) {
+                return Err(self.progress.finish_after(error));
             }
         }
         match self.chunks.join(response) {

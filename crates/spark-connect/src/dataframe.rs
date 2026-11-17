@@ -2984,27 +2984,7 @@ fn execute_command_reporting(
     reported: bool,
     observations: &[(String, crate::observation::Observation)],
 ) -> Result<(Vec<proto::ExecutePlanResponse>, ExecutionInfo)> {
-    let request = execution::execute_plan_request(
-        session.client().session_id(),
-        session.tags(),
-        execution::command(command_type),
-    );
-    let mut stream = if reported {
-        session.execute_plan(request)?
-    } else {
-        session.execute_plan_unreported(request)?
-    };
-    // Drain the response stream so the command runs to completion server-side,
-    // capturing any metrics/progress emitted along the way.
-    let mut info = ExecutionInfo::default();
-    let mut responses = Vec::new();
-    while let Some(mut resp) = stream.next_message()? {
-        capture_execution(&mut resp, &mut info, session, observations)
-            .map_err(|error| stream.fail(error))?;
-        responses.push(resp);
-    }
-    session.record_execution(info.clone());
-    Ok((responses, info))
+    session.execute_command(command_type, reported, observations)
 }
 
 /// Pull execution metrics/observed-metrics off a response; the `ExecutionStream` of the
@@ -3020,7 +3000,12 @@ fn capture_execution(
 ) -> Result<()> {
     let observed = info.capture(resp);
     if !observed.is_empty() {
-        let set = set_observations(session, observations, observed);
+        let set = set_observations(
+            session.observation_metrics_check().as_ref(),
+            session.python_accumulators(),
+            observations,
+            observed,
+        );
         // As PySpark's client raises an error of the execution with its operation ID.
         set.map_err(|error| match &info.operation_id {
             Some(operation_id) => error.with_operation_id(operation_id.as_str()),
@@ -3034,16 +3019,16 @@ fn capture_execution(
 /// them in `observations`, the Observations of the executed plan (`LogicalPlan.observations`),
 /// by their names: the metrics of the Observation of their name, or the error of collecting
 /// them, which the server reported. The updates of the Python accumulators, such as the results
-/// of the UDF profilers, go to the handler of the session. The check of the session
-/// ([`SparkSession::set_observation_metrics_check`]) checks the metrics of an Observation before
-/// they are set: its error is returned, and neither those metrics nor the ones after them are
-/// set, as PySpark's client raises when it converts them.
-fn set_observations(
-    session: &SparkSession,
+/// of the UDF profilers, go to `accumulators`, the handler of the session. `check`, the check of
+/// the session ([`SparkSession::set_observation_metrics_check`]), checks the metrics of an
+/// Observation before they are set: its error is returned, and neither those metrics nor the ones
+/// after them are set, as PySpark's client raises when it converts them.
+pub(crate) fn set_observations(
+    check: Option<&crate::session::ObservationMetricsCheck>,
+    accumulators: &crate::profiler::PythonAccumulators,
     observations: &[(String, crate::observation::Observation)],
     metrics: &[proto::execute_plan_response::ObservedMetrics],
 ) -> Result<()> {
-    let check = session.observation_metrics_check();
     for observed in metrics {
         let observation = observations
             .iter()
@@ -3058,12 +3043,12 @@ fn set_observations(
                     ));
                 }
             }
-            None if observed.name == crate::profiler::PYTHON_ACCUMULATOR_METRICS => session
-                .python_accumulators()
-                .accumulate(std::slice::from_ref(observed)),
+            None if observed.name == crate::profiler::PYTHON_ACCUMULATOR_METRICS => {
+                accumulators.accumulate(std::slice::from_ref(observed))
+            }
             None => {
                 if let Some(observation) = observation {
-                    if let Some(check) = &check {
+                    if let Some(check) = check {
                         check(observed)?;
                     }
                     observation.update(&observed.keys, &observed.values);

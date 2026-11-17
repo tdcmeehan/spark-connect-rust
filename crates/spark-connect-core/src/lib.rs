@@ -1,6 +1,10 @@
 //! The shared core of the Spark Connect client: the gRPC transport, the plans and requests
 //! that it sends, and the decoding of their results.
 
+pub mod actions;
+#[doc(hidden)]
+pub mod arrow_chunks;
+pub mod arrow_input;
 pub mod artifact;
 pub mod bytes_codec;
 pub mod channel;

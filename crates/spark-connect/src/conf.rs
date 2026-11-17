@@ -3,9 +3,9 @@
 //! Provides runtime configuration management for Spark sessions through
 //! the Spark Connect protocol.
 
+use crate::blocking::block_on;
 use spark_connect_core::client::SparkConnectClient;
 use spark_connect_core::error::Result;
-use spark_connect_core::runtime::block_on;
 use std::collections::HashMap;
 
 /// Runtime configuration for a Spark session.

@@ -102,10 +102,11 @@ thread_local! {
 }
 
 /// Runs the abort level of the wait of [`drive`] on this thread, until it drops.
-struct AbortScope(Option<tokio::sync::watch::Receiver<u8>>);
+#[doc(hidden)]
+pub struct AbortScope(Option<tokio::sync::watch::Receiver<u8>>);
 
 impl AbortScope {
-    fn enter(receiver: tokio::sync::watch::Receiver<u8>) -> Self {
+    pub fn enter(receiver: tokio::sync::watch::Receiver<u8>) -> Self {
         AbortScope(WAIT_ABORT.with(|abort| abort.replace(Some(receiver))))
     }
 }
@@ -157,6 +158,12 @@ pub fn with_wait_watch<R>(watch: Arc<WaitWatch>, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// The watch that [`with_wait_watch`] set on the calling thread, if any.
+#[doc(hidden)]
+pub fn wait_watch() -> Option<Arc<WaitWatch>> {
+    WAIT_WATCH.with(|watch| watch.borrow().clone())
+}
+
 /// How often a wait for the server polls its [`WaitWatch`].
 pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -198,7 +205,8 @@ where
 /// ends the backoffs of `f` (see [`until_abort`]), as PySpark's retry sleeps raise
 /// KeyboardInterrupt at the first signal. The polls go on after it, so that a second signal ends
 /// the wait even while the interrupt hangs, and the running interrupt is cancelled with the wait.
-async fn watched_abortable<F: Future>(
+#[doc(hidden)]
+pub async fn watched_abortable<F: Future>(
     f: F,
     watch: Arc<WaitWatch>,
     abort: tokio::sync::watch::Sender<u8>,
@@ -263,7 +271,8 @@ fn drive<F: Future>(f: F, watch: Option<Arc<WaitWatch>>) -> F::Output {
 /// that `watch` aborts reaches [`ABORT_ALL`], which ends the waits of `f` that [`until_abort`]
 /// covers, and the interrupt that is still running. The polls go on after an interrupt, so that
 /// a second signal aborts the wait.
-async fn watched<F: Future>(
+#[doc(hidden)]
+pub async fn watched<F: Future>(
     f: F,
     watch: Arc<WaitWatch>,
     abort: tokio::sync::watch::Sender<u8>,

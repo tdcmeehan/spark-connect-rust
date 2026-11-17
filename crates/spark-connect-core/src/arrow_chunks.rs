@@ -7,12 +7,12 @@
 //! As PySpark's, each batch must start at the row where the rows before it end, and hold the
 //! rows that it counts.
 
-use spark_connect_core::error::{Result, SparkError};
+use crate::error::{Result, SparkError};
 use spark_connect_proto as proto;
 
 /// The chunks of the batch being assembled, received so far.
 #[derive(Default)]
-pub(crate) struct ArrowChunkAssembler {
+pub struct ArrowChunkAssembler {
     pending: Option<PendingBatch>,
     /// The rows of the batches of the execution so far, at which the next batch starts.
     num_records: i64,
@@ -150,7 +150,7 @@ impl ArrowChunkAssembler {
 
     /// The next response of an execution as it is returned: `push` of a response, and `finish` at
     /// the end of the stream, where `response` is `None`.
-    pub(crate) fn join(
+    pub fn join(
         &mut self,
         response: Option<proto::ExecutePlanResponse>,
     ) -> Result<Option<proto::ExecutePlanResponse>> {
@@ -213,8 +213,8 @@ fn record_batch_rows(data: &[u8]) -> Option<Vec<i64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::SparkErrorKind;
     use proto::execute_plan_response::{ArrowBatch, ResponseType};
-    use spark_connect_core::error::SparkErrorKind;
 
     fn chunk(index: i64, total: i64, rows: i64, data: &[u8]) -> proto::ExecutePlanResponse {
         proto::ExecutePlanResponse {
