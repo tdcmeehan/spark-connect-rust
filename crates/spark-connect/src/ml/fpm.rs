@@ -73,18 +73,10 @@ pub struct FPGrowthModel {
 }
 impl FPGrowthModel {
     fn attribute(&self, method: &str) -> spark_connect_core::error::Result<DataFrame> {
+        let fetch = ml::fetch(self.cached.0.model_ref.clone(), &[], method, Vec::new());
         let relation = proto::Relation {
             rel_type: Some(proto::relation::RelType::MlRelation(Box::new(
-                proto::MlRelation {
-                    ml_type: Some(proto::ml_relation::MlType::Fetch(proto::Fetch {
-                        obj_ref: Some(self.cached.0.model_ref.clone()),
-                        methods: vec![proto::fetch::Method {
-                            method: method.into(),
-                            args: Vec::new(),
-                        }],
-                    })),
-                    ..Default::default()
-                },
+                ml::fetch_relation(fetch, None),
             ))),
             ..Default::default()
         };
@@ -169,7 +161,6 @@ impl PrefixSpan {
         dataset: &DataFrame,
     ) -> spark_connect_core::error::Result<DataFrame> {
         use proto::expression::literal::LiteralType as L;
-        use proto::fetch::method::args::ArgsType;
         let mut params = self.params.to_proto().params;
         let defaults = [
             ("minSupport", L::Double(0.1)),
@@ -177,9 +168,7 @@ impl PrefixSpan {
             ("maxLocalProjDBSize", L::Integer(32000000)),
             ("sequenceCol", L::String("sequence".into())),
         ];
-        let mut args = vec![proto::fetch::method::Args {
-            args_type: Some(ArgsType::Input(dataset.relation()?)),
-        }];
+        let mut args = vec![ml::MethodArg::Input(dataset.relation()?)];
         for (name, default) in defaults {
             let value = params
                 .remove(name)
@@ -187,24 +176,17 @@ impl PrefixSpan {
                     literal_type: Some(default),
                     ..Default::default()
                 });
-            args.push(proto::fetch::method::Args {
-                args_type: Some(ArgsType::Param(value)),
-            });
+            args.push(ml::MethodArg::Param(value));
         }
+        let fetch = ml::fetch(
+            ml::helper(),
+            &[],
+            "prefixSpanFindFrequentSequentialPatterns",
+            args,
+        );
         let relation = proto::Relation {
             rel_type: Some(proto::relation::RelType::MlRelation(Box::new(
-                proto::MlRelation {
-                    ml_type: Some(proto::ml_relation::MlType::Fetch(proto::Fetch {
-                        obj_ref: Some(proto::ObjectRef {
-                            id: "______ML_CONNECT_HELPER______".into(),
-                        }),
-                        methods: vec![proto::fetch::Method {
-                            method: "prefixSpanFindFrequentSequentialPatterns".into(),
-                            args,
-                        }],
-                    })),
-                    ..Default::default()
-                },
+                ml::fetch_relation(fetch, None),
             ))),
             ..Default::default()
         };

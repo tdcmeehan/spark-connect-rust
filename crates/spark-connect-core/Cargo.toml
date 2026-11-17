@@ -54,6 +54,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # sha2 0.10 requires this feature for ARM hardware acceleration; sha2-asm excludes Windows.
 sha2 = { version = "0.10", features = ["asm"] }
 
+[features]
+# Build Rust UDFs that run on Spark via WebAssembly (the `wasm_udf` module).
+wasm-udf = []
+
 [dev-dependencies]
 # A hyper HTTP/2 client connection, for a request that its connection closed before sending.
 hyper-util = { version = "0.1", features = ["tokio"] }

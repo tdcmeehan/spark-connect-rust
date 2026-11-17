@@ -28,9 +28,6 @@ futures.workspace = true
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 uuid.workspace = true
 
-# Optional: only pulled in by the `wasm-udf` feature.
-base64 = { version = "0.21", optional = true }
-
 # Optional conversion features (off by default).
 datafusion = { workspace = true, optional = true }
 polars = { workspace = true, optional = true }
@@ -41,9 +38,9 @@ tonic.workspace = true
 
 [features]
 # Run Rust UDFs on Spark via WebAssembly (the `wasm_udf` module). Off by
-# default: only UDF users pay for the extra dependency and the runtime
-# preconditions (a Python packer on the client, `wasmtime` on the executors).
-wasm-udf = ["dep:base64"]
+# default: only UDF users take on its runtime preconditions (a Python packer
+# on the client, `wasmtime` on the executors).
+wasm-udf = ["spark-connect-core/wasm-udf"]
 # Convert a collected DataFrame into a datafusion::dataframe::DataFrame.
 datafusion = ["dep:datafusion"]
 # Convert a collected DataFrame into a polars::frame::DataFrame.

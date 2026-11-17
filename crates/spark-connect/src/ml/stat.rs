@@ -11,27 +11,12 @@ fn helper(
     method: &str,
     params: Vec<proto::expression::Literal>,
 ) -> Result<DataFrame> {
-    use proto::fetch::method::{args::ArgsType, Args};
-    let mut args = vec![Args {
-        args_type: Some(ArgsType::Input(dataset.to_relation()?)),
-    }];
-    args.extend(params.into_iter().map(|value| Args {
-        args_type: Some(ArgsType::Param(value)),
-    }));
+    let mut args = vec![ml::MethodArg::Input(dataset.to_relation()?)];
+    args.extend(params.into_iter().map(ml::MethodArg::Param));
+    let fetch = ml::fetch(ml::helper(), &[], method, args);
     let relation = proto::Relation {
         rel_type: Some(proto::relation::RelType::MlRelation(Box::new(
-            proto::MlRelation {
-                ml_type: Some(proto::ml_relation::MlType::Fetch(proto::Fetch {
-                    obj_ref: Some(proto::ObjectRef {
-                        id: "______ML_CONNECT_HELPER______".into(),
-                    }),
-                    methods: vec![proto::fetch::Method {
-                        method: method.into(),
-                        args,
-                    }],
-                })),
-                ..Default::default()
-            },
+            ml::fetch_relation(fetch, None),
         ))),
         ..Default::default()
     };

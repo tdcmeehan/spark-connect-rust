@@ -117,21 +117,13 @@ impl ALSModel {
     fn fetch(
         &self,
         method: &str,
-        args: Vec<proto::fetch::method::Args>,
+        args: Vec<ml::MethodArg>,
         input: Option<&DataFrame>,
     ) -> spark_connect_core::error::Result<DataFrame> {
+        let fetch = ml::fetch(self.cached.0.model_ref.clone(), &[], method, args);
         let relation = proto::Relation {
             rel_type: Some(proto::relation::RelType::MlRelation(Box::new(
-                proto::MlRelation {
-                    ml_type: Some(proto::ml_relation::MlType::Fetch(proto::Fetch {
-                        obj_ref: Some(self.cached.0.model_ref.clone()),
-                        methods: vec![proto::fetch::Method {
-                            method: method.into(),
-                            args,
-                        }],
-                    })),
-                    ..Default::default()
-                },
+                ml::fetch_relation(fetch, None),
             ))),
             ..Default::default()
         };
@@ -166,7 +158,6 @@ impl ALSModel {
         subset: Option<&DataFrame>,
         count: proto::expression::Literal,
     ) -> spark_connect_core::error::Result<DataFrame> {
-        use proto::fetch::method::args::ArgsType;
         let mut args = Vec::new();
         if let Some(df) = subset {
             if df.session.session_id() != self.cached.0.session.session_id() {
@@ -174,13 +165,9 @@ impl ALSModel {
                     "A fitted ML model must recommend data from its fitting session",
                 ));
             }
-            args.push(proto::fetch::method::Args {
-                args_type: Some(ArgsType::Input(df.relation()?)),
-            });
+            args.push(ml::MethodArg::Input(df.relation()?));
         }
-        args.push(proto::fetch::method::Args {
-            args_type: Some(ArgsType::Param(count)),
-        });
+        args.push(ml::MethodArg::Param(count));
         let method = match (users, subset.is_some()) {
             (true, false) => "recommendForAllUsers",
             (false, false) => "recommendForAllItems",
