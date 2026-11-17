@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "Spark Connect client transport: gRPC channel, retries, reattach, artifacts, config, errors"
+description = "The shared core of the Spark Connect client: transport, plan building, execution requests and Arrow decoding"
 
 [lints]
 workspace = true
@@ -21,6 +21,7 @@ tonic = { workspace = true, features = ["tls-ring", "tls-native-roots"] }
 prost.workspace = true
 tokio = { workspace = true, features = ["net", "io-util"] }
 tokio-stream.workspace = true
+arrow.workspace = true
 futures.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
