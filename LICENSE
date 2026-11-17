@@ -228,7 +228,7 @@ python/pyspark/errors/exceptions/tblib.py
 MIT License
 -----------
 
-crates/spark-connect/src/srs_registry.csv, generated from the data of PROJ 9.8.1
+crates/spark-connect-core/src/srs_registry.csv, generated from the data of PROJ 9.8.1
 (https://github.com/OSGeo/PROJ).
 
 
@@ -615,7 +615,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------------
 The license of PROJ (https://github.com/OSGeo/PROJ), of whose data
-crates/spark-connect/src/srs_registry.csv is generated:
+crates/spark-connect-core/src/srs_registry.csv is generated:
 
 All source, data files and other contents of the PROJ package are
 available under the following terms.  Note that the PROJ 4.3 and earlier

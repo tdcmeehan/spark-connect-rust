@@ -150,8 +150,9 @@ version's source, not just the name:
 `https://github.com/apache/spark/tree/vX.Y.Z/python/pyspark` (and the connect
 subtree `python/pyspark/sql/connect/`). Implement on **both** sides:
 
-1. **Rust core** (`crates/spark-connect/src/*.rs`) — the real behavior / plan or
-   proto construction. Add the method if the core lacks it.
+1. **Rust core** (`crates/spark-connect-core/src/*.rs` for types, columns,
+   functions and plans; `crates/spark-connect/src/*.rs` for the DataFrame API) — the
+   real behavior / plan or proto construction. Add the method if the core lacks it.
 2. **PyO3 wrapper** (`crates/pyspark-rs/src/*.rs`) — `#[pymethods]` delegating to
    core, with `#[pyo3(name = "camelCase", signature = (...))]`.
 3. **Python shim** (`python/pyspark/...`) only when the class is not a direct
@@ -188,7 +189,7 @@ Gotchas:
   `simple_string`/`type_name`, `#[new]` + picklability, and a variant to
   `tests/types_roundtrip.rs` (proto round-trip, json idempotence, accessors).
 - Geometry/Geography JSON names the SRID by its CRS string ID from Spark's registry
-  (`crates/spark-connect/src/srs.rs`, which embeds `srs_registry.csv`), so it round-trips for
+  (`crates/spark-connect-core/src/srs.rs`, which embeds `srs_registry.csv`), so it round-trips for
   every SRID that Spark knows, and the server reads it. An SRID outside the registry is written
   `SRID:<n>`, which Spark rejects too. The drop-in takes only the SRIDs of PySpark 4.3.0 (see
   `docs/types.md`), whose `geo_utils.py` is vendored and must not be edited.
@@ -266,7 +267,7 @@ Vendor the ones we don't have a Rust implementation for.
 
 Run all of these green before pushing:
 ```
-cargo test -p apache-spark-connect --release --lib
+cargo test -p apache-spark-connect -p apache-spark-connect-core --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
 cargo test -p apache-spark-connect --release --features wasm-udf --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate

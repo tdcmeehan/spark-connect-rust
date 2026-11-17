@@ -277,7 +277,7 @@ VENDORED_MAPPED_FILES=(
   # Spark's spatial reference system registry, which the Rust crate embeds (srs.rs) to map the
   # SRIDs of the spatial types to their CRS strings. Spark generates it from PROJ
   # (dev/generate_srs_registry.py) and ships the same file in sql/api and in PySpark.
-  "crates/spark-connect/src/srs_registry.csv=python/pyspark/sql/srs_registry.csv"
+  "crates/spark-connect-core/src/srs_registry.csv=python/pyspark/sql/srs_registry.csv"
 )
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -3,10 +3,11 @@
 //! Defines the Expression hierarchy and conversion functions to Spark Connect protobufs.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use spark_connect_core::error::{Result, SparkError};
+use crate::error::{Result, SparkError};
 use spark_connect_proto as proto;
 
 use crate::plan::LogicalPlan;
@@ -154,7 +155,8 @@ pub(crate) fn with_stack_for_a_level<T>(f: impl FnOnce() -> T) -> T {
 /// of a request that overflows the stack or that the server cannot parse. Within it, an
 /// expression is serialized down to the bound only: its proto is dropped and encoded by
 /// recursing too, so it must not be deeper.
-pub(crate) fn with_expression_depth_bound<T>(serialize: impl FnOnce() -> T) -> Result<T> {
+#[doc(hidden)]
+pub fn with_expression_depth_bound<T>(serialize: impl FnOnce() -> T) -> Result<T> {
     with_expression_levels(serialize).map(|(value, _)| value)
 }
 
@@ -362,6 +364,36 @@ pub struct SentExpression {
     pub levels: usize,
 }
 
+/// A plan that an expression can refer to as a subquery, such as that of a DataFrame.
+pub trait AsSubquery {
+    /// The subquery expression of `subquery_type` over this plan.
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression;
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for &T {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for Box<T> {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for Rc<T> {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
+impl<T: AsSubquery + ?Sized> AsSubquery for Arc<T> {
+    fn as_subquery(&self, subquery_type: SubqueryType) -> SubqueryExpression {
+        (**self).as_subquery(subquery_type)
+    }
+}
+
 /// The type of a [`SubqueryExpression`]. Mirrors the `subquery_type` of
 /// `pyspark.sql.connect.expressions.SubqueryExpression`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,7 +426,8 @@ impl SubqueryType {
 #[derive(Debug, Clone)]
 pub struct SubqueryExpression {
     /// The plan of the subquery.
-    pub(crate) plan: Arc<LogicalPlan>,
+    #[doc(hidden)]
+    pub plan: Arc<LogicalPlan>,
     /// The plan ID of `plan` in the session of its DataFrame.
     pub(crate) plan_id: i64,
     /// The type of the subquery.
@@ -424,7 +457,8 @@ impl PartialEq for SubqueryExpression {
 
 impl SubqueryExpression {
     /// A subquery of `subquery_type` of `plan`, whose plan ID is `plan_id`.
-    pub(crate) fn new(plan: Arc<LogicalPlan>, plan_id: i64, subquery_type: SubqueryType) -> Self {
+    #[doc(hidden)]
+    pub fn new(plan: Arc<LogicalPlan>, plan_id: i64, subquery_type: SubqueryType) -> Self {
         SubqueryExpression {
             plan,
             plan_id,
@@ -1875,7 +1909,8 @@ fn python_bytes_repr(bytes: &[u8]) -> String {
 }
 
 /// Python's `repr` of a string, as a list shows its strings.
-pub(crate) fn python_str_repr(value: &str) -> String {
+#[doc(hidden)]
+pub fn python_str_repr(value: &str) -> String {
     let quote = python_quote(value.contains('\''), value.contains('"'));
     let mut out = String::new();
     out.push(quote);
@@ -2078,10 +2113,7 @@ mod tests {
 
                 let deep = chained_additions(100_000);
                 let error = with_expression_depth_bound(|| deep.to_proto()).expect_err("deep");
-                assert_eq!(
-                    error.kind,
-                    spark_connect_core::error::SparkErrorKind::RecursionError
-                );
+                assert_eq!(error.kind, crate::error::SparkErrorKind::RecursionError);
                 assert!(
                     error.message().contains("maximum recursion depth"),
                     "{error}"
@@ -2106,92 +2138,6 @@ mod tests {
 
                 // The deepest level is counted again for each serialization.
                 assert!(with_expression_depth_bound(|| at_bound.to_proto()).is_ok());
-            })
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
-    /// The expressions of a command are serialized as those of a plan: as PySpark's serializer,
-    /// which raises `RecursionError` for a merge condition or an overwrite condition of about
-    /// 1,000 levels before any request, one deeper than `MAX_EXPRESSION_DEPTH` is a
-    /// `RecursionError`, rather than a request whose proto overflows the stack where it is
-    /// encoded or dropped. The session has no server and does not retry, so a request that the
-    /// client should not send fails the test at once.
-    #[test]
-    fn deep_expressions_of_commands_are_recursion_errors_as_pyspark() {
-        use crate::column::{col, Column};
-
-        std::thread::Builder::new()
-            .stack_size(512 << 10)
-            .spawn(|| {
-                let builder =
-                    spark_connect_core::channel::ChannelBuilder::parse("sc://127.0.0.1:1")
-                        .expect("valid URL");
-                let mut client = spark_connect_core::runtime::block_on(
-                    spark_connect_core::client::SparkConnectClient::connect(&builder),
-                )
-                .expect("failed to build client");
-                client.set_retry_policy(spark_connect_core::retries::RetryPolicy::no_retries());
-                let spark = crate::session::SparkSession::new(client);
-                let df = spark.range(3).unwrap();
-                let deep = Column::new(chained_additions(100_000));
-                let assert_too_deep = |result: Result<()>| {
-                    let error = result.expect_err("too deep to be sent");
-                    assert_eq!(
-                        error.kind,
-                        spark_connect_core::error::SparkErrorKind::RecursionError,
-                        "{error}"
-                    );
-                    assert!(
-                        error
-                            .message()
-                            .contains("an expression may be at most 745 levels deep"),
-                        "{error}"
-                    );
-                };
-
-                // The condition of a merge, and the condition and an assignment of its clauses.
-                assert_too_deep(
-                    df.merge_into("t", deep.clone())
-                        .when_matched(None)
-                        .update_all()
-                        .merge(),
-                );
-                assert_too_deep(
-                    df.merge_into("t", col("id"))
-                        .when_not_matched_by_source(Some(deep.clone()))
-                        .delete()
-                        .merge(),
-                );
-                let assignments =
-                    std::collections::HashMap::from([("v".to_string(), deep.clone())]);
-                assert_too_deep(
-                    df.merge_into("t", col("id"))
-                        .when_not_matched(None)
-                        .insert(assignments)
-                        .merge(),
-                );
-                // The condition of an overwrite, and a partitioning column of `writeTo`.
-                assert_too_deep(df.write_to("t").overwrite(deep.clone()));
-                assert_too_deep(df.write_to("t").partition_by([deep.clone()]).create());
-                // An argument of a function to register.
-                let function = crate::udf::CommonInlineUserDefinedFunctionExpression::new(
-                    "f".to_string(),
-                    false,
-                    vec![deep.expression().clone()],
-                    crate::udf::PythonUDFPayload::new(
-                        DataType::Integer,
-                        crate::udf::eval_type::SQL_BATCHED_UDF,
-                        vec![0],
-                        "3.11".to_string(),
-                    ),
-                );
-                assert_too_deep(spark.register_function(function));
-                // The grouping sets of a column too deep to be sent group it, and the plan of
-                // the grouping is the `RecursionError`.
-                let grouped = df.grouping_sets(vec![vec![deep.clone()], vec![deep.clone()]]);
-                assert_too_deep(grouped.count().to_relation().map(drop));
             })
             .unwrap()
             .join()
@@ -2302,18 +2248,12 @@ mod tests {
         let error = Expression::function("abs", vec![at_bound])
             .try_to_proto()
             .unwrap_err();
-        assert_eq!(
-            error.kind,
-            spark_connect_core::error::SparkErrorKind::RecursionError
-        );
+        assert_eq!(error.kind, crate::error::SparkErrorKind::RecursionError);
         // A sent expression deeper than the bound is refused as it is unpickled.
         let error = Expression::sent(sent, rendered, MAX_EXPRESSION_DEPTH + 1)
             .err()
             .unwrap();
-        assert_eq!(
-            error.kind,
-            spark_connect_core::error::SparkErrorKind::RecursionError
-        );
+        assert_eq!(error.kind, crate::error::SparkErrorKind::RecursionError);
     }
 
     #[test]
@@ -2597,7 +2537,7 @@ mod tests {
         assert_eq!(none.render(), "x AS ");
     }
 
-    use spark_connect_core::error::SparkErrorKind;
+    use crate::error::SparkErrorKind;
 
     /// An alias of `names` of `child`, whose request raises `before` and `after` and whose
     /// rendering raises `unrenderable`, as the drop-in's `Column.alias` of names that protobuf

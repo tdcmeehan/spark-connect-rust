@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
-use spark_connect_core::error::{Result, SparkError};
+use crate::error::{Result, SparkError};
 
 use crate::column::Column;
 use crate::expression::{Expression, ExpressionNode, LiteralExpression};
@@ -635,7 +635,8 @@ static NEXT_PLAN_ID: AtomicI64 = AtomicI64::new(1);
 /// which keeps the allocation, and so the key, from being reused while the entry exists.
 /// Entries of dropped nodes are pruned as the map grows.
 #[derive(Debug)]
-pub(crate) struct PlanIds {
+#[doc(hidden)]
+pub struct PlanIds {
     nodes: Mutex<PlanIdNodes>,
 }
 
@@ -660,7 +661,8 @@ impl PlanIdNodes {
 impl PlanIds {
     const MIN_PRUNE_AT: usize = 1024;
 
-    pub(crate) fn new() -> Self {
+    #[doc(hidden)]
+    pub fn new() -> Self {
         PlanIds {
             nodes: Mutex::new(PlanIdNodes {
                 ids: HashMap::new(),
@@ -671,7 +673,8 @@ impl PlanIds {
     }
 
     /// The plan ID of `node`, assigned the first time it is serialized.
-    pub(crate) fn id_of(&self, node: &Arc<LogicalPlan>) -> i64 {
+    #[doc(hidden)]
+    pub fn id_of(&self, node: &Arc<LogicalPlan>) -> i64 {
         self.id_of_key(node, Arc::as_ptr(node) as usize)
     }
 
@@ -701,7 +704,8 @@ impl PlanIds {
 
     /// Give `node` the plan ID `id`, of a relation that this session sent: so a DataFrame of the
     /// relation, such as one that was pickled, keeps the plan ID of the DataFrame it was of.
-    pub(crate) fn assign(&self, node: &Arc<LogicalPlan>, id: i64) {
+    #[doc(hidden)]
+    pub fn assign(&self, node: &Arc<LogicalPlan>, id: i64) {
         NEXT_PLAN_ID.fetch_max(id.saturating_add(1), Ordering::Relaxed);
         let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
         nodes.insert(Arc::as_ptr(node) as usize, node, id);
@@ -724,7 +728,8 @@ impl PlanIds {
     /// This scans every node of the session, once for each DataFrame made of a sent relation,
     /// which costs less than keeping a second map by plan ID in step with the first on every
     /// insert and prune.
-    pub(crate) fn node_of(&self, id: i64) -> Option<Arc<LogicalPlan>> {
+    #[doc(hidden)]
+    pub fn node_of(&self, id: i64) -> Option<Arc<LogicalPlan>> {
         let nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
         nodes
             .ids
@@ -735,8 +740,9 @@ impl PlanIds {
             .map(|(_, node)| node)
     }
 
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    #[doc(hidden)]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
         self.nodes.lock().unwrap().ids.len()
     }
 }
@@ -808,7 +814,8 @@ fn placeholder_target(marker: i64) -> Option<(Arc<LogicalPlan>, Arc<PlanIds>)> {
 
 /// The placeholder of the relation of `node`, a DataFrame of the session of `ids`, as the
 /// relation that the Python client sends in its place.
-pub(crate) fn placeholder_relation(node: &Arc<LogicalPlan>, ids: &Arc<PlanIds>) -> proto::Relation {
+#[doc(hidden)]
+pub fn placeholder_relation(node: &Arc<LogicalPlan>, ids: &Arc<PlanIds>) -> proto::Relation {
     let marker = placeholder_marker(node, ids);
     proto::Relation {
         common: None,
@@ -825,7 +832,8 @@ pub(crate) fn placeholder_relation(node: &Arc<LogicalPlan>, ids: &Arc<PlanIds>) 
 /// `AttributeRelation` and `WithRelations` collect the `observations` of their child (see
 /// [`LogicalPlan::observations`]). Taken before the placeholders are replaced, which then no
 /// longer name their DataFrames.
-pub(crate) fn child_observations(
+#[doc(hidden)]
+pub fn child_observations(
     relation: &proto::Relation,
 ) -> Vec<(String, crate::observation::Observation)> {
     let mut relation = relation;
@@ -861,7 +869,8 @@ pub(crate) fn child_observations(
 /// relations that the plans of `pyspark.ml` take as input (their `ml_relation`, `with_relations`
 /// and fetched arguments). Each replacement is the relation of a DataFrame of the core, which has
 /// no placeholder.
-pub(crate) fn resolve_relation(relation: &mut proto::Relation) -> Result<()> {
+#[doc(hidden)]
+pub fn resolve_relation(relation: &mut proto::Relation) -> Result<()> {
     resolve_relation_at(relation, 1).map(|_| ())
 }
 
@@ -869,7 +878,8 @@ pub(crate) fn resolve_relation(relation: &mut proto::Relation) -> Result<()> {
 /// serializer counts the levels of a plan of `pyspark.ml`, which serializes the plans of its
 /// inputs within its own: one for the relation, one more for each relation that holds an input,
 /// and those of the plan of the DataFrame of each placeholder under them.
-pub(crate) fn resolve_relation_levels(relation: &mut proto::Relation) -> Result<usize> {
+#[doc(hidden)]
+pub fn resolve_relation_levels(relation: &mut proto::Relation) -> Result<usize> {
     resolve_relation_at(relation, 1)
 }
 
@@ -929,7 +939,8 @@ fn resolve_relation_at(relation: &mut proto::Relation, level: usize) -> Result<u
 }
 
 /// Replace the placeholders of the relations of the ML command `command`, as `resolve_relation`.
-pub(crate) fn resolve_command(command: &mut proto::Command) -> Result<()> {
+#[doc(hidden)]
+pub fn resolve_command(command: &mut proto::Command) -> Result<()> {
     let Some(proto::command::CommandType::MlCommand(ml)) = command.command_type.as_mut() else {
         return Ok(());
     };
@@ -1065,7 +1076,8 @@ fn with_plan_depth_bound<T>(serialize: impl FnOnce() -> T) -> Result<(T, usize)>
 }
 
 /// The `RecursionError` of a plan of `depth` levels, deeper than [`MAX_PLAN_DEPTH`].
-pub(crate) fn too_deep_a_plan(depth: usize) -> SparkError {
+#[doc(hidden)]
+pub fn too_deep_a_plan(depth: usize) -> SparkError {
     SparkError::recursion_msg(format!(
         "maximum recursion depth exceeded while serializing a plan of {depth} levels; \
          a plan may be at most {MAX_PLAN_DEPTH} levels deep"
@@ -1077,7 +1089,8 @@ pub(crate) fn too_deep_a_plan(depth: usize) -> SparkError {
 /// subqueries, or with an expression deeper than [`crate::expression::MAX_EXPRESSION_DEPTH`], is
 /// a `RecursionError`, as in PySpark. The plan is serialized on the calling thread, whose stack
 /// grows on demand for its levels.
-pub(crate) fn relation_with_ids(node: &Arc<LogicalPlan>, ids: &PlanIds) -> Result<proto::Relation> {
+#[doc(hidden)]
+pub fn relation_with_ids(node: &Arc<LogicalPlan>, ids: &PlanIds) -> Result<proto::Relation> {
     relation_with_ids_and_levels(node, ids).map(|(relation, _)| relation)
 }
 
@@ -1340,7 +1353,8 @@ impl Drop for LogicalPlan {
 
 impl LogicalPlan {
     /// The plans that this one reads directly.
-    pub(crate) fn inputs(&self) -> Vec<&Arc<LogicalPlan>> {
+    #[doc(hidden)]
+    pub fn inputs(&self) -> Vec<&Arc<LogicalPlan>> {
         inputs_of!(self)
     }
 
@@ -1353,7 +1367,8 @@ impl LogicalPlan {
     /// or the initial state of a `GroupMap`, which PySpark's plans hold apart from their child.
     /// Of two Observations of one name, the one that PySpark's dict keeps: the outer one, and
     /// that of the right side.
-    pub(crate) fn observations(&self) -> Vec<(String, crate::observation::Observation)> {
+    #[doc(hidden)]
+    pub fn observations(&self) -> Vec<(String, crate::observation::Observation)> {
         // PySpark merges `{**child, **own}` and `{**left, **right}`, so the last Observation of
         // a name in the post-order of the plan is kept. This walks the reverse of that order (a
         // node, then its right side, then its left side) and keeps the first one of a name,
@@ -2537,7 +2552,8 @@ impl LogicalPlan {
 /// The `CommonInlineUserDefinedTableFunction` of a Python UDTF: of a call with `arguments`,
 /// or of its registration without any. Mirrors PySpark's `CommonInlineUserDefinedTableFunction`
 /// of a `PythonUDTF`.
-pub(crate) fn common_inline_udtf(
+#[doc(hidden)]
+pub fn common_inline_udtf(
     function_name: &str,
     deterministic: bool,
     arguments: &[Expression],
@@ -2772,6 +2788,13 @@ pub fn sample(
     }
 }
 
+/// A random seed of a sample without one, as PySpark's `random.randint(0, sys.maxsize)`: the
+/// client chooses it, so that every execution of the sample returns the same rows.
+#[doc(hidden)]
+pub fn random_seed() -> i64 {
+    (uuid::Uuid::new_v4().as_u128() >> 65) as i64
+}
+
 /// Create a Repartition plan.
 pub fn repartition(
     input: impl Into<Arc<LogicalPlan>>,
@@ -2884,7 +2907,8 @@ pub fn hint(
 
 /// The literal of a hint parameter given as a string: an Integer for an integer-looking one,
 /// otherwise the String.
-pub(crate) fn hint_parameter(parameter: &str) -> Expression {
+#[doc(hidden)]
+pub fn hint_parameter(parameter: &str) -> Expression {
     Expression::literal(match parameter.parse::<i32>() {
         Ok(n) => LiteralExpression::int(n),
         Err(_) => LiteralExpression::string(parameter),
@@ -2968,7 +2992,8 @@ fn value_to_proto_literal(v: &crate::row::Value) -> proto::expression::Literal {
 
 /// The literal of a replacement given as a string: a double for a numeric-looking string,
 /// otherwise the string (used by the NAReplace of strings).
-pub(crate) fn numeric_or_string_literal(s: &str) -> LiteralExpression {
+#[doc(hidden)]
+pub fn numeric_or_string_literal(s: &str) -> LiteralExpression {
     match s.parse::<f64>() {
         Ok(v) => LiteralExpression::double(v),
         Err(_) => LiteralExpression::string(s),
@@ -3690,7 +3715,7 @@ mod placeholder_tests {
 #[cfg(test)]
 mod deep_plan_tests {
     use super::*;
-    use spark_connect_core::error::SparkErrorKind;
+    use crate::error::SparkErrorKind;
 
     /// A plan of `levels` levels: a range under limits.
     fn chain(levels: usize) -> Arc<LogicalPlan> {

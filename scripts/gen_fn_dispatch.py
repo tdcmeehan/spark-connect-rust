@@ -2,7 +2,7 @@
 """
 Generator for the Rust dispatch and the Python wrappers of the Spark SQL functions.
 
-It parses crates/spark-connect/src/functions.rs and generates
+It parses crates/spark-connect-core/src/functions.rs and generates
 
   * crates/pyspark-rs/src/dispatch_generated.rs  (``call_builtin``: function name ->
     call into the Rust core), and
@@ -41,7 +41,7 @@ import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FUNCTIONS_RS = Path("crates/spark-connect/src/functions.rs")
+FUNCTIONS_RS = Path("crates/spark-connect-core/src/functions.rs")
 DISPATCH_FILE = Path("crates/pyspark-rs/src/dispatch_generated.rs")
 WRAPPERS_FILE = Path("python/pyspark/sql/functions_generated.py")
 
@@ -51,7 +51,7 @@ class GeneratorError(Exception):
 
 
 # ---------------------------------------------------------------------------------------
-# Parsing crates/spark-connect/src/functions.rs
+# Parsing crates/spark-connect-core/src/functions.rs
 # ---------------------------------------------------------------------------------------
 
 
@@ -166,9 +166,7 @@ SKIP_FUNCTIONS = {
     "cast",
     "column",
     # Non-standard signatures:
-    #   broadcast(DataFrame) -> DataFrame  (a join hint, not a column function)
     #   variant_delete(Column, Vec<Column>) -> Column  (variadic paths)
-    "broadcast",
     "variant_delete",
     # variant_strip_nulls(Column, bool) -> Column: bool arg, dedicated pyfunc binding
     # (the generic Vec<Column> dispatch would drop the trailing scalar).

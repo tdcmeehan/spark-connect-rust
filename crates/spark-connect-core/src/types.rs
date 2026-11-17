@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 use std::hash::{Hash, Hasher};
 
-use spark_connect_core::error::{Result, SparkError, SparkErrorKind};
+use crate::error::{Result, SparkError, SparkErrorKind};
 
 use crate::srs;
 
@@ -203,7 +203,7 @@ impl DataType {
     ///
     /// The parse is local, so `timestamp` is always [`DataType::Timestamp`] (TIMESTAMP_LTZ),
     /// while the server's parser makes it TIMESTAMP_NTZ when `spark.sql.timestampType` is
-    /// `TIMESTAMP_NTZ`; [`crate::SparkSession::parse_ddl`] parses a DDL string as the server
+    /// `TIMESTAMP_NTZ`; `SparkSession::parse_ddl` parses a DDL string as the server
     /// does.
     ///
     /// Examples:

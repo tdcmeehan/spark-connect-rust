@@ -27,7 +27,9 @@ thiserror.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 serde = "1"
-serde_json = "1"
+# Parses the doubles of the JSON of types and their metadata exactly; the default parse can be one
+# ulp off.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 regex = "1"
 zstd = "0.13"
 prost-types.workspace = true
@@ -41,8 +43,11 @@ base64 = "0.22"
 percent-encoding = "2"
 # The tokio stream of a channel through a proxy, as tonic's own connector gives it to hyper.
 hyper-util = { version = "0.1", features = ["tokio"] }
-# Grows the stack for the clones and drops of the requests of deep plans.
+# Grows the stack on demand while an expression of many levels is serialized or rendered, and
+# for the clones and drops of the requests of deep plans.
 stacker = "0.1"
+# Local time for the reprs of timestamp literals, as Python's `datetime.fromtimestamp`.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
 # sha2 0.10 requires this feature for ARM hardware acceleration; sha2-asm excludes Windows.

@@ -234,14 +234,14 @@ impl Column {
     /// The IN subquery of whether this column is in the rows of `df`, of one column; of a
     /// `struct(...)` of columns, whether they are in the rows of `df` of as many columns.
     /// Mirrors `Column.isin(df)`.
-    pub fn isin_subquery(self, df: &crate::dataframe::DataFrame) -> Column {
+    pub fn isin_subquery(self, df: &impl crate::expression::AsSubquery) -> Column {
         let values = match self.expr.node() {
             ExpressionNode::UnresolvedFunction(function) if function.name == "struct" => {
                 function.args.clone()
             }
             _ => vec![self.expr],
         };
-        let mut subquery = df.subquery(crate::expression::SubqueryType::In);
+        let mut subquery = df.as_subquery(crate::expression::SubqueryType::In);
         subquery.in_subquery_values = values;
         Column {
             expr: ExpressionNode::Subquery(Box::new(subquery)).into(),
@@ -396,16 +396,14 @@ impl Column {
     /// Convert to proto expression as a request serializes it: an expression deeper than
     /// [`crate::expression::MAX_EXPRESSION_DEPTH`] is a `RecursionError`, as PySpark's
     /// serializer raises it (see [`Expression::try_to_proto`]).
-    pub fn try_to_proto(&self) -> spark_connect_core::error::Result<proto::Expression> {
+    pub fn try_to_proto(&self) -> crate::error::Result<proto::Expression> {
         self.expr.try_to_proto()
     }
 
     /// As [`Column::try_to_proto`], and the levels of the expression, which a pickled Column keeps
     /// for [`Column::sent`]. Not a stable API.
     #[doc(hidden)]
-    pub fn try_to_proto_with_levels(
-        &self,
-    ) -> spark_connect_core::error::Result<(proto::Expression, usize)> {
+    pub fn try_to_proto_with_levels(&self) -> crate::error::Result<(proto::Expression, usize)> {
         self.expr.try_to_proto_with_levels()
     }
 
@@ -417,7 +415,7 @@ impl Column {
         expression: proto::Expression,
         rendered: String,
         levels: usize,
-    ) -> spark_connect_core::error::Result<Column> {
+    ) -> crate::error::Result<Column> {
         Ok(Column::new(Expression::sent(expression, rendered, levels)?))
     }
 
@@ -679,9 +677,8 @@ impl From<SortOrder> for Column {
 }
 
 /// The expressions of `columns`, as the plans of the APIs that take Columns hold them.
-pub(crate) fn expressions_of<C: Into<Column>>(
-    columns: impl IntoIterator<Item = C>,
-) -> Vec<Expression> {
+#[doc(hidden)]
+pub fn expressions_of<C: Into<Column>>(columns: impl IntoIterator<Item = C>) -> Vec<Expression> {
     columns
         .into_iter()
         .map(|column| column.into().expr)
@@ -689,7 +686,8 @@ pub(crate) fn expressions_of<C: Into<Column>>(
 }
 
 /// The Columns of `columns`, for the APIs that keep a list of them.
-pub(crate) fn columns_of<C: Into<Column>>(columns: impl IntoIterator<Item = C>) -> Vec<Column> {
+#[doc(hidden)]
+pub fn columns_of<C: Into<Column>>(columns: impl IntoIterator<Item = C>) -> Vec<Column> {
     columns.into_iter().map(Into::into).collect()
 }
 

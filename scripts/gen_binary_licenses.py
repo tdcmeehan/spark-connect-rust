@@ -472,7 +472,7 @@ def render_license(components, apache_text):
         "listed in LICENSE: python/pyspark/loose_version.py (Python Software Foundation\n"
         "License), python/pyspark/cloudpickle/*.py, python/pyspark/_globals.py (BSD\n"
         "3-Clause), python/pyspark/errors/exceptions/tblib.py (BSD 2-Clause), and\n"
-        "crates/spark-connect/src/srs_registry.csv (MIT, PROJ).\n"
+        "crates/spark-connect-core/src/srs_registry.csv (MIT, PROJ).\n"
     )
     for c in others:
         for name, text in c.license_files:

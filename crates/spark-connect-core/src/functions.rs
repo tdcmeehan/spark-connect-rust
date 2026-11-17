@@ -9,7 +9,6 @@
 #![allow(non_snake_case)]
 
 use crate::column::{expressions_of, Column};
-use crate::dataframe::DataFrame;
 use crate::expression::{
     CallFunctionWrapper, Expression, ExpressionNode, LiteralExpression, UnresolvedFunction,
 };
@@ -61,7 +60,7 @@ fn seed_literal(seed: i64) -> Expression {
 /// two calls give different values and a call differs from one run to the next. Within a
 /// plan, the expression keeps its seed, so every execution of the plan gives the same values.
 fn random_seed_literal() -> Expression {
-    seed_literal(crate::dataframe::random_seed())
+    seed_literal(crate::plan::random_seed())
 }
 
 /// A boolean-literal argument expression.
@@ -218,12 +217,6 @@ pub fn window_with_slide_and_start(
             lit_str(start_time),
         ],
     )
-}
-
-/// Mirrors `pyspark.sql.functions.broadcast`.
-/// Marks a DataFrame as eligible for broadcast join (smaller table in a join).
-pub fn broadcast(df: DataFrame) -> DataFrame {
-    df.broadcast()
 }
 
 // ============================================================================
