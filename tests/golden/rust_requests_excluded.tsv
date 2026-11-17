@@ -1,0 +1,348 @@
+# Public functions of the Rust API without a request-snapshot case of their name, and why.
+# `case: <name>` means the named case exercises the item; any other reason means it builds no request.
+*::<Debug>::fmt	formatting for debugging
+*::<Display>::fmt	formatting for display
+*::<Clone>::clone	handle copy
+*::<Hash>::hash	hashing
+*::<PartialEq>::eq	comparison
+*::<Default>::default	same as the type's new, whose case exercises it
+Column::<Add>::add	case: Column::<operators>
+Column::<Sub>::sub	case: Column::<operators>
+Column::<Mul>::mul	case: Column::<operators>
+Column::<Div>::div	case: Column::<operators>
+Column::<Rem>::rem	case: Column::<operators>
+Column::<BitAnd>::bitand	case: Column::<operators>
+Column::<BitOr>::bitor	case: Column::<operators>
+Column::<Not>::not	case: Column::<operators>
+Column::<From>::from	case: Column::<From>
+ArrowInputOptions::*	case: SparkSession::create_dataframe_from_arrow_with_options
+LocalRowIterator::*	case: DataFrame::to_local_iterator
+PythonDataSourcePayload::new	case: PythonDataSourcePayload::to_proto
+CommonInlineUserDefinedDataSourceExpression::*	case: PythonDataSourcePayload::to_proto
+PythonUDFPayload::new	case: PythonUDFPayload::to_proto
+CommonInlineUserDefinedFunctionExpression::new	case: CommonInlineUserDefinedFunctionExpression::to_proto
+Alias::*	case: ExpressionNode::Alias
+CallFunctionWrapper::*	case: ExpressionNode::CallFunction
+CaseWhen::*	case: ExpressionNode::CaseWhen
+Cast::*	case: ExpressionNode::Cast
+ColumnReference::*	case: ExpressionNode::ColumnReference
+Expression::new	case: Expression::node
+Expression::origin	case: Expression::node
+Expression::to_proto	case: Expression::function
+Expression::<From>::from	case: Expression::<From>
+ExpressionNode::<From>::from	case: Expression::<From>
+ExtractValue::*	case: ExpressionNode::UnresolvedExtractValue
+FrameBoundary::value	case: ExpressionNode::WindowExpression
+LambdaFunction::*	case: ExpressionNode::LambdaFunction
+UnresolvedNamedLambdaVariable::*	case: ExpressionNode::LambdaFunction
+LiteralExpression::*	case: Expression::literal
+NamedArgument::new	case: ExpressionNode::NamedArgument
+SortOrder::*	case: ExpressionNode::SortOrder
+UnresolvedFunction::*	case: ExpressionNode::UnresolvedFunction
+UpdateFieldsExpr::*	case: ExpressionNode::UpdateFields
+WindowExpressionWrapper::*	case: ExpressionNode::WindowExpression
+expression::window_spec_repr	case: ExpressionNode::WindowExpression
+expression::next_lambda_var_index	case: functions::higher_order/nested
+CoGroupedData::apply_in_pandas	case: GroupedData::cogroup
+MergeIntoWriter::when_*	case: MergeIntoWriter::merge
+MergeIntoWriter::with_schema_evolution	case: MergeIntoWriter::merge
+WhenMatched::*	case: MergeIntoWriter::merge
+WhenNotMatched::*	case: MergeIntoWriter::merge
+WhenNotMatchedBySource::*	case: MergeIntoWriter::merge
+BinaryClassificationEvaluator::*	case: BinaryClassificationEvaluator::evaluate
+CrossValidator::*	case: CrossValidator::fit
+CrossValidatorModel::*	case: CrossValidator::fit
+LogisticRegression::*	case: LogisticRegression::fit
+LinearSVC::*	case: LinearSVC::fit
+LinearSVCModel::*	case: LinearSVC::fit
+LinearRegression::*	case: LinearRegression::fit
+LinearRegressionModel::*	case: LinearRegression::fit
+LogisticRegressionModel::*	case: LogisticRegression::fit
+MaxAbsScaler::*	case: MaxAbsScaler::fit
+MaxAbsScalerModel::*	case: MaxAbsScaler::fit
+MlOperator::*	case: MlOperator::to_proto
+MulticlassClassificationEvaluator::*	case: MulticlassClassificationEvaluator::evaluate
+OperatorType::*	case: MlOperator::to_proto
+Params::*	case: Params::to_proto
+Params::set_param_*	case: Params::to_proto/typed_setters
+Params::clear_param	case: Params::to_proto/typed_setters
+Params::retain_names	case: Params::to_proto/typed_setters
+Pipeline::*	case: Pipeline::fit
+PipelineModel::*	case: Pipeline::fit
+RegressionEvaluator::*	case: RegressionEvaluator::evaluate
+StandardScaler::*	case: StandardScaler::fit
+StandardScalerModel::*	case: StandardScaler::fit
+StringIndexer::*	case: StringIndexer::fit
+StringIndexerModel::*	case: StringIndexer::fit
+VectorAssembler::*	case: VectorAssembler::transform
+*Model::<Model>::clone_box	boxed copy of a model
+Observation::*	case: Observation::get
+OriginGuard::<Drop>::drop	case: origin::set_current
+PipelineRunStream::next_response	case: pipelines::start_run
+DataFrameReader::*	case: DataFrameReader::format
+DataFrameWriter::bucket_by	case: DataFrameWriter::partition_by
+DataFrameWriter::sort_by	case: DataFrameWriter::partition_by
+DataFrameWriter::format	case: DataFrameWriter::save/path
+DataFrameWriter::option*	case: DataFrameWriter::save/path
+DataFrameWriterV2::*	case: DataFrameWriterV2::create
+SaveMode::from_str	case: SaveMode::to_proto
+ExecutorResourceRequests::*	case: SparkSession::build_resource_profile
+ResourceProfileBuilder::*	case: SparkSession::build_resource_profile
+TaskResourceRequests::*	case: SparkSession::build_resource_profile
+ResourceProfile::id	the id the server assigned, read from the profile
+Row::new	case: SparkSession::create_dataframe
+Row::*	accessors of a collected row
+StructValue::*	accessors of a collected struct value
+Value::*	accessors of a collected value
+Row::<From>::from	conversion between collected rows and struct values
+StructValue::<From>::from	conversion between collected rows and struct values
+SparkSession::builder	case: SparkSession::range
+SparkSession::copy_threadlocal_user_context_extensions	case: SparkSession::share_threadlocal_user_context_extensions
+SparkSession::host	the display host of the endpoint; sends nothing
+SparkSession::is_same_session	compares two sessions; sends nothing
+SparkSession::server_session_id	the observed server-side session id; sends nothing
+session::rows_to_arrow_batch	encodes rows into an Arrow batch locally; sends nothing
+AsOfJoinOptions::new	case: DataFrame::as_of_join
+SparkSessionBuilder::*	every case connects a session with them
+SparkSession::catalog	case: Catalog::list_tables
+SparkSession::conf	case: RuntimeConf::set
+SparkSession::read	case: DataFrameReader::load
+SparkSession::read_stream	case: DataStreamReader::load
+SparkSession::streams	case: StreamingQueryManager::active
+SparkSession::tvf	case: TableValuedFunction::range
+SparkSession::udf	case: UdfRegistration::register
+SparkSession::register_progress_handler	case: SparkSession::progress_handlers
+SparkSession::remove_progress_handler	case: SparkSession::progress_handlers
+SparkSession::clear_progress_handlers	case: SparkSession::progress_handlers
+SparkSession::get_tags	returns the tags held by the session
+SparkSession::is_stopped	returns whether stop was called
+SparkSession::last_execution_info	returns the metrics of the last execution
+SparkSession::profile	returns the observed metrics of the profiler
+SparkSession::session_id	case: SparkSession::new_session
+SparkSession::set_python_accumulator_handler	registers a local handler of the accumulator updates of responses; sends nothing
+session::decimal_str_to_unscaled	parses a decimal string into an integer
+DataStreamReader::*	case: DataStreamReader::load
+DataStreamWriter::*	case: DataStreamWriter::start
+ListenerEventStream::<Iterator>::next	case: StreamingQueryManager::listener_event_stream
+StreamingQuery::name	case: StreamingQuery::id
+StreamingQuery::run_id	case: StreamingQuery::id
+StreamingQueryManager::close	case: StreamingQueryManager::add_listener
+StreamingQueryManager::remove_listener	case: StreamingQueryManager::add_listener
+TableArg::<From>::from	case: TableArg::to_column
+TableArg::new	case: TableArg::to_column
+TableArg::order_by	case: TableArg::partition_by
+DataType::field_names	case: DataType::to_ddl
+DataType::names	case: DataType::to_ddl
+DataType::tree_string*	case: DataType::to_ddl
+DataType::from_json_str	case: DataType::from_json
+DataType::json_value	case: DataType::json
+DataType::need_conversion	case: DataType::simple_string
+DataType::type_name	case: DataType::simple_string
+StructField::*	case: StructField::simple_string
+AbiType::to_data_type	case: AbiType::descriptor
+PythonPacker::<Default>::default	runs the Python interpreter of the environment
+UserDefinedFunction::*	case: wasm_udf::udf
+Window::current_row	case: Window::rows_between
+Window::unbounded_*	case: Window::rows_between
+WindowSpec::<Default>::default	case: WindowSpec::new
+AFTSurvivalRegression::*	case: AFTSurvivalRegression::fit/every_setter
+AFTSurvivalRegressionModel::*	case: AFTSurvivalRegression::fit/every_setter
+ALS::*	case: ALS::fit/every_setter
+ALSModel::*	case: ALS::fit/every_setter
+Binarizer::*	case: Binarizer::transform/every_setter
+BinaryClassificationEvaluator::*	case: BinaryClassificationEvaluator::evaluate/every_setter
+BisectingKMeans::*	case: BisectingKMeans::fit/every_setter
+BisectingKMeansModel::*	case: BisectingKMeans::fit/every_setter
+BisectingKMeansSummary::*	case: BisectingKMeans::fit/every_setter
+BucketedRandomProjectionLSH::*	case: BucketedRandomProjectionLSH::fit/every_setter
+BucketedRandomProjectionLSHModel::*	case: BucketedRandomProjectionLSH::fit/every_setter
+Bucketizer::*	case: Bucketizer::transform/every_setter
+ChiSqSelector::*	case: ChiSqSelector::fit/every_setter
+ChiSqSelectorModel::*	case: ChiSqSelector::fit/every_setter
+ClusteringEvaluator::*	case: ClusteringEvaluator::evaluate/every_setter
+CountVectorizer::*	case: CountVectorizer::fit/every_setter
+CountVectorizerModel::*	case: CountVectorizer::fit/every_setter
+CrossValidator::*	case: CrossValidator::new/every_setter
+DCT::*	case: DCT::transform/every_setter
+DecisionTreeClassificationModel::*	case: DecisionTreeClassifier::fit/every_setter
+DecisionTreeClassifier::*	case: DecisionTreeClassifier::fit/every_setter
+DecisionTreeRegressionModel::*	case: DecisionTreeRegressor::fit/every_setter
+DecisionTreeRegressor::*	case: DecisionTreeRegressor::fit/every_setter
+ElementwiseProduct::*	case: ElementwiseProduct::transform/every_setter
+FMClassificationModel::*	case: FMClassifier::fit/every_setter
+FMClassifier::*	case: FMClassifier::fit/every_setter
+FMRegressionModel::*	case: FMRegressor::fit/every_setter
+FMRegressor::*	case: FMRegressor::fit/every_setter
+FPGrowth::*	case: FPGrowth::fit/every_setter
+FPGrowthModel::*	case: FPGrowth::fit/every_setter
+FeatureHasher::*	case: FeatureHasher::transform/every_setter
+GBTClassificationModel::*	case: GBTClassifier::fit/every_setter
+GBTClassifier::*	case: GBTClassifier::fit/every_setter
+GBTRegressionModel::*	case: GBTRegressor::fit/every_setter
+GBTRegressor::*	case: GBTRegressor::fit/every_setter
+GaussianMixture::*	case: GaussianMixture::fit/every_setter
+GaussianMixtureModel::*	case: GaussianMixture::fit/every_setter
+GaussianMixtureSummary::*	case: GaussianMixture::fit/every_setter
+GeneralizedLinearRegression::*	case: GeneralizedLinearRegression::fit/every_setter
+GeneralizedLinearRegressionModel::*	case: GeneralizedLinearRegression::fit/every_setter
+GeneralizedLinearRegressionTrainingSummary::*	case: GeneralizedLinearRegression::fit/every_setter
+HashingTF::*	case: HashingTF::transform/every_setter
+IDF::*	case: IDF::fit/every_setter
+IDFModel::*	case: IDF::fit/every_setter
+Imputer::*	case: Imputer::fit/every_setter
+ImputerModel::*	case: Imputer::fit/every_setter
+IndexToString::*	case: IndexToString::transform/every_setter
+Interaction::*	case: Interaction::transform/every_setter
+IsotonicRegression::*	case: IsotonicRegression::fit/every_setter
+IsotonicRegressionModel::*	case: IsotonicRegression::fit/every_setter
+KMeans::*	case: KMeans::fit/every_setter
+KMeansModel::*	case: KMeans::fit/every_setter
+KMeansSummary::*	case: KMeans::fit/every_setter
+LDA::*	case: LDA::fit/every_setter
+LDAModel::*	case: LDA::fit/every_setter
+LinearRegressionModel::*	case: LinearRegression::fit/every_setter
+LinearSVCModel::*	case: LinearSVC::fit/every_setter
+LogisticRegression::*	case: LogisticRegression::fit/every_setter
+LogisticRegressionModel::*	case: LogisticRegression::fit/every_setter
+MaxAbsScalerModel::*	case: MaxAbsScaler::fit/every_setter
+MinHashLSH::*	case: MinHashLSH::fit/every_setter
+MinHashLSHModel::*	case: MinHashLSH::fit/every_setter
+MinMaxScaler::*	case: MinMaxScaler::fit/every_setter
+MinMaxScalerModel::*	case: MinMaxScaler::fit/every_setter
+MulticlassClassificationEvaluator::*	case: MulticlassClassificationEvaluator::evaluate/every_setter
+MultilabelClassificationEvaluator::*	case: MultilabelClassificationEvaluator::evaluate/every_setter
+MultilayerPerceptronClassificationModel::*	case: MultilayerPerceptronClassifier::fit/every_setter
+MultilayerPerceptronClassifier::*	case: MultilayerPerceptronClassifier::fit/every_setter
+NGram::*	case: NGram::transform/every_setter
+NaiveBayes::*	case: NaiveBayes::fit/every_setter
+NaiveBayesModel::*	case: NaiveBayes::fit/every_setter
+Normalizer::*	case: Normalizer::transform/every_setter
+OneHotEncoder::*	case: OneHotEncoder::fit/every_setter
+OneHotEncoderModel::*	case: OneHotEncoder::fit/every_setter
+OneVsRest::*	case: OneVsRest::fit/every_setter
+OneVsRestModel::*	case: OneVsRest::fit/every_setter
+PCA::*	case: PCA::fit/every_setter
+PCAModel::*	case: PCA::fit/every_setter
+Pipeline::*	case: Pipeline::new/every_setter
+PolynomialExpansion::*	case: PolynomialExpansion::transform/every_setter
+PowerIterationClustering::*	case: PowerIterationClustering::new/every_setter
+PrefixSpan::*	case: PrefixSpan::new/every_setter
+QuantileDiscretizer::*	case: QuantileDiscretizer::fit/every_setter
+QuantileDiscretizerModel::*	case: QuantileDiscretizer::fit/every_setter
+RFormula::*	case: RFormula::fit/every_setter
+RFormulaModel::*	case: RFormula::fit/every_setter
+RandomForestClassificationModel::*	case: RandomForestClassifier::fit/every_setter
+RandomForestClassifier::*	case: RandomForestClassifier::fit/every_setter
+RandomForestRegressionModel::*	case: RandomForestRegressor::fit/every_setter
+RandomForestRegressor::*	case: RandomForestRegressor::fit/every_setter
+RankingEvaluator::*	case: RankingEvaluator::evaluate/every_setter
+RegexTokenizer::*	case: RegexTokenizer::transform/every_setter
+RegressionEvaluator::*	case: RegressionEvaluator::evaluate/every_setter
+RobustScaler::*	case: RobustScaler::fit/every_setter
+RobustScalerModel::*	case: RobustScaler::fit/every_setter
+SQLTransformer::*	case: SQLTransformer::transform/every_setter
+StandardScaler::*	case: StandardScaler::fit/every_setter
+StandardScalerModel::*	case: StandardScaler::fit/every_setter
+StopWordsRemover::*	case: StopWordsRemover::transform/every_setter
+StringIndexer::*	case: StringIndexer::fit/every_setter
+StringIndexerModel::*	case: StringIndexer::fit/every_setter
+TargetEncoder::*	case: TargetEncoder::fit/every_setter
+TargetEncoderModel::*	case: TargetEncoder::fit/every_setter
+Tokenizer::*	case: Tokenizer::transform/every_setter
+TrainValidationSplit::*	case: TrainValidationSplit::new/every_setter
+UnivariateFeatureSelector::*	case: UnivariateFeatureSelector::fit/every_setter
+UnivariateFeatureSelectorModel::*	case: UnivariateFeatureSelector::fit/every_setter
+VarianceThresholdSelector::*	case: VarianceThresholdSelector::fit/every_setter
+VarianceThresholdSelectorModel::*	case: VarianceThresholdSelector::fit/every_setter
+VectorAssembler::*	case: VectorAssembler::transform/every_setter
+VectorIndexer::*	case: VectorIndexer::fit/every_setter
+VectorIndexerModel::*	case: VectorIndexer::fit/every_setter
+VectorSizeHint::*	case: VectorSizeHint::transform/every_setter
+VectorSlicer::*	case: VectorSlicer::transform/every_setter
+Word2Vec::*	case: Word2Vec::fit/every_setter
+Word2VecModel::*	case: Word2Vec::fit/every_setter
+DataFrame::observations	the Observations of the plan; sends nothing
+DataFrame::plan_levels	the levels of the plan; sends nothing
+DataFrame::exclusive_relation_owners	the owners of the relations of the plan; sends nothing
+GroupedData::grouping_set_columns	accessor of the grouping sets; sends nothing
+GroupedData::pivot_column	accessor of the pivot column; sends nothing
+GroupedData::pivot_value_columns	accessor of the pivot values; sends nothing
+StatFunctions::spark_session	the session of the handle; sends nothing
+MergeIntoWriter::spark_session	the session of the handle; sends nothing
+DataFrameWriter::spark_session	the session of the handle; sends nothing
+StreamingQuery::spark_session	the session of the handle; sends nothing
+StreamingQueryManager::spark_session	the session of the handle; sends nothing
+TableValuedFunction::spark_session	the session of the handle; sends nothing
+DataFrameWriter::get_*	a setting of the writer; sends nothing
+DataFrameReader::spark_session	the session of the handle; sends nothing
+DataFrameWriterV2::spark_session	the session of the handle; sends nothing
+DataStreamReader::spark_session	the session of the handle; sends nothing
+DataStreamWriter::spark_session	the session of the handle; sends nothing
+DataFrameWriterV2::get_*	a setting of the writer; sends nothing
+DataStreamWriter::get_*	a setting of the writer; sends nothing
+DataStreamReader::get_source_name	a setting of the reader; sends nothing
+ArrowInputOptions::safecheck	a setting of the options; sends nothing
+ArrowInputOptions::infer_*	a setting of the options; sends nothing
+Observation::state	the metrics and the error that the observation holds; sends nothing
+Observation::detached	a copy of the observation and its state; sends nothing
+Observation::shallow_copy	a copy of the observation that shares its metrics; sends nothing
+Observation::*handle	keeps or returns the handle of a binding; sends nothing
+AsOfJoinType::*	conversion of the join type and its string; sends nothing
+AsOfJoinDirection::*	conversion of the direction and its string; sends nothing
+Expression::<Drop>::drop	frees the levels below; sends nothing
+LogicalPlan::<Drop>::drop	frees the plans below; sends nothing
+StopLockHold::<Drop>::drop	releases the lock that stop holds; sends nothing
+LogicalPlan::depth	the depth of the plan; sends nothing
+progress::set_unreturned_error_handler	sets a local handler of the errors of progress handlers; sends nothing
+SparkSession::register_fallible_progress_handler	registers a local progress handler; sends nothing
+SparkSession::running_operation_id	the operation id of the execution of the calling thread; sends nothing
+SparkSession::set_observation_metrics_check	sets a local check of observed metrics; sends nothing
+session::enter_stop_lock	enters the lock that stop holds; sends nothing
+StreamingQuery::from_parts	a handle of the ids of a query; sends nothing
+StreamingQueryManager::discard_listener	drops a local registration from the listener bus; sends nothing
+TableArg::check_*	checks that the method may be called; sends nothing
+*::<MlSummary>::summary_target	the target of the fetches of the summary; sends nothing
+*ClassificationSummary::new	wraps the target of a summary; sends nothing
+*ClassificationTrainingSummary::new	wraps the target of a summary; sends nothing
+Classifier::*	a classifier as the stage of OneVsRest; sends nothing
+MlRef::*	accessors of the handle of a server object; sends nothing
+MlVector::<From>::from	conversion of the values of a vector; sends nothing
+MlValue::*	conversions of the value of a param; sends nothing
+MlTarget::*	builds the target of a fetch; sends nothing
+ParamMap::*	a map of param values; sends nothing
+ParamGridBuilder::*	builds param maps; sends nothing
+LogisticRegression::threshold*	the param or its default; sends nothing
+CrossValidator::copy	a copy of the stage with the values of a param map; sends nothing
+TrainValidationSplit::copy	a copy of the stage with the values of a param map; sends nothing
+Pipeline::copy	a copy of the stage with the values of a param map; sends nothing
+PipelineModel::copy	a copy of the stage with the values of a param map; sends nothing
+Metadata::*	the metadata of PySpark's format, as JSON; sends nothing
+MultivariateGaussian::new	a distribution value; sends nothing
+FetchOutput::*	conversions of the result of a fetch; sends nothing
+persistence::join_path	a path; sends nothing
+persistence::json_object	JSON text; sends nothing
+persistence::json_string	JSON text; sends nothing
+persistence::stage_path	a path; sends nothing
+ml::ml_string_array	conversion of a literal; sends nothing
+Summarizer::*	case: Summarizer::mean
+SummaryBuilder::*	case: Summarizer::mean
+OperatorEstimator::*	case: OperatorEstimator::new
+OperatorTransformer::*	case: OperatorTransformer::new
+ObjectModel::*	case: OperatorEstimator::new
+MlWriter::*	case: MlWriter::save
+MlWriter::meta	case: CrossValidator::<Estimator>::write
+PipelineStage::*	case: Pipeline::fit
+PipelineStage::*	case: PipelineModel::of_stages
+persistence::handle_overwrite	case: OneVsRest::fit/every_setter
+persistence::save_metadata	case: OneVsRest::fit/every_setter
+persistence::load_metadata*	case: Pipeline::load
+object::fetch	case: KMeans::fit/every_setter
+object::read	case: KMeans::load
+object::read_operator	case: KMeans::load
+object::read_model	case: KMeansModel::load
+object::summary_transform	case: KMeans::fit/every_setter
+object::training_summary	case: KMeans::fit/every_setter
+object::write_operator	case: KMeans::fit/every_setter
+DistributedLDAModel::*	case: DistributedLDAModel::load/every_setter
+LocalLDAModel::*	case: LocalLDAModel::load/every_setter
+TrainValidationSplitModel::*	case: TrainValidationSplit::fit
