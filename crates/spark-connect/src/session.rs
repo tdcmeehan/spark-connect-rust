@@ -1425,6 +1425,7 @@ impl SparkSession {
     }
 
     /// The check of the metrics of the Observations of the executions, if one is set.
+    #[cfg(test)]
     pub(crate) fn observation_metrics_check(&self) -> Option<ObservationMetricsCheck> {
         self.observation_metrics_check
             .lock()

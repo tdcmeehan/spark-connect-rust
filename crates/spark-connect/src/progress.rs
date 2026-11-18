@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use spark_connect_core::actions::ExecutionObserver;
-use spark_connect_core::client::{InflightHandle, ReattachableResponseStream};
+use spark_connect_core::client::ReattachableResponseStream;
 use spark_connect_core::error::{Result, SparkError};
 use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
 use spark_connect_proto as proto;
@@ -234,12 +234,24 @@ pub(crate) struct SessionObserver {
     accumulators: PythonAccumulators,
     last_execution: ExecutionSlot,
     progress: Option<ProgressTracker>,
+    record: Record,
+}
+
+/// When an observer records its execution as the session's most recent one.
+enum Record {
+    /// Once it ends with a done call that does not fail, as a command.
+    Session,
+    /// Never: a collect, whose caller records it once its result is checked.
+    Nothing,
+    /// Once it ends after its start in any way, after the done call, also when its prefetch stops
+    /// first, as a local iterator.
+    Iterator,
 }
 
 impl SessionObserver {
     /// The observer of an execution about to start, with its progress for `handlers`, whose
-    /// observed metrics set `observations`. It fails with a `RecursionError` when the callbacks
-    /// that run queries are nested too deep on this thread.
+    /// observed metrics set `observations`, and which records it as a command. It fails with a
+    /// `RecursionError` when the callbacks that run queries are nested too deep on this thread.
     pub(crate) fn start(
         session: &SparkSession,
         handlers: ProgressHandlers,
@@ -253,7 +265,43 @@ impl SessionObserver {
             accumulators: session.python_accumulators().clone(),
             last_execution: session.last_execution_slot(),
             progress: None,
+            record: Record::Session,
         })
+    }
+
+    /// As [`SessionObserver::start`] with the handlers of `session`, for a collect.
+    pub(crate) fn unrecorded(
+        session: &SparkSession,
+        observations: &[(String, Observation)],
+    ) -> Result<Self> {
+        Ok(SessionObserver {
+            record: Record::Nothing,
+            ..Self::start(session, session.progress_handlers(), observations)?
+        })
+    }
+
+    /// As [`SessionObserver::start`] with the handlers of `session`, for an execution that a local
+    /// iterator reads.
+    pub(crate) fn for_iterator(
+        session: &SparkSession,
+        observations: &[(String, Observation)],
+    ) -> Result<Self> {
+        Ok(SessionObserver {
+            record: Record::Iterator,
+            ..Self::start(session, session.progress_handlers(), observations)?
+        })
+    }
+
+    /// The error that the execution fails with, after the done call of its progress.
+    fn done_after(&mut self, error: SparkError) -> SparkError {
+        match &mut self.progress {
+            Some(progress) => progress.finish_after(error),
+            None => error,
+        }
+    }
+
+    fn keep(&self, info: &ExecutionInfo) {
+        *self.last_execution.lock().unwrap() = Some(info.clone());
     }
 }
 
@@ -277,26 +325,52 @@ impl ExecutionObserver for SessionObserver {
         metrics: &[proto::execute_plan_response::ObservedMetrics],
     ) -> Result<()> {
         let check = self.check.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        crate::dataframe::set_observations(
-            check.as_ref(),
-            &self.accumulators,
+        let accumulators = &self.accumulators;
+        spark_connect_core::execution::set_observations(
             &self.observations,
             metrics,
+            |observed| {
+                let claimed = observed.name == crate::profiler::PYTHON_ACCUMULATOR_METRICS;
+                if claimed {
+                    accumulators.accumulate(std::slice::from_ref(observed));
+                }
+                claimed
+            },
+            |observed| match &check {
+                Some(check) => check(observed),
+                None => Ok(()),
+            },
         )
     }
 
     fn on_complete(&mut self, info: &ExecutionInfo) -> Result<()> {
-        if let Some(progress) = &mut self.progress {
-            progress.finish()?;
+        let done = match &mut self.progress {
+            Some(progress) => progress.finish(),
+            None => Ok(()),
+        };
+        match self.record {
+            Record::Session if done.is_ok() => self.keep(info),
+            Record::Iterator => self.keep(info),
+            Record::Session | Record::Nothing => {}
         }
-        *self.last_execution.lock().unwrap() = Some(info.clone());
-        Ok(())
+        done
     }
 
-    fn on_failure(&mut self, error: SparkError) -> SparkError {
-        match &mut self.progress {
-            Some(progress) => progress.finish_after(error),
-            None => error,
+    fn on_failure(&mut self, info: &ExecutionInfo, error: SparkError) -> SparkError {
+        let error = self.done_after(error);
+        if let Record::Iterator = self.record {
+            self.keep(info);
+        }
+        error
+    }
+
+    fn on_start_failure(&mut self, error: SparkError) -> SparkError {
+        self.done_after(error)
+    }
+
+    fn on_abandoned(&mut self, info: &ExecutionInfo) {
+        if let Record::Iterator = self.record {
+            self.keep(info);
         }
     }
 }
@@ -316,12 +390,6 @@ impl ExecutionStream {
             progress,
             chunks: Default::default(),
         }
-    }
-
-    /// The handle of the execution, to mark the waits of its caller for it (see
-    /// [`ReattachableResponseStream::inflight_handle`]).
-    pub(crate) fn inflight_handle(&self) -> InflightHandle {
-        self.stream.inflight_handle()
     }
 
     /// The next response of the execution, as `ReattachableResponseStream::message`, with the

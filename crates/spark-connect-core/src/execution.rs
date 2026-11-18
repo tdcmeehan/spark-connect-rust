@@ -2,6 +2,9 @@
 
 use spark_connect_proto as proto;
 
+use crate::error::{Result, SparkError};
+use crate::observation::Observation;
+
 /// Metrics captured from the last executed query. Mirrors the data behind
 /// `pyspark.sql.DataFrame.executionInfo` / `client.core.ExecutionInfo`.
 #[derive(Debug, Clone, Default)]
@@ -38,6 +41,46 @@ impl ExecutionInfo {
         self.observed_metrics.extend(metrics);
         &self.observed_metrics[taken..]
     }
+}
+
+/// Set the observed metrics `metrics` of an execution, in their order, as PySpark's client sets
+/// them in `observations`, the Observations of the executed plan (`LogicalPlan.observations`),
+/// by their names: the metrics of the Observation of their name, or the error of collecting
+/// them, which the server reported. Metrics without an error that `claim` takes, such as the
+/// updates of PySpark's Python accumulators, set no Observation. `check` checks the metrics of an
+/// Observation before they are set: its error is returned, and neither those metrics nor the ones
+/// after them are set, as PySpark's client raises when it converts them. Not a stable API.
+#[doc(hidden)]
+pub fn set_observations(
+    observations: &[(String, Observation)],
+    metrics: &[proto::execute_plan_response::ObservedMetrics],
+    mut claim: impl FnMut(&proto::execute_plan_response::ObservedMetrics) -> bool,
+    mut check: impl FnMut(&proto::execute_plan_response::ObservedMetrics) -> Result<()>,
+) -> Result<()> {
+    for observed in metrics {
+        let observation = observations
+            .iter()
+            .find(|(name, _)| *name == observed.name)
+            .map(|(_, observation)| observation);
+        match observed.root_error_idx {
+            Some(root_error_idx) => {
+                if let Some(observation) = observation {
+                    observation.set_error(SparkError::from_observation_errors(
+                        root_error_idx,
+                        observed.errors.clone(),
+                    ));
+                }
+            }
+            None if claim(observed) => {}
+            None => {
+                if let Some(observation) = observation {
+                    check(observed)?;
+                    observation.update(&observed.keys, &observed.values);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The plan that runs `relation` and returns its rows.
