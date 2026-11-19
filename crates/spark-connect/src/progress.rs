@@ -294,6 +294,15 @@ impl SessionObserver {
         })
     }
 
+    /// As [`SessionObserver::start`] with no handlers and no Observations, for an execution that
+    /// records nothing, as the stream of the listener bus.
+    pub(crate) fn unreported(session: &SparkSession) -> Result<Self> {
+        Ok(SessionObserver {
+            record: Record::Nothing,
+            ..Self::start(session, ProgressHandlers::default(), &[])?
+        })
+    }
+
     /// The error that the execution fails with, after the done call of its progress.
     fn done_after(&mut self, error: SparkError) -> SparkError {
         match &mut self.progress {
@@ -399,16 +408,8 @@ impl ExecutionStream {
     /// last one has no batch.
     /// When the execution ends, of its result or of an error, the handlers get their done call,
     /// whose error is the error of the execution, as PySpark's `Progress.__exit__` raises it.
-    /// The handlers run on the thread that polls this; a synchronous caller uses
-    /// [`ExecutionStream::next_message`], which calls them on its own thread.
-    pub(crate) async fn message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = self.stream.message().await;
-        self.handle(response)
-    }
-
-    /// As [`ExecutionStream::message`], waiting on the calling thread, which the handlers are
-    /// called on, as PySpark calls them on the thread that iterates the responses: also inside
-    /// a `current_thread` runtime.
+    /// It waits on the calling thread, which the handlers are called on, as PySpark calls them on
+    /// the thread that iterates the responses: also inside a `current_thread` runtime.
     pub(crate) fn next_message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
         let response = crate::blocking::block_on(self.stream.message());
         // On a worker of a multi-thread runtime, the handlers block in place, as the wait did.

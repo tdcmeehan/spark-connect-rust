@@ -402,8 +402,7 @@ impl SparkSession {
     }
 
     /// Execute `request` on the server, but the progress of the execution, and its done
-    /// notification, does not reach the progress handlers: PySpark's listener bus has no
-    /// `Progress`, so its long-running stream reports none. Its operation ID is that of the
+    /// notification, does not reach the progress handlers. Its operation ID is that of the
     /// request, or a new one, which the client assigns before it sends the request.
     pub(crate) fn execute_plan_unreported(
         &self,
@@ -641,7 +640,7 @@ impl SparkSession {
         // DataFrames, which the DataFrame of its result does not have either. The server executes
         // a command and returns a relation of its result; for a query it returns the query's
         // relation, which then runs at an action.
-        let (returned, _) = block_on(actions::session::sql(
+        let returned = block_on(actions::session::sql(
             Arc::clone(&self.client),
             self.tags(),
             crate::dataframe::build_input_relation(&plan, self)?,

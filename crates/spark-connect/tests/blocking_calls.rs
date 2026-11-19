@@ -170,3 +170,29 @@ fn a_catalog_operation_records_no_execution_and_a_write_does() {
     spark.range(3).unwrap().write().save(Some("/out")).unwrap();
     assert!(spark.last_execution_info().is_some());
 }
+
+struct NoListener;
+
+impl spark_connect::streaming::StreamingQueryListener for NoListener {
+    fn on_event(&self, _: &spark_connect::streaming::StreamingQueryListenerEvent) {}
+}
+
+#[test]
+fn streaming_runs_inside_runtimes_of_either_flavor() {
+    let spark = session();
+    let df = spark.range(3).unwrap();
+    for runtime in runtimes() {
+        runtime.block_on(async {
+            let query = df
+                .write_stream()
+                .format("memory")
+                .query_name("q")
+                .start("")
+                .unwrap();
+            query.status().unwrap();
+            spark.streams().active().unwrap();
+            let id = spark.streams().add_listener(Arc::new(NoListener)).unwrap();
+            spark.streams().remove_listener(&id).unwrap();
+        });
+    }
+}

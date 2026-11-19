@@ -7,17 +7,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use uuid;
 
+use spark_connect_core::actions;
 use spark_connect_core::error::{Result, SparkError, SparkErrorKind};
-use spark_connect_core::execution;
-use spark_connect_core::runtime::{block_on, until_abort, ABORT_RETRIES};
 pub use spark_connect_core::streaming::Trigger;
 use spark_connect_core::streaming::WriteStreamSpec;
 use spark_connect_proto as proto;
 
+use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::plan::LogicalPlan;
+use crate::progress::SessionObserver;
 use crate::readwriter::ReadType;
-use crate::session::SparkSession;
+use crate::session::{ProgressHandlers, SparkSession};
 use crate::udf::PythonUDFPayload;
 
 /// DataStreamReader for reading streaming data from various sources.
@@ -465,7 +466,7 @@ impl DataStreamWriter {
         self,
         on_started: impl FnOnce(&StreamingQueryManager, &StreamingQueryListenerEvent) -> Result<()>,
     ) -> Result<StreamingQuery> {
-        let mut name = self.query_name.clone();
+        let name = self.query_name.clone();
         let write_op = WriteStreamSpec {
             format: self.format,
             output_mode: self.output_mode,
@@ -488,37 +489,16 @@ impl DataStreamWriter {
         // reattachable path with the session's tags, so that an error carries the operation
         // id of the request, as in PySpark. Its WriteStreamOperationStartResult carries the
         // server-assigned query id / run id / name.
-        let responses = crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::WriteStreamOperationStart(write_op),
-        )?;
-        let mut query_id = String::new();
-        let mut run_id = String::new();
-        let mut started_event = None;
-        for resp in responses {
-            if let Some(
-                proto::execute_plan_response::ResponseType::WriteStreamOperationStartResult(res),
-            ) = resp.response_type
-            {
-                if let Some(qid) = res.query_id {
-                    query_id = qid.id;
-                    run_id = qid.run_id;
-                }
-                if !res.name.is_empty() {
-                    name = Some(res.name);
-                }
-                started_event = res.query_started_event_json;
-            }
-        }
-        if query_id.is_empty() {
-            return Err(SparkError::connect_msg(
-                "writeStream.start: server returned no WriteStreamOperationStartResult",
-            ));
-        }
+        let started = block_on(actions::streaming::start(
+            Arc::clone(self.session.client()),
+            self.session.tags(),
+            write_op,
+            SessionObserver::start(&self.session, self.session.progress_handlers(), &[])?,
+        ))?;
         // As PySpark Connect's DataStreamWriter: the server sends the started event of the query
         // with the result of its start, as the session has client-side listeners, and the client
         // posts it to them before it gives back the query.
-        if let Some(event_json) = started_event {
+        if let Some(event_json) = started.started_event_json {
             let manager = self.session.streams();
             // Mark the delivery before its listener snapshot is taken, so that a removal
             // from another thread waits for it, as PySpark's bus holds its lock for it.
@@ -534,9 +514,9 @@ impl DataStreamWriter {
 
         Ok(StreamingQuery {
             session: self.session,
-            query_id,
-            run_id,
-            name,
+            query_id: started.query_id,
+            run_id: started.run_id,
+            name: started.name.or(name),
         })
     }
 }
@@ -768,21 +748,12 @@ impl StreamingQuery {
         query_id.run_id = self.run_id.clone();
         cmd.query_id = Some(query_id);
 
-        let responses = crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::StreamingQueryCommand(cmd),
-        )?;
-
-        for resp in responses {
-            if let Some(proto::execute_plan_response::ResponseType::StreamingQueryCommandResult(
-                result,
-            )) = resp.response_type
-            {
-                return Ok(result);
-            }
-        }
-
-        Ok(proto::StreamingQueryCommandResult::default())
+        block_on(actions::streaming::query_command(
+            Arc::clone(self.session.client()),
+            self.session.tags(),
+            cmd,
+            SessionObserver::start(&self.session, self.session.progress_handlers(), &[])?,
+        ))
     }
 }
 
@@ -807,101 +778,15 @@ pub struct StreamingQueryException {
 /// An iterator over streaming query listener events from the server.
 /// Yields events incrementally as they arrive, without buffering the entire stream.
 pub struct ListenerEventStream {
-    stream: crate::progress::ExecutionStream,
-    buffered_events: std::vec::IntoIter<(i32, String)>,
-    done: bool,
-    cancel: Option<tokio::sync::oneshot::Receiver<()>>,
-    /// Whether a signal of the process ended a read, as it ends the acknowledgement wait of
-    /// `add_listener`. The stream is then done, and the server is not awaited for its cancellation.
-    interrupted: bool,
+    events: actions::streaming::ListenerEvents<SessionObserver>,
 }
 
 impl ListenerEventStream {
-    /// Read the next response unless canceled, checking cancellation before a ready response.
-    /// Cancellation consumes its oneshot receiver and ends the stream like EOF; once done,
-    /// the transport is never polled again. A signal that a wait of this thread polls ends the
-    /// read at once, as PySpark's wait for the acknowledgement does, and marks the stream
-    /// interrupted. Only a wait of the caller reaches that: the reads of the listener bus's
-    /// worker and of the iterator run with no signal watch.
-    fn message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        if self.done {
-            return Ok(None);
-        }
-        // None: canceled. Some(None): interrupted by a signal. Some(Some(..)): the read.
-        let response = block_on(async {
-            let read = until_abort(ABORT_RETRIES, self.stream.message());
-            if let Some(cancel) = &mut self.cancel {
-                tokio::select! {
-                    biased;
-                    _ = cancel => None,
-                    response = read => Some(response),
-                }
-            } else {
-                Some(read.await)
-            }
-        });
-        match response {
-            None | Some(Some(Ok(None))) => {
-                // A completed oneshot must never be polled again.
-                self.cancel.take();
-                self.done = true;
-                Ok(None)
-            }
-            Some(None) => {
-                self.cancel.take();
-                self.done = true;
-                self.interrupted = true;
-                Err(SparkError::connect_msg(
-                    "the wait for the streaming query listener acknowledgement was interrupted",
-                ))
-            }
-            Some(Some(Err(error))) => {
-                self.done = true;
-                Err(error)
-            }
-            Some(Some(response)) => response,
-        }
-    }
-
     /// Read the responses of the server until the one that tells that it added the listener of
     /// the session (`listener_bus_listener_added`), keeping the events of them, which the
     /// iterator gives first, as PySpark Connect's `_register_server_side_listener` waits for it.
     fn wait_until_listener_added(&mut self) -> Result<()> {
-        loop {
-            match self.message() {
-                Ok(Some(resp)) => {
-                    if let Some(
-                        proto::execute_plan_response::ResponseType::StreamingQueryListenerEventsResult(res),
-                    ) = resp.response_type
-                    {
-                        if !res.events.is_empty() {
-                            let mut events: Vec<(i32, String)> =
-                                std::mem::take(&mut self.buffered_events).collect();
-                            events.extend(
-                                res.events
-                                    .into_iter()
-                                    .map(|event| (event.event_type, event.event_json)),
-                            );
-                            self.buffered_events = events.into_iter();
-                        }
-                        if res.listener_bus_listener_added.is_some() {
-                            return Ok(());
-                        }
-                    }
-                }
-                Ok(None) => {
-                    // Terminal cancellation ends this wait like EOF. Teardown marks the
-                    // session stopped first; add_listener's post-wait check rejects this
-                    // outcome instead of publishing a worker on the canceled stream.
-                    self.done = true;
-                    return Ok(());
-                }
-                Err(e) => {
-                    self.done = true;
-                    return Err(e);
-                }
-            }
-        }
+        block_on(self.events.wait_until_listener_added())
     }
 }
 
@@ -909,46 +794,7 @@ impl Iterator for ListenerEventStream {
     type Item = Result<(i32, String)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // First, yield any buffered events from the last response
-        if let Some(event) = self.buffered_events.next() {
-            return Some(Ok(event));
-        }
-
-        if self.done {
-            return None;
-        }
-
-        loop {
-            match self.message() {
-                Ok(Some(resp)) => {
-                    if let Some(
-                        proto::execute_plan_response::ResponseType::StreamingQueryListenerEventsResult(res),
-                    ) = resp.response_type
-                    {
-                        if !res.events.is_empty() {
-                            let mut events = vec![];
-                            for event in res.events {
-                                events.push((event.event_type, event.event_json));
-                            }
-                            self.buffered_events = events.into_iter();
-                            // Yield the first buffered event
-                            if let Some(event) = self.buffered_events.next() {
-                                return Some(Ok(event));
-                            }
-                        }
-                    }
-                    // Keep pulling for events if this response had none
-                }
-                Ok(None) => {
-                    self.done = true;
-                    return None;
-                }
-                Err(e) => {
-                    self.done = true;
-                    return Some(Err(e));
-                }
-            }
-        }
+        block_on(self.events.next())
     }
 }
 
@@ -1160,7 +1006,7 @@ impl ListenerBus {
     /// a `Condvar` does, and lock it again as [`lock`](Self::lock) does, for a poisoned lock
     /// too. As the acquire of the lock of PySpark's bus, which a signal of the process
     /// interrupts, the wait ends with an error when a signal ends it in the Python client (see
-    /// [`block_on_abortable`](spark_connect_core::runtime::block_on_abortable)); without that,
+    /// [`block_on_abortable`](crate::blocking::block_on_abortable)); without that,
     /// it waits for the change.
     fn wait<'a>(
         &'a self,
@@ -1169,7 +1015,7 @@ impl ListenerBus {
         // Made while the state is locked, so that the change that the caller waits for wakes it.
         let changed = self.changed.0.notified();
         drop(state);
-        if spark_connect_core::runtime::block_on_abortable(changed).is_none() {
+        if crate::blocking::block_on_abortable(changed).is_none() {
             return Err(interrupted_wait());
         }
         Ok(self.lock())
@@ -1499,9 +1345,9 @@ impl StreamingQueryManager {
             opened = true;
             // Cancel a pending acknowledgement once the RPC stream exists. Establishing
             // the stream above still follows the transport's deadline and retry policy.
-            stream.cancel = Some(receiver);
+            stream.events.cancel_on(receiver);
             let acknowledged = stream.wait_until_listener_added();
-            interrupted = stream.interrupted;
+            interrupted = stream.events.interrupted();
             acknowledged?;
             Ok(stream)
         });
@@ -1851,7 +1697,7 @@ impl StreamingQueryManager {
     /// Join the event worker, after waiting for it to exit, unless called from that worker
     /// itself. A worker cannot join itself, and after its callback returns the stopped stream
     /// lets it exit. A signal that ends the wait in the Python client (see
-    /// [`block_on_abortable`](spark_connect_core::runtime::block_on_abortable)) gives the worker
+    /// [`block_on_abortable`](crate::blocking::block_on_abortable)) gives the worker
     /// back, unjoined, as `Some`, so that a later removal, close or add joins it.
     fn join_listener_thread(
         handle: std::thread::JoinHandle<()>,
@@ -1860,7 +1706,7 @@ impl StreamingQueryManager {
         if handle.thread().id() == std::thread::current().id() {
             return None;
         }
-        let exited = spark_connect_core::runtime::block_on_abortable(async {
+        let exited = crate::blocking::block_on_abortable(async {
             let mut ticks = tokio::time::interval(std::time::Duration::from_millis(5));
             while !handle.is_finished() {
                 ticks.tick().await;
@@ -1879,17 +1725,16 @@ impl StreamingQueryManager {
     /// the progress handlers when `reported`, as PySpark's removal of the last listener's does;
     /// the removal before a new add, which PySpark does not send, reports none.
     fn remove_server_listener(&self, reported: bool) -> Result<()> {
-        let mut command = proto::StreamingQueryListenerBusCommand::default();
-        command.command = Some(
-            proto::streaming_query_listener_bus_command::Command::RemoveListenerBusListener(true),
-        );
-        let command = proto::command::CommandType::StreamingQueryListenerBusCommand(command);
-        if reported {
-            crate::dataframe::execute_command_collect(&self.session, command)?;
+        let handlers = if reported {
+            self.session.progress_handlers()
         } else {
-            crate::dataframe::execute_command_unreported(&self.session, command)?;
-        }
-        Ok(())
+            ProgressHandlers::default()
+        };
+        block_on(actions::streaming::unsubscribe(
+            Arc::clone(self.session.client()),
+            self.session.tags(),
+            SessionObserver::start(&self.session, handlers, &[])?,
+        ))
     }
 
     /// Get all active streaming queries.
@@ -2052,29 +1897,11 @@ impl StreamingQueryManager {
     /// Stream listener events from the server incrementally (live).
     /// Returns a ListenerEventStream that yields events as they arrive.
     pub fn listener_event_stream(&self) -> Result<ListenerEventStream> {
-        let mut listener_bus_cmd = proto::StreamingQueryListenerBusCommand::default();
-        // Subscribe to receive events via the oneof command field
-        listener_bus_cmd.command = Some(
-            proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
-        );
-
-        let request = execution::execute_plan_request(
-            self.session.client().session_id(),
-            Vec::new(),
-            execution::command(
-                proto::command::CommandType::StreamingQueryListenerBusCommand(listener_bus_cmd),
-            ),
-        );
-
-        let response_stream = self.session.execute_plan_unreported(request)?;
-
-        Ok(ListenerEventStream {
-            stream: response_stream,
-            buffered_events: vec![].into_iter(),
-            done: false,
-            interrupted: false,
-            cancel: None,
-        })
+        let events = block_on(actions::streaming::ListenerEvents::subscribe(
+            Arc::clone(self.session.client()),
+            SessionObserver::unreported(&self.session)?,
+        ))?;
+        Ok(ListenerEventStream { events })
     }
 
     /// Execute a streaming query manager command and return the parsed result.
@@ -2087,23 +1914,12 @@ impl StreamingQueryManager {
         &self,
         cmd: proto::StreamingQueryManagerCommand,
     ) -> Result<proto::StreamingQueryManagerCommandResult> {
-        let responses = crate::dataframe::execute_command_collect(
-            &self.session,
-            proto::command::CommandType::StreamingQueryManagerCommand(cmd),
-        )?;
-
-        for resp in responses {
-            if let Some(
-                proto::execute_plan_response::ResponseType::StreamingQueryManagerCommandResult(
-                    result,
-                ),
-            ) = resp.response_type
-            {
-                return Ok(result);
-            }
-        }
-
-        Ok(proto::StreamingQueryManagerCommandResult::default())
+        block_on(actions::streaming::manager_command(
+            Arc::clone(self.session.client()),
+            self.session.tags(),
+            cmd,
+            SessionObserver::start(&self.session, self.session.progress_handlers(), &[])?,
+        ))
     }
 }
 

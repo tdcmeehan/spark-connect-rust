@@ -7,6 +7,7 @@
 pub mod catalog;
 pub mod dataframe;
 pub mod session;
+pub mod streaming;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -166,6 +167,21 @@ pub async fn execute_command(
         responses.push(response);
     }
     Ok((responses, execution.info))
+}
+
+/// Executes `command` to completion and returns the first of its responses that `pick` takes.
+pub(crate) async fn command_result<T>(
+    client: Arc<SparkConnectClient>,
+    tags: Vec<String>,
+    command: proto::command::CommandType,
+    observer: impl ExecutionObserver,
+    pick: impl FnMut(proto::execute_plan_response::ResponseType) -> Option<T>,
+) -> Result<Option<T>> {
+    let (responses, _) = execute_command(client, tags, command, observer).await?;
+    Ok(responses
+        .into_iter()
+        .filter_map(|response| response.response_type)
+        .find_map(pick))
 }
 
 /// The future that `make` makes, on the heap, so that the async fn that awaits it holds a pointer.
