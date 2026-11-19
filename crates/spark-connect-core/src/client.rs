@@ -561,7 +561,7 @@ impl InflightGuard {
         InflightGuard {
             registry,
             operation_id,
-            registered_on: crate::runtime::calling_thread_id(),
+            registered_on: std::thread::current().id(),
         }
     }
 
@@ -596,7 +596,7 @@ impl InflightHandle {
     /// execution is marked: a wait of another thread, such as a background task that reads the
     /// execution for its caller, is not the caller's, and the caller marks its own waits instead.
     pub fn waiting(&self) -> WaitingGuard {
-        let caller = crate::runtime::calling_thread_id();
+        let caller = std::thread::current().id();
         let marked = caller == self.registered_on;
         if marked {
             set_waiter(&self.registry, &self.operation_id, Some(caller));
@@ -858,7 +858,7 @@ impl SparkConnectClient {
     /// the iterator that is interrupted. An execution in flight that nothing waits for, such as
     /// an iterator that is not consumed, is not one.
     pub fn running_operation_id(&self) -> Option<String> {
-        let caller = crate::runtime::calling_thread_id();
+        let caller = std::thread::current().id();
         let inflight = self
             .inflight_operations
             .lock()
@@ -972,7 +972,9 @@ impl SparkConnectClient {
         error
     }
 
-    /// Set the hook of the executions of this client and of its clones, or clear it.
+    /// Set the hook of the executions of this client and of its clones, or clear it. Unlike
+    /// `SparkSession::set_execute_plan_hook` of `apache-spark-connect`, it does not bound how
+    /// deeply hooks nest when a hook runs a query of its own.
     pub fn set_execute_plan_hook(&self, hook: Option<ExecutePlanHook>) {
         *self
             .execute_plan_hook
@@ -992,10 +994,7 @@ impl SparkConnectClient {
         let Some(hook) = hook else {
             return Ok(request);
         };
-        crate::runtime::check_callback_depth()?;
         let operation_id = request.operation_id.clone();
-        // The hook may run a query of its own, which runs the hooks too.
-        let _callback = crate::runtime::CallbackGuard::enter();
         let mut request = hook(request)?;
         request.operation_id = operation_id;
         Ok(request)
@@ -1150,10 +1149,9 @@ impl SparkConnectClient {
             .user_context_extensions
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // The thread that calls the API, also when this future is polled on another thread.
         let own = extensions
             .by_thread
-            .get(&crate::runtime::calling_thread_id())
+            .get(&std::thread::current().id())
             .map(|own| own.0.lock().unwrap_or_else(|e| e.into_inner()));
         if extensions.global.is_empty() && own.as_ref().is_none_or(|own| own.is_empty()) {
             return;
@@ -1577,7 +1575,7 @@ impl SparkConnectClient {
                 if let Some(refused) = release_refused() {
                     return Err(refused);
                 }
-                self.spawn_release(self.execution_metadata(), iter.release_all_request());
+                self.spawn_release(self.execution_metadata(), iter.release_all_request(), None);
                 return Err(error.with_operation_id(iter.operation_id()));
             }
         };
@@ -1593,6 +1591,7 @@ impl SparkConnectClient {
             done: false,
             released: false,
             _inflight: inflight,
+            runtime: tokio::runtime::Handle::try_current().ok(),
         })
     }
 
@@ -2507,6 +2506,9 @@ pub struct ReattachableResponseStream {
     released: bool,
     /// The registration of the execution as in flight, which ends with the stream.
     _inflight: InflightGuard,
+    /// The runtime current when the stream was created, which sends its releases, also when
+    /// the stream is dropped outside of any runtime or in one that is not driven again.
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 /// The user ID of a connection string that does not set one: `SPARK_USER`, else `USER`, as
@@ -2566,8 +2568,15 @@ impl SparkConnectClient {
     /// client's retry policy. Like the reference client, a failure is only logged: the server
     /// removes an execution that is never released once it has been detached for
     /// `spark.connect.execute.manager.detachedTimeout`. As the reference's, the request carries
-    /// no observed server-side session ID.
-    fn spawn_release(&self, metadata: MetadataMap, request: ReleaseExecuteRequest) {
+    /// no observed server-side session ID. It runs on `runtime` if given, else on the runtime of
+    /// the caller's context; it is not sent when there is neither, or when that runtime has shut
+    /// down.
+    fn spawn_release(
+        &self,
+        metadata: MetadataMap,
+        request: ReleaseExecuteRequest,
+        runtime: Option<&tokio::runtime::Handle>,
+    ) {
         let stub = self.stub.clone();
         let policy = self.retry_policy.clone();
         let release = async move {
@@ -2598,11 +2607,11 @@ impl SparkConnectClient {
                 Err(RetryError::WaitAborted) => {}
             }
         };
-        // A stream is read inside a runtime, but it can be dropped outside of any, for
-        // example after the `block_on` that read it.
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => drop(handle.spawn(release)),
-            Err(_) => drop(crate::runtime::get_runtime().spawn(release)),
+        let current = tokio::runtime::Handle::try_current().ok();
+        // No runtime is given for an ExecutePlan that failed at once.
+        match runtime.or(current.as_ref()) {
+            Some(handle) => drop(handle.spawn(release)),
+            None => tracing::warn!("ReleaseExecute not sent: there is no runtime to send it"),
         }
     }
 }
@@ -2885,8 +2894,11 @@ impl ReattachableResponseStream {
 
     /// Sends `request` in the background, as [`SparkConnectClient::spawn_release`] does.
     fn spawn_release(&self, request: ReleaseExecuteRequest) {
-        self.client
-            .spawn_release(self.client.execution_metadata(), request);
+        self.client.spawn_release(
+            self.client.execution_metadata(),
+            request,
+            self.runtime.as_ref(),
+        );
     }
 }
 

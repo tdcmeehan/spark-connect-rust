@@ -48,4 +48,3 @@ pub use client::{ExecutePlanHook, RpcDeadlines, SparkConnectClient};
 pub use error::{QueryContext, QueryContextType, Result, SparkError, SparkErrorKind};
 pub use reattach::ExecutePlanResponseReattachableIterator;
 pub use retries::{RetryPolicy, RetryPolicyState, DEFAULT_MAX_RETRY_EXCEPTION_ELAPSED_TIME};
-pub use runtime::{block_on, get_runtime};

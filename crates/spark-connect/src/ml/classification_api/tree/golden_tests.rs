@@ -13,9 +13,9 @@ use serde_json::{json, Value};
 use spark_connect_core::channel::ChannelBuilder;
 use spark_connect_core::client::SparkConnectClient;
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::runtime::block_on;
 use spark_connect_proto as proto;
 
+use crate::blocking::block_on;
 use crate::ml::tree_api::{as_f64, as_f64s, as_i32, as_string, as_vector};
 use crate::ml::{
     BinaryClassificationSummary, BinaryRandomForestClassificationSummary,

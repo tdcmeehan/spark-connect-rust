@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use spark_connect_core::actions::ExecutionObserver;
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
 use spark_connect_proto as proto;
 
+use crate::callbacks::{check_callback_depth, CallbackGuard};
 use crate::dataframe::ExecutionSlot;
 use crate::observation::Observation;
 use crate::profiler::PythonAccumulators;
@@ -573,8 +573,8 @@ mod tests {
 
     #[test]
     fn detached_progress_registry_preserves_the_execution_recursion_bound() {
+        use crate::callbacks::{check_callback_depth, MAX_CALLBACK_DEPTH};
         use spark_connect_core::error::SparkErrorKind;
-        use spark_connect_core::runtime::{check_callback_depth, MAX_CALLBACK_DEPTH};
 
         let session = SparkSession::builder()
             .remote("sc://localhost:15002")

@@ -877,8 +877,10 @@ impl DataFrame {
     /// # Arguments
     /// * `prefetch_partitions` - If true, a background task fetches the next batch
     ///   from the server while the caller consumes the current one (one batch buffered
-    ///   ahead), overlapping network I/O with row processing. If false, each batch is
-    ///   fetched on demand only once the previous batch is exhausted.
+    ///   ahead), overlapping network I/O with row processing. That task runs on a thread of
+    ///   the client's runtime, and so do the progress and accumulator handlers of the
+    ///   execution, also their last call when the iterator is dropped early. If false, each
+    ///   batch is fetched on demand only once the previous batch is exhausted.
     pub fn to_local_iterator(&self, prefetch_partitions: bool) -> Result<LocalRowIterator> {
         let request = self.build_execute_request()?;
         let execution = block_on(actions::Execution::start(
@@ -4160,8 +4162,8 @@ mod conversion_tests {
     #[cfg(feature = "datafusion")]
     #[test]
     fn to_datafusion_preserves_rows_and_columns() {
+        use crate::blocking::block_on;
         use datafusion::prelude::SessionContext;
-        use spark_connect_core::runtime::block_on;
 
         let ctx = SessionContext::new();
         let df = record_batches_to_datafusion(&ctx, vec![sample_batch()]).expect("to datafusion");
@@ -7356,7 +7358,7 @@ mod deep_command_expression_tests {
                 let builder =
                     spark_connect_core::channel::ChannelBuilder::parse("sc://127.0.0.1:1")
                         .expect("valid URL");
-                let mut client = spark_connect_core::runtime::block_on(
+                let mut client = crate::blocking::block_on(
                     spark_connect_core::client::SparkConnectClient::connect(&builder),
                 )
                 .expect("failed to build client");

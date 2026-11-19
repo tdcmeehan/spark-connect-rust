@@ -309,7 +309,8 @@ impl RetryPolicyState {
 ///
 /// [`retrying`] is the loop over the attempts of a call. A caller whose attempts are not one
 /// call each, as the reader of a reattachable stream, asks the two methods itself.
-pub(crate) struct Retrying {
+#[doc(hidden)]
+pub struct Retrying {
     state: RetryPolicyState,
     /// When the first retry made at once was asked for.
     retry_exception_since: Option<std::time::Instant>,
@@ -318,8 +319,9 @@ pub(crate) struct Retrying {
 }
 
 /// What [`Retrying::backoff`] decides for a failed attempt.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Backoff {
+pub enum Backoff {
     /// The wait before the retry is over: the attempt is made again.
     Retry,
     /// The policy cannot retry the failure, or its retries are spent: the failure is the error
@@ -332,7 +334,7 @@ pub(crate) enum Backoff {
 
 impl Retrying {
     /// The retries of a call under `policy`, whose backoffs are waited whole.
-    pub(crate) fn new(policy: &RetryPolicy) -> Self {
+    pub fn new(policy: &RetryPolicy) -> Self {
         Self {
             state: RetryPolicyState::new(policy.clone()),
             retry_exception_since: None,
@@ -344,7 +346,7 @@ impl Retrying {
     /// takes it ([`crate::runtime::ABORT_RETRIES`]), as the sleep of PySpark's `Retrying`
     /// raises KeyboardInterrupt. For the calls that a caller waits for; a call in the
     /// background, that no caller waits for, waits its backoffs whole.
-    pub(crate) fn ending_with_abort(mut self) -> Self {
+    pub fn ending_with_abort(mut self) -> Self {
         self.ends_with_abort = true;
         self
     }
@@ -352,7 +354,7 @@ impl Retrying {
     /// Whether the attempt that failed with `status` is made again under the policy, after the
     /// wait before it, which this awaits. It is not when the policy cannot retry the failure,
     /// or once its retries are spent: `status` is then the error of the call.
-    pub(crate) async fn backoff(&mut self, status: &tonic::Status) -> Backoff {
+    pub async fn backoff(&mut self, status: &tonic::Status) -> Backoff {
         if !self.state.policy().can_retry(status) {
             return Backoff::GiveUp;
         }
@@ -386,8 +388,9 @@ impl Retrying {
 }
 
 /// Why a call made by [`retrying`] failed, and what an attempt of it fails with.
+#[doc(hidden)]
 #[derive(Debug)]
-pub(crate) enum RetryError<E> {
+pub enum RetryError<E> {
     /// A failed RPC. From an attempt, it is retried when the policy allows; from [`retrying`],
     /// the policy could not retry it, or its retries are spent.
     Status(tonic::Status),
@@ -412,7 +415,8 @@ pub(crate) enum RetryError<E> {
 ///   reference sends through the stub of its iterator, checks nothing.
 /// - `attempt` fails with [`RetryError::Aborted`] for an error that is no failed RPC, such as
 ///   the unreadable source of an upload, which ends the call as it is.
-pub(crate) async fn retrying<T, E, Fut>(
+#[doc(hidden)]
+pub async fn retrying<T, E, Fut>(
     retrying: &mut Retrying,
     mut before_retry: impl FnMut() -> Result<(), E>,
     mut attempt: impl FnMut() -> Fut,
@@ -1372,117 +1376,6 @@ mod tests {
         let down = tonic::Status::unavailable("down");
         assert_eq!(retrying.backoff(&down).await, Backoff::Retry);
         assert_eq!(retrying.backoff(&down).await, Backoff::GiveUp);
-    }
-
-    /// A policy whose one backoff, of a minute, a test does not wait out.
-    fn slow_policy() -> RetryPolicy {
-        RetryPolicy {
-            initial_backoff_ms: 60_000,
-            max_backoff_ms: Some(60_000),
-            ..quick_policy(1)
-        }
-    }
-
-    #[test]
-    fn test_a_signal_ends_the_backoff_of_retries_that_end_with_an_abort() {
-        use crate::runtime::{block_on, with_wait_watch, Watch};
-        let down = tonic::Status::unavailable("down");
-        let started = std::time::Instant::now();
-        let ended = with_wait_watch(std::sync::Arc::new(|| Watch::Abort), || {
-            block_on(async {
-                let mut retrying = Retrying::new(&slow_policy()).ending_with_abort();
-                retrying.backoff(&down).await
-            })
-        });
-        assert_eq!(ended, Backoff::Aborted);
-        assert!(started.elapsed() < std::time::Duration::from_secs(30));
-
-        // The retry after the backoff is not made, and its check is not run.
-        let mut attempts = 0;
-        let result: Result<(), RetryError<&'static str>> =
-            with_wait_watch(std::sync::Arc::new(|| Watch::Abort), || {
-                block_on(retrying(
-                    &mut Retrying::new(&slow_policy()).ending_with_abort(),
-                    || panic!("no check before a retry that is not made"),
-                    || {
-                        attempts += 1;
-                        async { unavailable() }
-                    },
-                ))
-            });
-        assert!(matches!(result, Err(RetryError::WaitAborted)), "{result:?}");
-        assert_eq!(attempts, 1);
-    }
-
-    #[test]
-    fn test_an_interrupt_ends_the_backoff_of_an_abortable_wait_as_the_first_signal_does() {
-        // The release of `stop()` backs off inside `block_on_abortable`, which an interrupt of
-        // the execution in flight leaves running. The first interrupt ends the backoff at once,
-        // as PySpark's sleep raises KeyboardInterrupt, and a future without backoffs is not ended
-        // by it. The wait runs on a thread of its own, so that a backoff that is not ended fails
-        // the test at its timeout rather than after the whole minute.
-        use crate::runtime::{block_on_abortable, with_wait_watch, Watch};
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let first = std::sync::Arc::new(AtomicBool::new(true));
-            let watch: std::sync::Arc<crate::runtime::WaitWatch> = std::sync::Arc::new(move || {
-                if first.swap(false, Ordering::SeqCst) {
-                    Watch::Interrupt(Box::pin(async {}))
-                } else {
-                    Watch::Continue
-                }
-            });
-            let ended = with_wait_watch(watch, || {
-                block_on_abortable(async {
-                    let mut retrying = Retrying::new(&slow_policy()).ending_with_abort();
-                    retrying.backoff(&tonic::Status::unavailable("down")).await
-                })
-            });
-            let _ = sender.send(ended);
-        });
-        let ended = receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the interrupt did not end the backoff");
-        assert_eq!(ended, Some(Backoff::Aborted));
-
-        // A future that waits without backoffs is given its output after the interrupt.
-        let watch: std::sync::Arc<crate::runtime::WaitWatch> = std::sync::Arc::new({
-            let first = AtomicBool::new(true);
-            move || {
-                if first.swap(false, Ordering::SeqCst) {
-                    Watch::Interrupt(Box::pin(async {}))
-                } else {
-                    Watch::Continue
-                }
-            }
-        });
-        let kept = with_wait_watch(watch, || {
-            block_on_abortable(async {
-                tokio::time::sleep(crate::runtime::POLL_INTERVAL * 2).await;
-                5
-            })
-        });
-        assert_eq!(kept, Some(5));
-    }
-
-    #[test]
-    fn test_a_signal_does_not_end_the_backoff_of_retries_that_are_waited_whole() {
-        use crate::runtime::{block_on, with_wait_watch, Watch, POLL_INTERVAL};
-        // Longer than the poll of the watch, which aborts at its first poll.
-        let policy = RetryPolicy {
-            initial_backoff_ms: (POLL_INTERVAL * 2).as_millis() as u64,
-            max_backoff_ms: None,
-            ..quick_policy(1)
-        };
-        let down = tonic::Status::unavailable("down");
-        let ended = with_wait_watch(std::sync::Arc::new(|| Watch::Abort), || {
-            block_on(async {
-                let mut retrying = Retrying::new(&policy);
-                retrying.backoff(&down).await
-            })
-        });
-        assert_eq!(ended, Backoff::Retry);
     }
 
     #[tokio::test]

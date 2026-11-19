@@ -13,6 +13,7 @@ use spark_connect_core::thread_entries::forget_when_thread_ends;
 use spark_connect_proto as proto;
 
 use crate::blocking::block_on;
+use crate::callbacks::{check_callback_depth, CallbackGuard};
 use crate::dataframe::DataFrame;
 use crate::plan::{LogicalPlan, PlanIds};
 use crate::profiler::PythonAccumulators;
@@ -156,7 +157,7 @@ impl StopLock {
     /// None when a signal ends it in the Python client (see
     /// [`block_on_abortable`](crate::blocking::block_on_abortable)).
     fn enter(&self) -> Option<StopLockHold> {
-        let thread = spark_connect_core::runtime::calling_thread_id();
+        let thread = std::thread::current().id();
         if !self.try_enter(thread) {
             crate::blocking::block_on_abortable(async {
                 loop {
@@ -499,6 +500,14 @@ impl SparkSession {
     /// the one it returns, of the operation ID of the original. Mirrors the hooks of
     /// `SparkSession.Hook.on_execute_plan`, of `SparkSession.Builder._registerHook`.
     pub fn set_execute_plan_hook(&self, hook: Option<ExecutePlanHook>) {
+        let hook = hook.map(|hook| -> ExecutePlanHook {
+            Arc::new(move |request| {
+                check_callback_depth()?;
+                // The hook may run a query of its own, which runs the hooks too.
+                let _callback = CallbackGuard::enter();
+                hook(request)
+            })
+        });
         self.client.set_execute_plan_hook(hook);
     }
 

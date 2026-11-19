@@ -8,16 +8,25 @@
 //! Every method is synchronous: it returns once the server has answered. The API may be called
 //! from any thread, including inside a Tokio runtime of either flavor. The call blocks the
 //! calling thread until it completes, as any blocking call does, so avoid it in a task that
-//! must keep other tasks of the same runtime running. In a multi-thread runtime the thread is
-//! blocked in place. In a `current_thread` runtime (the default of `#[tokio::test]` and of
-//! `#[tokio::main(flavor = "current_thread")]`) the work runs on a thread of its own while the
-//! calling thread waits, and it uses the tags and user context extensions of the calling thread.
+//! must keep other tasks of the same runtime running. The work of a call, its callbacks
+//! included, runs on the calling thread, while a runtime of the client drives its I/O, so it uses
+//! the tags and user context extensions of the calling thread. The exceptions run on a thread of
+//! the client's runtime: the read of a prefetching [`DataFrame::to_local_iterator`], with its
+//! progress and accumulator handlers, and the background releases of a dropped ML model or
+//! checkpoint, with their execute-plan hooks. [`ml::OneVsRest`] and the validators
+//! [`ml::CrossValidator`] and [`ml::TrainValidationSplit`] run their parallel fits, callbacks
+//! included, on threads of their own. In a multi-thread runtime the
+//! outermost call first hands the thread's other tasks to another thread
+//! ([`tokio::task::block_in_place`]). In a `current_thread` runtime (the default of
+//! `#[tokio::test]` and of `#[tokio::main(flavor = "current_thread")]`) that runtime's other
+//! tasks wait until the call returns.
 
 #![allow(clippy::result_large_err)] // SparkError is large; changing the type would break the API
 
 use spark_connect_core::arrow_input;
 #[doc(hidden)]
 pub mod blocking;
+mod callbacks;
 pub mod catalog;
 pub mod conf;
 pub mod dataframe;

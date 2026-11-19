@@ -68,9 +68,11 @@ df
 
 The API is synchronous and can be called from any thread, including inside a Tokio runtime of
 either flavor. The call blocks the thread it runs on until the server answers, so keep it out of
-tasks that must keep the rest of their runtime running. A `current_thread` runtime, such as the
-one of `#[tokio::test]`, works too: the query runs on a thread of its own while the calling
-thread waits, and it keeps the tags and user context extensions of the calling thread.
+tasks that must keep the rest of their runtime running. The query runs on the calling thread,
+while the client's own runtime drives its network I/O, so it keeps the tags and user context
+extensions of that thread. In a multi-thread runtime the call first hands the thread's other
+tasks to another worker; in a `current_thread` runtime, such as the one of `#[tokio::test]`, the
+runtime's other tasks wait until the call returns.
 
 ## Next Steps
 

@@ -1518,7 +1518,7 @@ mod tests {
         // lookup fails at once; the hook records the request of the execution and fails it.
         let builder = spark_connect_core::channel::ChannelBuilder::parse("sc://127.0.0.1:1")
             .expect("valid URL");
-        let mut client = spark_connect_core::runtime::block_on(
+        let mut client = crate::blocking::block_on(
             spark_connect_core::client::SparkConnectClient::connect(&builder),
         )
         .expect("failed to build client");
