@@ -149,3 +149,24 @@ fn a_prefetching_iterator_can_be_dropped_before_its_end() {
         df.collect().unwrap();
     });
 }
+
+#[test]
+fn a_catalog_operation_and_a_write_run_inside_runtimes_of_either_flavor() {
+    let spark = session();
+    let df = spark.range(3).unwrap();
+    for runtime in runtimes() {
+        runtime.block_on(async {
+            spark.catalog().current_database().unwrap();
+            df.write().mode("overwrite").save(Some("/out")).unwrap();
+        });
+    }
+}
+
+#[test]
+fn a_catalog_operation_records_no_execution_and_a_write_does() {
+    let spark = session();
+    spark.catalog().current_database().unwrap();
+    assert!(spark.last_execution_info().is_none());
+    spark.range(3).unwrap().write().save(Some("/out")).unwrap();
+    assert!(spark.last_execution_info().is_some());
+}

@@ -401,19 +401,10 @@ impl SparkSession {
         Arc::clone(&self.progress_handlers)
     }
 
-    /// Execute `request` on the server, with the progress of the execution for the progress
-    /// handlers. Its operation ID is that of the request, or a new one, which the client
-    /// assigns before it sends the request, as PySpark's `Progress` of the request has it.
-    pub(crate) fn execute_plan(
-        &self,
-        request: proto::ExecutePlanRequest,
-    ) -> Result<ExecutionStream> {
-        self.execute_plan_with_handlers(request, self.progress_handlers())
-    }
-
-    /// As [`execute_plan`](Self::execute_plan), but the progress of the execution, and its done
+    /// Execute `request` on the server, but the progress of the execution, and its done
     /// notification, does not reach the progress handlers: PySpark's listener bus has no
-    /// `Progress`, so its long-running stream reports none.
+    /// `Progress`, so its long-running stream reports none. Its operation ID is that of the
+    /// request, or a new one, which the client assigns before it sends the request.
     pub(crate) fn execute_plan_unreported(
         &self,
         request: proto::ExecutePlanRequest,

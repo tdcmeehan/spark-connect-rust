@@ -3,12 +3,15 @@
 //! Provides access to database and table metadata, and catalog operations.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use spark_connect_core::actions;
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::execution;
 use spark_connect_proto as proto;
 
-use crate::dataframe::{decode_arrow_batch, DataFrame};
+use crate::blocking::block_on;
+use crate::dataframe::DataFrame;
+use crate::progress::SessionObserver;
 use crate::row::{Row, Value};
 use crate::session::SparkSession;
 
@@ -1057,19 +1060,13 @@ impl Catalog {
     }
 
     fn execute_catalog(&self, catalog: &proto::Catalog) -> Result<Vec<Row>> {
-        let request = self.build_execute_catalog_request(catalog);
         // On the reattachable path, as PySpark's client runs a catalog operation, so that an
         // error carries the operation id of the request.
-        let mut stream = self.session.execute_plan(request)?;
-        let mut rows = vec![];
-        while let Some(resp) = stream.next_message()? {
-            if let Some(proto::execute_plan_response::ResponseType::ArrowBatch(batch)) =
-                resp.response_type
-            {
-                rows.extend(decode_arrow_batch(&batch).map_err(|e| stream.fail(e))?);
-            }
-        }
-        Ok(rows)
+        block_on(actions::catalog::rows(
+            Arc::clone(self.session.client()),
+            catalog.clone(),
+            SessionObserver::unrecorded(&self.session, &[])?,
+        ))
     }
 
     /// Helper: expose a catalog operation as a lazy DataFrame.
@@ -1092,19 +1089,5 @@ impl Catalog {
         let df = self.execute_catalog_as_dataframe(catalog)?;
         df.to_arrow()?;
         Ok(df)
-    }
-
-    /// Build an ExecutePlanRequest for a catalog operation.
-    fn build_execute_catalog_request(&self, catalog: &proto::Catalog) -> proto::ExecutePlanRequest {
-        execution::execute_plan_request(
-            self.session.client().session_id(),
-            Vec::new(),
-            execution::root(
-                crate::plan::LogicalPlan::Catalog {
-                    catalog: catalog.clone(),
-                }
-                .to_proto(),
-            ),
-        )
     }
 }

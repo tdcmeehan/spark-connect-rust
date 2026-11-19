@@ -4,6 +4,7 @@
 //! An action that executes a plan chooses its operation id before it sends the request, and
 //! reports the execution to an [`ExecutionObserver`] while the future runs.
 
+pub mod catalog;
 pub mod dataframe;
 pub mod session;
 

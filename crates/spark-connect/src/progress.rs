@@ -241,7 +241,8 @@ pub(crate) struct SessionObserver {
 enum Record {
     /// Once it ends with a done call that does not fail, as a command.
     Session,
-    /// Never: a collect, whose caller records it once its result is checked.
+    /// Never: a catalog operation, or a collect, whose caller records it once its result is
+    /// checked.
     Nothing,
     /// Once it ends after its start in any way, after the done call, also when its prefetch stops
     /// first, as a local iterator.
@@ -269,7 +270,8 @@ impl SessionObserver {
         })
     }
 
-    /// As [`SessionObserver::start`] with the handlers of `session`, for a collect.
+    /// As [`SessionObserver::start`] with the handlers of `session`, for a collect or a catalog
+    /// operation.
     pub(crate) fn unrecorded(
         session: &SparkSession,
         observations: &[(String, Observation)],
@@ -416,14 +418,6 @@ impl ExecutionStream {
             }
             _ => self.handle(response),
         }
-    }
-
-    /// `error`, of the caller of an execution that ends before its stream does, such as of the
-    /// decoding of a batch: the handlers get their done call now, whose error replaces
-    /// `error`, as PySpark's `Progress.__exit__` replaces an error raised in the `with` of the
-    /// execution.
-    pub(crate) fn fail(&mut self, error: SparkError) -> SparkError {
-        self.progress.finish_after(error)
     }
 
     /// The response of the stream, `response`, after its progress has updated the handlers and

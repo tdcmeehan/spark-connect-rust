@@ -70,7 +70,7 @@ impl<O: ExecutionObserver> Execution<O> {
     }
 
     /// As [`Execution::next_unchecked_batch`], with its inner error one of the execution.
-    async fn next_batch(
+    pub(super) async fn next_batch(
         &mut self,
         check: &impl Fn(&DataType) -> Result<()>,
     ) -> Result<Option<proto::execute_plan_response::ArrowBatch>> {
