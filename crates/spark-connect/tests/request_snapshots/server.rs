@@ -48,6 +48,9 @@ pub struct Entry {
 pub struct Recorder {
     entries: Mutex<Vec<Entry>>,
     pushed: Condvar,
+    /// The `ReleaseAll` requests, which are not entries: they are sent in the background.
+    released_all: Mutex<usize>,
+    released: Condvar,
     holds_listener_bus: AtomicBool,
     held_subscription_end: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     /// The references to ML objects that the server has given since the last `take`.
@@ -96,6 +99,23 @@ impl Recorder {
         undeleted(&entries)
     }
 
+    /// Waits up to `timeout` for more than `count` `ReleaseAll` requests, and returns how many
+    /// came.
+    #[allow(dead_code)]
+    pub fn wait_for_releases(&self, timeout: std::time::Duration, count: usize) -> usize {
+        let released = self.released_all.lock().unwrap();
+        let (released, _) = self
+            .released
+            .wait_timeout_while(released, timeout, |released| *released <= count)
+            .unwrap();
+        *released
+    }
+
+    fn release_all(&self) {
+        *self.released_all.lock().unwrap() += 1;
+        self.released.notify_all();
+    }
+
     /// Whether the server keeps each subscription to the listener bus open, after its
     /// acknowledgement, until the client removes its listener, as Spark does.
     #[allow(dead_code)]
@@ -118,6 +138,17 @@ impl Recorder {
         }
     }
 }
+
+/// A query whose result the server sends in three Arrow batches, after the schema.
+pub const THREE_BATCHES: &str = "SELECT id FROM three_batches";
+/// A query whose execution fails after the schema and one Arrow batch.
+pub const A_BATCH_THEN_A_FAILURE: &str = "SELECT id FROM a_batch_then_a_failure";
+/// A SQL command whose execution reports its progress and an update of a Python accumulator
+/// before its result.
+pub const REPORTS_PROGRESS: &str = "SELECT 'reports progress'";
+/// A pipeline graph whose run reports its progress and an update of a Python accumulator before
+/// its result.
+pub const GRAPH_REPORTING_PROGRESS: &str = "graph-reporting-progress";
 
 /// Starts the server on its own runtime thread, as the client under test blocks on the
 /// shared runtime of the crate, and returns its address.
@@ -238,6 +269,11 @@ impl UnaryService<Vec<u8>> for Rpc {
             "ReleaseExecute" => {
                 self.record("ReleaseExecuteRequest", &bytes);
                 let request = proto::ReleaseExecuteRequest::decode(&bytes[..]).unwrap();
+                if let Some(proto::release_execute_request::Release::ReleaseAll(_)) =
+                    request.release
+                {
+                    self.recorder.release_all();
+                }
                 Ok(proto::ReleaseExecuteResponse {
                     session_id: request.session_id,
                     operation_id: Some(request.operation_id),
@@ -291,6 +327,9 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
             self.record("ReattachExecuteRequest", &bytes);
             let request = proto::ReattachExecuteRequest::decode(&bytes[..]).unwrap();
             complete(&request.session_id, &request.operation_id, Vec::new())
+                .into_iter()
+                .map(Ok)
+                .collect()
         } else {
             self.record("ExecutePlanRequest", &bytes);
             let request = proto::ExecutePlanRequest::decode(&bytes[..]).unwrap();
@@ -304,15 +343,21 @@ impl ServerStreamingService<Vec<u8>> for Rpc {
                 Some(Bus::RemoveListenerBusListener(_)) => self.recorder.end_held_subscription(),
                 _ => {}
             }
-            let responses = execute(request);
-            self.recorder
-                .ml_refs_given
-                .fetch_add(given_ml_refs(&responses), Ordering::SeqCst);
-            responses
+            match scripted(&request) {
+                Some(responses) => responses,
+                None => {
+                    let responses = execute(request);
+                    self.recorder
+                        .ml_refs_given
+                        .fetch_add(given_ml_refs(&responses), Ordering::SeqCst);
+                    responses.into_iter().map(Ok).collect()
+                }
+            }
         };
-        let stream: ByteStream = Box::pin(stream::iter(
-            responses.into_iter().map(|r| Ok(r.encode_to_vec())),
-        ));
+        let stream: ByteStream =
+            Box::pin(stream::iter(responses.into_iter().map(|response| {
+                response.map(|response| response.encode_to_vec())
+            })));
         Box::pin(async move { Ok(Response::new(stream)) })
     }
 }
@@ -564,6 +609,31 @@ fn execute(request: proto::ExecutePlanRequest) -> Vec<proto::ExecutePlanResponse
     responses
 }
 
+/// The responses of the executions that the tests of the blocking calls script, of their queries
+/// and of the command and the pipeline run that report progress; `None` for any other request.
+fn scripted(
+    request: &proto::ExecutePlanRequest,
+) -> Option<Vec<Result<proto::ExecutePlanResponse, Status>>> {
+    use proto::plan::OpType;
+    let session_id = &request.session_id;
+    let operation_id = request.operation_id.clone().unwrap_or_default();
+    match request.plan.as_ref()?.op_type.as_ref()? {
+        OpType::Root(relation) => match sql_query(relation)? {
+            THREE_BATCHES => Some(batches(session_id, &operation_id, 3, None)),
+            A_BATCH_THEN_A_FAILURE => {
+                let failure = Status::invalid_argument("the execution failed");
+                Some(batches(session_id, &operation_id, 1, Some(failure)))
+            }
+            _ => None,
+        },
+        OpType::Command(command) if reports_progress(command) => {
+            let results = command_results(command.clone());
+            Some(with_progress(complete(session_id, &operation_id, results)))
+        }
+        _ => None,
+    }
+}
+
 /// The metrics observed for a root `CollectMetrics` relation whose metrics are all literals,
 /// `lit(value).alias(key)` each, as `key` = `value`; none for any other relation.
 fn observed_literals(
@@ -600,6 +670,102 @@ fn observed_literals(
             .unwrap_or_default(),
         ..Default::default()
     }]
+}
+
+fn reports_progress(command: &proto::Command) -> bool {
+    use proto::command::CommandType as C;
+    use proto::pipeline_command::CommandType as P;
+    match &command.command_type {
+        Some(C::SqlCommand(sql)) => {
+            sql.input.as_ref().and_then(sql_query) == Some(REPORTS_PROGRESS)
+        }
+        Some(C::PipelineCommand(pipeline)) => matches!(
+            &pipeline.command_type,
+            Some(P::StartRun(run)) if run.dataflow_graph_id.as_deref() == Some(GRAPH_REPORTING_PROGRESS)
+        ),
+        _ => false,
+    }
+}
+
+/// `responses` after a progress of one running task, which also carries an update of a Python
+/// accumulator.
+fn with_progress(
+    responses: Vec<proto::ExecutePlanResponse>,
+) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
+    use proto::execute_plan_response::{
+        execution_progress::StageInfo, ExecutionProgress, ObservedMetrics, ResponseType,
+    };
+    let progress = proto::ExecutePlanResponse {
+        session_id: responses[0].session_id.clone(),
+        operation_id: responses[0].operation_id.clone(),
+        response_id: "progress".to_string(),
+        response_type: Some(ResponseType::ExecutionProgress(ExecutionProgress {
+            stages: vec![StageInfo {
+                num_tasks: 1,
+                ..Default::default()
+            }],
+            num_inflight_tasks: 1,
+        })),
+        observed_metrics: vec![ObservedMetrics {
+            name: spark_connect::profiler::PYTHON_ACCUMULATOR_METRICS.to_string(),
+            values: vec![proto::expression::Literal {
+                literal_type: Some(proto::expression::literal::LiteralType::Binary(
+                    b"update".to_vec().into(),
+                )),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    std::iter::once(progress).chain(responses).map(Ok).collect()
+}
+
+fn sql_query(relation: &proto::Relation) -> Option<&str> {
+    match &relation.rel_type {
+        Some(proto::relation::RelType::Sql(sql)) => Some(&sql.query),
+        _ => None,
+    }
+}
+
+/// `count` batches of one `id` each, the first with the schema, then `failure` or the end of
+/// the result.
+fn batches(
+    session_id: &str,
+    operation_id: &str,
+    count: i64,
+    failure: Option<Status>,
+) -> Vec<Result<proto::ExecutePlanResponse, Status>> {
+    let mut responses = complete(
+        session_id,
+        operation_id,
+        (0..count)
+            .map(|id| arrow_batch(long_batch("id", id)))
+            .collect(),
+    );
+    use proto::data_type::{Kind, Struct, StructField};
+    let id = StructField {
+        name: "id".to_string(),
+        data_type: Some(proto::DataType {
+            kind: Some(Kind::Long(Default::default())),
+        }),
+        nullable: true,
+        metadata: None,
+    };
+    responses[0].schema = Some(proto::DataType {
+        kind: Some(Kind::Struct(Struct {
+            fields: vec![id],
+            type_variation_reference: 0,
+        })),
+    });
+    if failure.is_some() {
+        responses.pop();
+    }
+    responses
+        .into_iter()
+        .map(Ok)
+        .chain(failure.map(Err))
+        .collect()
 }
 
 fn relation_results(relation: &proto::Relation) -> Vec<proto::execute_plan_response::ResponseType> {

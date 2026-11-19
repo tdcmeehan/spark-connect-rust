@@ -5,21 +5,23 @@
 //! persistence section at the end of this file): what each of PySpark and this client saves, the
 //! other loads.
 
-use crate::ml::meta::{
-    json_to_ml_value, load_python_metadata, metadata_item, metadata_str, ml_value_json,
-    ONE_VS_REST_CLASS, ONE_VS_REST_MODEL_CLASS,
-};
+use crate::ml::meta::load_python_metadata;
+#[cfg(test)]
+use crate::ml::MlValue;
 use crate::ml::{
-    join_path, json_object, load_stage, save_metadata, Classifier, DecisionTreeClassificationModel,
+    join_path, load_stage, save_metadata, Classifier, DecisionTreeClassificationModel,
     DecisionTreeClassifier, FMClassificationModel, FMClassifier, GBTClassificationModel,
     GBTClassifier, LinearSVC, LinearSVCModel, LogisticRegression, LogisticRegressionModel,
-    MetaSave, Metadata, MlOperator, MlValue, MlWriter, Model,
-    MultilayerPerceptronClassificationModel, MultilayerPerceptronClassifier, NaiveBayes,
-    NaiveBayesModel, OneVsRest, OneVsRestModel, OperatorType, Params, PipelineStage,
-    RandomForestClassificationModel, RandomForestClassifier,
+    MetaSave, Metadata, MlOperator, MlWriter, Model, MultilayerPerceptronClassificationModel,
+    MultilayerPerceptronClassifier, NaiveBayes, NaiveBayesModel, OneVsRest, OneVsRestModel,
+    OperatorType, Params, PipelineStage, RandomForestClassificationModel, RandomForestClassifier,
 };
 use crate::session::SparkSession;
 use spark_connect_core::error::{Result, SparkError};
+use spark_connect_core::ml::{
+    check_class, default_param_map_json, metadata_item, metadata_str, one_vs_rest_params,
+    param_map_json, ESTIMATOR_DEFAULTS, MODEL_DEFAULTS, ONE_VS_REST_CLASS, ONE_VS_REST_MODEL_CLASS,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -114,63 +116,6 @@ ml_params! {
 // ---------------------------------------------------------------------------------------------
 // Persistence, as `OneVsRestWriter`, `OneVsRestModelWriter` and their readers of PySpark.
 // ---------------------------------------------------------------------------------------------
-
-/// The defaults of the params of a OneVsRest, as JSON texts, in the order of PySpark's
-/// `_defaultParamMap` of the estimator.
-const ESTIMATOR_DEFAULTS: &[(&str, &str)] = &[
-    ("parallelism", "1"),
-    ("predictionCol", "\"prediction\""),
-    ("featuresCol", "\"features\""),
-    ("labelCol", "\"label\""),
-    ("rawPredictionCol", "\"rawPrediction\""),
-];
-
-/// The defaults of the params of a OneVsRestModel, as JSON texts, in the order of PySpark's
-/// `_defaultParamMap` of the model: the estimator's, but for `parallelism`, which a model has not.
-const MODEL_DEFAULTS: &[(&str, &str)] = &[
-    ("predictionCol", "\"prediction\""),
-    ("featuresCol", "\"features\""),
-    ("labelCol", "\"label\""),
-    ("rawPredictionCol", "\"rawPrediction\""),
-];
-
-/// The JSON text of the literal of a param, as `json.dumps` writes its value.
-fn expression_json(expr: &spark_connect_proto::Expression) -> Result<String> {
-    use spark_connect_proto::expression::ExprType;
-    match &expr.expr_type {
-        Some(ExprType::Literal(literal)) => ml_value_json(&MlValue::from_literal(literal)?),
-        _ => Err(SparkError::value_msg(
-            "a param of a OneVsRest is no literal value",
-        )),
-    }
-}
-
-/// The JSON text of the `paramMap` of a OneVsRest or its model, as `extractJsonParams` writes it
-/// (without the classifier): of each of `defaults`, in its order, the set value or the default,
-/// and then the set `weightCol`, which has no default.
-fn param_map_json(params: &Params, defaults: &[(&str, &str)]) -> Result<String> {
-    let mut fields = Vec::with_capacity(defaults.len() + 1);
-    for (name, default) in defaults {
-        let value = match params.get_param(name) {
-            Some(expr) => expression_json(expr)?,
-            None => default.to_string(),
-        };
-        fields.push((*name, value));
-    }
-    if let Some(expr) = params.get_param("weightCol") {
-        fields.push(("weightCol", expression_json(expr)?));
-    }
-    Ok(json_object(&fields))
-}
-
-/// The JSON text of the `defaultParamMap` of a OneVsRest or its model: of `defaults`.
-fn default_param_map_json(defaults: &[(&str, &str)]) -> String {
-    let fields: Vec<(&str, String)> = defaults
-        .iter()
-        .map(|(name, value)| (*name, value.to_string()))
-        .collect();
-    json_object(&fields)
-}
 
 /// The save of a OneVsRest (its `models` are `None`) or of its model (of `models`), as
 /// `_OneVsRestSharedReadWrite.saveImpl`: the metadata of its params, without the classifier, which
@@ -285,32 +230,6 @@ fn load_classifier(session: &SparkSession, path: &str) -> Result<Classifier> {
     }
 }
 
-/// Whether the metadata `metadata` is of the class `expected`, as `_parseMetaData` checks it.
-fn check_class(metadata: &serde_json::Value, expected: &str) -> Result<()> {
-    let class = metadata_str(metadata, "class")?;
-    if class != expected {
-        return Err(SparkError::value_msg(format!(
-            "Error loading metadata: Expected class name {expected} but found class name {class}"
-        )));
-    }
-    Ok(())
-}
-
-/// The params of the `paramMap` of the metadata `metadata`, set as `getAndSetParams` sets them,
-/// without the classifier.
-fn read_params(metadata: &serde_json::Value) -> Result<Params> {
-    let map = metadata_item(metadata, "paramMap")?
-        .as_object()
-        .ok_or_else(|| SparkError::value_msg("the paramMap of the metadata is no object"))?;
-    let mut params = Params::new();
-    for (name, value) in map {
-        if name != "classifier" {
-            params = params.set_param_literal(name, json_to_ml_value(value).to_literal()?);
-        }
-    }
-    Ok(params)
-}
-
 impl OneVsRest {
     /// The writer of the estimator in PySpark's Python format, as `OneVsRestWriter`.
     pub(crate) fn writer(&self) -> MlWriter {
@@ -335,7 +254,7 @@ impl OneVsRest {
                 metadata_str(&metadata, "uid")?,
                 OperatorType::Estimator,
             ),
-            params: read_params(&metadata)?,
+            params: one_vs_rest_params(&metadata)?,
             classifier: Some(load_classifier(session, path)?),
         })
     }
@@ -386,7 +305,7 @@ impl OneVsRestModel {
                 metadata_str(&metadata, "uid")?,
                 OperatorType::Model,
             ),
-            params: read_params(&metadata)?,
+            params: one_vs_rest_params(&metadata)?,
             models,
             session_id: session.session_id().to_string(),
             classifier: Some(classifier),

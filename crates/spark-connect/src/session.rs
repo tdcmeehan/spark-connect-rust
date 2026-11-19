@@ -9,7 +9,6 @@ use spark_connect_core::actions;
 use spark_connect_core::channel::ChannelBuilder;
 use spark_connect_core::client::{ExecutePlanHook, SparkConnectClient};
 use spark_connect_core::error::{Result, SparkError};
-use spark_connect_core::runtime::check_callback_depth;
 use spark_connect_core::thread_entries::forget_when_thread_ends;
 use spark_connect_proto as proto;
 
@@ -17,7 +16,7 @@ use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::plan::{LogicalPlan, PlanIds};
 use crate::profiler::PythonAccumulators;
-use crate::progress::{ExecutionStream, ProgressTracker, ProgressUpdate, SessionObserver};
+use crate::progress::{ProgressUpdate, SessionObserver};
 use crate::row::{Row, Value};
 use crate::types::DataType;
 pub use spark_connect_core::execution::ExecutionInfo;
@@ -399,34 +398,6 @@ impl SparkSession {
     /// Share the progress-handler registry without retaining the session or its listener bus.
     pub(crate) fn progress_handlers(&self) -> ProgressHandlers {
         Arc::clone(&self.progress_handlers)
-    }
-
-    /// Execute `request` on the server, but the progress of the execution, and its done
-    /// notification, does not reach the progress handlers. Its operation ID is that of the
-    /// request, or a new one, which the client assigns before it sends the request.
-    pub(crate) fn execute_plan_unreported(
-        &self,
-        request: proto::ExecutePlanRequest,
-    ) -> Result<ExecutionStream> {
-        self.execute_plan_with_handlers(request, ProgressHandlers::default())
-    }
-
-    fn execute_plan_with_handlers(
-        &self,
-        mut request: proto::ExecutePlanRequest,
-        handlers: ProgressHandlers,
-    ) -> Result<ExecutionStream> {
-        let operation_id = actions::operation_id(&mut request);
-        // Before the request: an execution that fails to start ends, as done, too.
-        check_callback_depth()?;
-        let mut progress = ProgressTracker::with_handlers(handlers, Some(operation_id));
-        // An execution that fails to start ends too: the error of the done call is its error, as
-        // the `Progress` of PySpark wraps its request.
-        let stream = match block_on(self.client().execute_plan_reattachable(request)) {
-            Ok(stream) => stream,
-            Err(error) => return Err(progress.finish_after(error)),
-        };
-        Ok(ExecutionStream::new(stream, progress))
     }
 
     /// Execute the command `command_type` to completion, with the progress of the execution for
@@ -1022,18 +993,7 @@ impl SparkSession {
         if self.is_stopped() {
             return;
         }
-        let command = proto::Command {
-            command_type: Some(proto::command::CommandType::MlCommand(proto::MlCommand {
-                command: Some(proto::ml_command::Command::Delete(
-                    proto::ml_command::Delete {
-                        obj_refs: refs,
-                        // As PySpark's `_delete_ml_cache`, whose `evict_only` is False.
-                        evict_only: Some(false),
-                    },
-                )),
-            })),
-        };
-        self.execute_command_in_background(command);
+        self.execute_command_in_background(spark_connect_core::ml::delete(refs));
     }
 
     /// Remove the cached remote relation `relation_id` on the server, as PySpark's
@@ -1045,36 +1005,24 @@ impl SparkSession {
         if self.is_stopped() {
             return;
         }
-        let command = proto::Command {
-            command_type: Some(
-                proto::command::CommandType::RemoveCachedRemoteRelationCommand(
-                    proto::RemoveCachedRemoteRelationCommand {
-                        relation: Some(proto::CachedRemoteRelation { relation_id }),
-                    },
-                ),
+        self.execute_command_in_background(
+            proto::command::CommandType::RemoveCachedRemoteRelationCommand(
+                proto::RemoveCachedRemoteRelationCommand {
+                    relation: Some(proto::CachedRemoteRelation { relation_id }),
+                },
             ),
-        };
-        self.execute_command_in_background(command);
+        );
     }
 
     /// Execute `command` on the server without waiting for its responses, on the shared
     /// runtime. Its errors are ignored; safe to call from `Drop`.
-    fn execute_command_in_background(&self, command: proto::Command) {
-        let mut plan = proto::Plan::default();
-        plan.op_type = Some(proto::plan::OpType::Command(command));
-        let request = proto::ExecutePlanRequest {
-            session_id: self.client.session_id().to_string(),
-            user_context: Some(proto::UserContext::default()),
-            operation_id: Some(uuid::Uuid::new_v4().to_string()),
-            plan: Some(plan),
-            ..Default::default()
-        };
-        let client = Arc::clone(&self.client);
-        spark_connect_core::runtime::get_runtime().spawn(async move {
-            if let Ok(mut stream) = client.execute_plan_reattachable(request).await {
-                while let Ok(Some(_)) = stream.message().await {}
-            }
-        });
+    fn execute_command_in_background(&self, command: proto::command::CommandType) {
+        crate::blocking::shared()
+            .handle()
+            .spawn(actions::execute_command_ignoring_errors(
+                Arc::clone(&self.client),
+                command,
+            ));
     }
 
     /// Get the runtime configuration for this session.

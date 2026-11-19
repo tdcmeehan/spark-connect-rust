@@ -1,5 +1,7 @@
-//! The operators of the ML API, the values of their params and methods, and the commands and
-//! relations that fit, evaluate and apply them, and that fetch, save and load server objects.
+//! The operators of the ML API, the values of their params and methods, the commands and
+//! relations that fit, evaluate and apply them, that fetch, save and load server objects, and that
+//! delete the objects that the server caches, and the logic of PySpark's meta-algorithms and of its
+//! Python format of ML objects that needs no session.
 
 use std::collections::HashMap;
 
@@ -10,8 +12,18 @@ use crate::error::{SparkError, SparkErrorKind};
 use crate::expression::LiteralExpression;
 use crate::types::DataType;
 
+mod meta;
+pub use meta::*;
 mod object;
 pub use object::*;
+mod one_vs_rest;
+pub use one_vs_rest::*;
+mod param_specs;
+mod persistence;
+pub use persistence::*;
+mod stage_kinds;
+mod validators;
+pub use validators::*;
 
 /// A dense or sparse ML vector used as an estimator parameter.
 #[derive(Debug, Clone, PartialEq)]

@@ -34,7 +34,7 @@ impl<O: ExecutionObserver> Execution<O> {
         check: &impl Fn(&DataType) -> Result<()>,
     ) -> Result<Option<Result<proto::execute_plan_response::ArrowBatch>>> {
         loop {
-            let message = boxed(|| self.stream.message()).await;
+            let message = boxed(|| self.responses.stream.message()).await;
             let Some(response) = self.response(message)? else {
                 return Ok(None);
             };
@@ -115,7 +115,7 @@ impl<O: ExecutionObserver + 'static> Execution<O> {
     /// the caller drops the returned rows. Each batch carries the schema of the result while it
     /// is new.
     pub fn prefetch(mut self, runtime: &tokio::runtime::Handle) -> PrefetchedRows {
-        let wait = self.stream.inflight_handle();
+        let wait = self.responses.stream.inflight_handle();
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let task = runtime.spawn(async move {
             let mut sent_schema = false;
@@ -150,7 +150,7 @@ impl<O: ExecutionObserver + 'static> Execution<O> {
                     }
                 }
             }
-            self.observer.on_abandoned(&self.info);
+            self.responses.observer.on_abandoned(&self.info);
         });
         PrefetchedRows {
             receiver,

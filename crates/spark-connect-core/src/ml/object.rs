@@ -491,6 +491,17 @@ pub fn create_summary(
     ))
 }
 
+/// The command that deletes the objects of `refs` that the server caches.
+pub fn delete(refs: Vec<proto::ObjectRef>) -> proto::command::CommandType {
+    ml_command(proto::ml_command::Command::Delete(
+        proto::ml_command::Delete {
+            obj_refs: refs,
+            // As PySpark's `_delete_ml_cache`, whose `evict_only` is False.
+            evict_only: Some(false),
+        },
+    ))
+}
+
 fn ml_command(command: proto::ml_command::Command) -> proto::command::CommandType {
     proto::command::CommandType::MlCommand(proto::MlCommand {
         command: Some(command),

@@ -5,7 +5,6 @@
 use std::sync::{Arc, Mutex};
 
 use spark_connect_core::actions::ExecutionObserver;
-use spark_connect_core::client::ReattachableResponseStream;
 use spark_connect_core::error::{Result, SparkError};
 use spark_connect_core::runtime::{check_callback_depth, CallbackGuard};
 use spark_connect_proto as proto;
@@ -295,7 +294,7 @@ impl SessionObserver {
     }
 
     /// As [`SessionObserver::start`] with no handlers and no Observations, for an execution that
-    /// records nothing, as the stream of the listener bus.
+    /// records nothing, as the stream of the listener bus or the run of a pipeline.
     pub(crate) fn unreported(session: &SparkSession) -> Result<Self> {
         Ok(SessionObserver {
             record: Record::Nothing,
@@ -382,67 +381,6 @@ impl ExecutionObserver for SessionObserver {
     fn on_abandoned(&mut self, info: &ExecutionInfo) {
         if let Record::Iterator = self.record {
             self.keep(info);
-        }
-    }
-}
-
-/// The responses of an execution, with its progress for the handlers of the session: each
-/// `ExecutionProgress` updates it, and it ends when the stream is dropped.
-pub(crate) struct ExecutionStream {
-    stream: ReattachableResponseStream,
-    progress: ProgressTracker,
-    chunks: spark_connect_core::arrow_chunks::ArrowChunkAssembler,
-}
-
-impl ExecutionStream {
-    pub(crate) fn new(stream: ReattachableResponseStream, progress: ProgressTracker) -> Self {
-        ExecutionStream {
-            stream,
-            progress,
-            chunks: Default::default(),
-        }
-    }
-
-    /// The next response of the execution, as `ReattachableResponseStream::message`, with the
-    /// chunks of an Arrow batch joined into the batch: the response of a chunk that is not the
-    /// last one has no batch.
-    /// When the execution ends, of its result or of an error, the handlers get their done call,
-    /// whose error is the error of the execution, as PySpark's `Progress.__exit__` raises it.
-    /// It waits on the calling thread, which the handlers are called on, as PySpark calls them on
-    /// the thread that iterates the responses: also inside a `current_thread` runtime.
-    pub(crate) fn next_message(&mut self) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = crate::blocking::block_on(self.stream.message());
-        // On a worker of a multi-thread runtime, the handlers block in place, as the wait did.
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| self.handle(response))
-            }
-            _ => self.handle(response),
-        }
-    }
-
-    /// The response of the stream, `response`, after its progress has updated the handlers and
-    /// its chunk is joined into its batch.
-    fn handle(
-        &mut self,
-        response: Result<Option<proto::ExecutePlanResponse>>,
-    ) -> Result<Option<proto::ExecutePlanResponse>> {
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return Err(self.progress.finish_after(error)),
-        };
-        if let Some(response) = &response {
-            if let Err(error) = self.progress.observe(response) {
-                return Err(self.progress.finish_after(error));
-            }
-        }
-        match self.chunks.join(response) {
-            Ok(None) => {
-                self.progress.finish()?;
-                Ok(None)
-            }
-            Ok(Some(response)) => Ok(Some(response)),
-            Err(error) => Err(self.progress.finish_after(error)),
         }
     }
 }

@@ -308,30 +308,21 @@ fn run_fetch(
     target: &MlTarget,
     fetch: proto::Fetch,
 ) -> spark_connect_core::error::Result<FetchOutput> {
-    use proto::ml_command_result::{ml_operator_info::Type, ResultType};
-    let result = run_ml_command(target.session(), ml::fetch_command(fetch))?;
-    match result.and_then(|r| r.result_type) {
-        Some(ResultType::Param(literal)) => {
-            Ok(FetchOutput::Value(MlValue::from_literal(&literal)?))
+    use spark_connect_core::actions::ml::FetchResult;
+    let session = target.session();
+    let result = block_on(actions::ml::fetch(
+        Arc::clone(session.client()),
+        session.tags(),
+        fetch,
+        SessionObserver::start(session, session.progress_handlers(), &[])?,
+    ))?;
+    Ok(match result {
+        FetchResult::Value(value) => FetchOutput::Value(value),
+        FetchResult::Objects(ids) => {
+            FetchOutput::Objects(ids.iter().map(|id| MlRef::from_id(session, id)).collect())
         }
-        Some(ResultType::Summary(text)) => Ok(FetchOutput::Summary(text)),
-        Some(ResultType::OperatorInfo(info)) => match info.r#type {
-            Some(Type::ObjRef(object)) => Ok(FetchOutput::Objects(
-                object
-                    .id
-                    .split(',')
-                    .filter(|id| !id.is_empty())
-                    .map(|id| MlRef::from_id(target.session(), id))
-                    .collect(),
-            )),
-            _ => Err(SparkError::connect_msg(
-                "the server returned an operator of no object of the fetch",
-            )),
-        },
-        None => Err(SparkError::connect_msg(
-            "the server returned no result of the fetch",
-        )),
-    }
+        FetchResult::Summary(text) => FetchOutput::Summary(text),
+    })
 }
 
 /// Run the ML command `command`, and return its `MlCommandResult`, if the server sends one.
@@ -339,15 +330,12 @@ fn run_ml_command(
     session: &SparkSession,
     command: proto::command::CommandType,
 ) -> spark_connect_core::error::Result<Option<proto::MlCommandResult>> {
-    let responses = crate::dataframe::execute_command_collect(session, command)?;
-    Ok(responses
-        .into_iter()
-        .find_map(|response| match response.response_type {
-            Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) => {
-                Some(result)
-            }
-            _ => None,
-        }))
+    block_on(actions::ml::run(
+        Arc::clone(session.client()),
+        session.tags(),
+        command,
+        SessionObserver::start(session, session.progress_handlers(), &[])?,
+    ))
 }
 
 /// The DataFrame of the method `method` of `target`, of the arguments `args`, as
@@ -600,13 +588,14 @@ pub fn read(
     op_type: OperatorType,
     path: &str,
 ) -> spark_connect_core::error::Result<ReadResult> {
-    use proto::ml_command_result::{ml_operator_info::Type, ResultType};
-    let result = run_ml_command(session, ml::read(jvm_class, op_type, path))?;
-    let Some(ResultType::OperatorInfo(info)) = result.and_then(|r| r.result_type) else {
-        return Err(SparkError::connect_msg(format!(
-            "the server returned no operator of the read of {jvm_class}"
-        )));
-    };
+    use proto::ml_command_result::ml_operator_info::Type;
+    let info = block_on(actions::ml::read(
+        Arc::clone(session.client()),
+        session.tags(),
+        ml::read(jvm_class, op_type, path),
+        jvm_class.to_string(),
+        SessionObserver::start(session, session.progress_handlers(), &[])?,
+    ))?;
     let object = match &info.r#type {
         Some(Type::ObjRef(object)) if op_type == OperatorType::Model => {
             Some(MlRef::from_id(session, &object.id))

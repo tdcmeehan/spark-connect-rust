@@ -6,8 +6,12 @@
 //! - Base traits: `Estimator`, `Transformer`, `Model`, `Evaluator`
 //! - Concrete example: `StandardScaler` estimator + `StandardScalerModel`
 
+use spark_connect_core::actions;
 use spark_connect_core::error::SparkError;
 use spark_connect_core::ml;
+use spark_connect_core::ml::{
+    apply_pairs, array_argmax, is_storage_level_none, ml_exact_column, vector_get,
+};
 pub use spark_connect_core::ml::{
     ml_string_array, MlMatrix, MlOperator, MlVector, OperatorType, Params,
 };
@@ -116,8 +120,6 @@ mod meta;
 pub use meta::*;
 mod validators;
 pub use validators::*;
-mod param_specs;
-mod stage_kinds;
 
 // The typed accessors, summaries and persistence of the models of each family, in the files of the
 // areas that complete them (see `object` for their server-side objects).
@@ -135,9 +137,11 @@ mod tree_api;
 #[allow(unused_imports)] // Until the area adds its first public item.
 pub use tree_api::*;
 
+use crate::blocking::block_on;
 use crate::dataframe::DataFrame;
 use crate::expression::LiteralExpression;
 use crate::plan::{LogicalPlan, RelationOwner};
+use crate::progress::SessionObserver;
 use crate::session::SparkSession;
 use crate::types::DataType;
 
@@ -187,7 +191,7 @@ pub trait Estimator: Send + Sync {
         self.ensure_operator();
         let class = self.operator().name.clone();
         let uid = self.operator().uid.clone();
-        meta::apply_pairs(self.params_mut(), &class, &uid, map)
+        apply_pairs(self.params_mut(), &class, &uid, map)
     }
 }
 
@@ -230,7 +234,7 @@ pub trait Transformer: Send + Sync {
         self.ensure_operator();
         let class = self.operator().name.clone();
         let uid = self.operator().uid.clone();
-        meta::apply_pairs(self.params_mut(), &class, &uid, map)
+        apply_pairs(self.params_mut(), &class, &uid, map)
     }
 
     /// Build the MlRelation for this transformation.
@@ -366,7 +370,7 @@ pub trait Evaluator: Send + Sync {
         let class = self.operator().name.clone();
         let uid = self.operator().uid.clone();
         match self.params_mut() {
-            Some(params) => meta::apply_pairs(params, &class, &uid, map),
+            Some(params) => apply_pairs(params, &class, &uid, map),
             None => Ok(()),
         }
     }
@@ -386,25 +390,13 @@ pub fn ml_helper_attribute(
     method: &str,
     args: Vec<proto::expression::Literal>,
 ) -> spark_connect_core::error::Result<proto::expression::Literal> {
-    let fetch = ml::fetch(
-        ml::helper(),
-        &[],
-        method,
-        args.into_iter().map(ml::MethodArg::Param).collect(),
-    );
-    let responses = crate::dataframe::execute_command_collect(session, ml::fetch_command(fetch))?;
-    for resp in responses {
-        if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
-            resp.response_type
-        {
-            if let Some(proto::ml_command_result::ResultType::Param(literal)) = result.result_type {
-                return Ok(literal);
-            }
-        }
-    }
-    Err(SparkError::connect_msg(format!(
-        "{method}: server returned no value"
-    )))
+    block_on(actions::ml::helper_attribute(
+        Arc::clone(session.client()),
+        session.tags(),
+        method.to_string(),
+        args,
+        SessionObserver::start(session, session.progress_handlers(), &[])?,
+    ))
 }
 
 /// Run an evaluator against a dataset via the ML `Evaluate` command and return the
@@ -418,23 +410,12 @@ fn evaluate_via_command(
     params: &Params,
     df: &DataFrame,
 ) -> spark_connect_core::error::Result<f64> {
-    let responses = crate::dataframe::execute_command_collect(
-        &df.session,
+    let session = &df.session;
+    block_on(actions::ml::evaluate(
+        Arc::clone(session.client()),
+        session.tags(),
         ml::evaluate(operator, params, df.relation()?),
-    )?;
-    for resp in responses {
-        if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
-            resp.response_type
-        {
-            if let Some(proto::ml_command_result::ResultType::Param(lit)) = result.result_type {
-                if let Some(proto::expression::literal::LiteralType::Double(v)) = lit.literal_type {
-                    return Ok(v);
-                }
-            }
-        }
-    }
-    Err(spark_connect_core::error::SparkError::connect_msg(
-        "evaluate: server returned no metric",
+        SessionObserver::start(session, session.progress_handlers(), &[])?,
     ))
 }
 
@@ -938,25 +919,14 @@ fn fit_via_command(
     params: &Params,
     df: &DataFrame,
 ) -> spark_connect_core::error::Result<proto::ml_command_result::MlOperatorInfo> {
-    let responses = crate::dataframe::execute_command_collect(
-        &df.session,
+    let session = &df.session;
+    block_on(actions::ml::fit(
+        Arc::clone(session.client()),
+        session.tags(),
         ml::fit(operator, params, df.relation()?),
-    )?;
-    for response in responses {
-        if let Some(proto::execute_plan_response::ResponseType::MlCommandResult(result)) =
-            response.response_type
-        {
-            if let Some(proto::ml_command_result::ResultType::OperatorInfo(info)) =
-                result.result_type
-            {
-                return Ok(info);
-            }
-        }
-    }
-    Err(spark_connect_core::error::SparkError::connect_msg(format!(
-        "{}.fit: server returned no fitted model",
-        operator.name
-    )))
+        operator.name.clone(),
+        SessionObserver::start(session, session.progress_handlers(), &[])?,
+    ))
 }
 
 /// A server-side ML object: a fitted model, or another object that a fetch returns (a submodel, a
@@ -1807,10 +1777,6 @@ impl Drop for OneVsRestTrainingCache {
     }
 }
 
-fn ml_exact_column(name: &str) -> crate::column::Column {
-    crate::column::col(&format!("`{}`", name.replace('`', "``")))
-}
-
 impl Estimator for OneVsRest {
     fn operator(&self) -> &MlOperator {
         &self.operator
@@ -1834,7 +1800,7 @@ impl Estimator for OneVsRest {
         self.ensure_operator();
         let class = self.operator().name.clone();
         let uid = self.operator().uid.clone();
-        meta::apply_pairs(self.params_mut(), &class, &uid, map)?;
+        apply_pairs(self.params_mut(), &class, &uid, map)?;
         if let Some(classifier) = self.classifier.as_mut() {
             classifier.estimator_mut().apply_param_map(map)?;
         }
@@ -1976,99 +1942,6 @@ impl OneVsRestModel {
         }
         Ok(result.drop([acc]))
     }
-}
-
-/// Whether a storage level is PySpark's `StorageLevel(False, False, False, False)` (of replication
-/// 1, which its `==` compares too): the storage of a DataFrame that is not persisted.
-fn is_storage_level_none(level: &proto::StorageLevel) -> bool {
-    !level.use_disk
-        && !level.use_memory
-        && !level.use_off_heap
-        && !level.deserialized
-        && level.replication == 1
-}
-
-/// PySpark's `InternalFunction.vector_get`: the element `idx` of the vector `vec`, which is dense
-/// or sparse, and an error for an index out of range.
-fn vector_get(vec: crate::column::Column, idx: crate::column::Column) -> crate::column::Column {
-    use crate::column::{lit, lit_double, lit_string, when, Column};
-    use crate::expression::Expression;
-    use crate::functions::{array_size, get, raise_error, unwrap_udt};
-    let unwrapped = unwrap_udt(vec);
-    let is_dense = unwrapped.clone().get_field("type").eq(lit(1));
-    let values = unwrapped.clone().get_field("values");
-    let size = when(is_dense.clone(), array_size(values.clone()))
-        .otherwise(unwrapped.clone().get_field("size"));
-    // The internal function of the server, sent without a flag, as PySpark's connect client does.
-    let sparse_idx = Column::new(Expression::function(
-        "array_binary_search",
-        vec![
-            unwrapped.clone().get_field("indices").expression().clone(),
-            idx.expression().clone(),
-        ],
-    ));
-    let value = when(is_dense, get(values.clone(), idx.clone()))
-        .when(
-            sparse_idx.clone().ge(lit(0)),
-            get(values.clone(), sparse_idx),
-        )
-        .otherwise(lit_double(0.0));
-    let message = Column::new(Expression::function(
-        "printf",
-        vec![
-            lit_string("Vector index must be in [0, %s), but got %s")
-                .expression()
-                .clone(),
-            size.clone().expression().clone(),
-            idx.clone().expression().clone(),
-        ],
-    ));
-    when(
-        idx.clone().ge(lit(0)).and(idx.clone().lt(size.clone())),
-        value,
-    )
-    .otherwise(raise_error(message))
-}
-
-/// PySpark's `InternalFunction.array_argmax`: the index of the first greatest of `scores`, which
-/// ignores NaN and null, and is -1 when no score is above negative infinity.
-fn array_argmax(scores: crate::column::Column) -> crate::column::Column {
-    use crate::column::{lit, lit_double, when};
-    use crate::functions::{aggregate_with_finish, r#struct};
-    aggregate_with_finish(
-        scores,
-        r#struct([
-            lit_double(f64::NEG_INFINITY).alias("v"),
-            lit(-1).alias("i"),
-            lit(0).alias("j"),
-        ]),
-        |args| {
-            let acc = args[0].clone();
-            let value = args[1].clone();
-            let best = acc.clone().get_field("v");
-            let index = acc.clone().get_field("i");
-            let current = acc.get_field("j");
-            when(
-                value
-                    .clone()
-                    .is_nan()
-                    .not()
-                    .and(value.clone().is_null().not())
-                    .and(value.clone().gt(best.clone())),
-                r#struct([
-                    value.alias("v"),
-                    current.clone().alias("i"),
-                    current.clone() + lit(1),
-                ]),
-            )
-            .otherwise(r#struct([
-                best.alias("v"),
-                index.alias("i"),
-                current + lit(1),
-            ]))
-        },
-        |args| args[0].clone().get_field("i"),
-    )
 }
 
 impl Transformer for OneVsRestModel {

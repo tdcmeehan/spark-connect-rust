@@ -164,7 +164,10 @@ impl<O: ExecutionObserver> ListenerEvents<O> {
         loop {
             // None: canceled. Some(None): interrupted by a signal. Some(Some(..)): the read.
             let message = {
-                let read = until_abort(ABORT_RETRIES, boxed(|| self.execution.stream.message()));
+                let read = until_abort(
+                    ABORT_RETRIES,
+                    boxed(|| self.execution.responses.stream.message()),
+                );
                 match &mut self.cancel {
                     Some(cancel) => tokio::select! {
                         biased;

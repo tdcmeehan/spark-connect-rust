@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Generate the tables of the ML meta-algorithms from tests/golden/ml_api.json:
-- crates/spark-connect/src/ml/stage_kinds.rs: the kind of each JVM class of the stages of
+- crates/spark-connect-core/src/ml/stage_kinds.rs: the kind of each JVM class of the stages of
   pyspark.ml (an estimator, a transformer, a model or an evaluator), which a load of a
   meta-algorithm of PySpark's Python format reads its stages by, as the server's `Read` of a JVM
   class needs its operator type;
-- crates/spark-connect/src/ml/param_specs.rs: the converter of each param of each class (its
+- crates/spark-connect-core/src/ml/param_specs.rs: the converter of each param of each class (its
   `typeConverter` in pyspark.ml.param), the doc of each param (its `Param.doc`, which PySpark's
   message of an extraneous param shows), and the model class of each estimator whose model is not
   named with `Model` appended to its name.
@@ -95,7 +95,7 @@ def stage_kinds(api):
         "];",
         "",
     ]
-    (ROOT / "crates/spark-connect/src/ml/stage_kinds.rs").write_text("\n".join(out))
+    (ROOT / "crates/spark-connect-core/src/ml/stage_kinds.rs").write_text("\n".join(out))
 
 
 def rust_str(text):
@@ -228,7 +228,7 @@ def param_specs(api):
         "];",
         "",
     ]
-    (ROOT / "crates/spark-connect/src/ml/param_specs.rs").write_text("\n".join(out))
+    (ROOT / "crates/spark-connect-core/src/ml/param_specs.rs").write_text("\n".join(out))
 
 
 def main():
