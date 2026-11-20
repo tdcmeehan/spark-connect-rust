@@ -15,6 +15,8 @@ pub mod error;
 pub mod execution;
 pub mod expression;
 pub mod functions;
+#[doc(hidden)]
+pub mod interop;
 pub mod merge;
 pub mod ml;
 pub mod observation;

@@ -29,14 +29,17 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use arrow::array::{Array, ArrayRef, AsArray};
+use arrow::array::{
+    Array, ArrayRef, AsArray, GenericListArray, MapArray, OffsetSizeTrait, StructArray,
+};
 use arrow::datatypes::{
     DataType as ArrowType, Date32Type, Date64Type, Decimal128Type, Decimal256Type,
     DurationMicrosecondType, DurationMillisecondType, DurationNanosecondType, DurationSecondType,
-    Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Int8Type, IntervalUnit,
-    IntervalYearMonthType, Time32MillisecondType, Time32SecondType, Time64MicrosecondType,
-    Time64NanosecondType, TimeUnit, TimestampMicrosecondType, TimestampMillisecondType,
-    TimestampNanosecondType, TimestampSecondType, UInt16Type, UInt32Type, UInt64Type, UInt8Type,
+    Field, Fields as ArrowFields, Float32Type, Float64Type, Int16Type, Int32Type, Int64Type,
+    Int8Type, IntervalUnit, IntervalYearMonthType, Schema, Time32MillisecondType, Time32SecondType,
+    Time64MicrosecondType, Time64NanosecondType, TimeUnit, TimestampMicrosecondType,
+    TimestampMillisecondType, TimestampNanosecondType, TimestampSecondType, UInt16Type, UInt32Type,
+    UInt64Type, UInt8Type,
 };
 use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, SecondsFormat, TimeDelta, Utc};
@@ -44,6 +47,7 @@ use serde::de::{
     self, DeserializeSeed, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Visitor,
 };
 use serde::Deserialize;
+use spark_connect_core::types::{DataType as SparkType, StructField};
 
 use crate::error::{Error, Result};
 use crate::value::{CalendarInterval, Decimal, Row, Value, CALENDAR_INTERVAL_PARTS, DECIMAL_PARTS};
@@ -77,6 +81,170 @@ pub fn rows(batch: &RecordBatch) -> Result<Vec<Row>> {
             ))
         })
         .collect()
+}
+
+/// `batch` with the column names of `schema`, the Spark schema of the result, nested names
+/// included; the Arrow names stand where `schema` is `None` or does not match.
+pub(crate) fn with_names_of(batch: RecordBatch, schema: Option<&SparkType>) -> Result<RecordBatch> {
+    let Some(SparkType::Struct { fields }) = schema else {
+        return Ok(batch);
+    };
+    if fields.len() != batch.num_columns() || have_names_of(batch.schema().fields(), fields) {
+        return Ok(batch);
+    }
+    let columns: Vec<ArrayRef> = batch
+        .columns()
+        .iter()
+        .zip(fields)
+        .map(|(column, field)| renamed(column, &field.data_type))
+        .collect();
+    let names = named(batch.schema().fields(), fields, &columns);
+    let schema = Arc::new(Schema::new_with_metadata(
+        names,
+        batch.schema().metadata().clone(),
+    ));
+    RecordBatch::try_new(schema, columns).map_err(|error| Error::decode(error.to_string()))
+}
+
+/// Whether the Arrow fields `arrow` have the names of the Spark fields `spark` at every depth.
+fn have_names_of(arrow: &ArrowFields, spark: &[StructField]) -> bool {
+    arrow.len() == spark.len()
+        && arrow.iter().zip(spark).all(|(arrow, spark)| {
+            arrow.name() == &spark.name && has_names_of(arrow.data_type(), &spark.data_type)
+        })
+}
+
+fn has_names_of(arrow: &ArrowType, spark: &SparkType) -> bool {
+    match (arrow, spark) {
+        (
+            _,
+            SparkType::Udt {
+                sql_type: Some(sql_type),
+                ..
+            },
+        ) => has_names_of(arrow, sql_type),
+        (ArrowType::Struct(arrow), SparkType::Struct { fields }) => have_names_of(arrow, fields),
+        (
+            ArrowType::List(field) | ArrowType::LargeList(field),
+            SparkType::Array { element_type, .. },
+        ) => has_names_of(field.data_type(), element_type),
+        (
+            ArrowType::Map(field, _),
+            SparkType::Map {
+                key_type,
+                value_type,
+                ..
+            },
+        ) => match field.data_type() {
+            ArrowType::Struct(entries) if entries.len() == 2 => {
+                has_names_of(entries[0].data_type(), key_type)
+                    && has_names_of(entries[1].data_type(), value_type)
+            }
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+/// The Arrow fields `arrow` with the names of the Spark fields `spark` and the types of
+/// `columns`.
+fn named(arrow: &ArrowFields, spark: &[StructField], columns: &[ArrayRef]) -> Vec<Field> {
+    arrow
+        .iter()
+        .zip(spark)
+        .zip(columns)
+        .map(|((arrow, spark), column)| retyped(arrow, column).with_name(&spark.name))
+        .collect()
+}
+
+/// `field`, with the type of `column`.
+fn retyped(field: &Field, column: &ArrayRef) -> Field {
+    field.clone().with_data_type(column.data_type().clone())
+}
+
+/// `array` with the field names of the Spark type `data_type`.
+fn renamed(array: &ArrayRef, data_type: &SparkType) -> ArrayRef {
+    match (array.data_type(), data_type) {
+        (
+            _,
+            SparkType::Udt {
+                sql_type: Some(sql_type),
+                ..
+            },
+        ) => renamed(array, sql_type),
+        (ArrowType::Struct(arrow), SparkType::Struct { fields }) if arrow.len() == fields.len() => {
+            let structs = array.as_struct();
+            let columns: Vec<ArrayRef> = structs
+                .columns()
+                .iter()
+                .zip(fields)
+                .map(|(column, field)| renamed(column, &field.data_type))
+                .collect();
+            let names = named(arrow, fields, &columns);
+            Arc::new(StructArray::new(
+                names.into(),
+                columns,
+                structs.nulls().cloned(),
+            ))
+        }
+        (ArrowType::List(field), SparkType::Array { element_type, .. }) => {
+            renamed_list(array.as_list::<i32>(), field, element_type)
+        }
+        (ArrowType::LargeList(field), SparkType::Array { element_type, .. }) => {
+            renamed_list(array.as_list::<i64>(), field, element_type)
+        }
+        (
+            ArrowType::Map(field, sorted),
+            SparkType::Map {
+                key_type,
+                value_type,
+                ..
+            },
+        ) => {
+            let map = array.as_map();
+            let entries = map.entries();
+            let ArrowType::Struct(entry_fields) = entries.data_type() else {
+                return Arc::clone(array);
+            };
+            let keys = renamed(entries.column(0), key_type);
+            let values = renamed(entries.column(1), value_type);
+            let entry_fields: ArrowFields = vec![
+                retyped(&entry_fields[0], &keys),
+                retyped(&entry_fields[1], &values),
+            ]
+            .into();
+            let entries =
+                StructArray::new(entry_fields, vec![keys, values], entries.nulls().cloned());
+            let field = Arc::new(Field::new(
+                field.name(),
+                entries.data_type().clone(),
+                field.is_nullable(),
+            ));
+            Arc::new(MapArray::new(
+                field,
+                map.offsets().clone(),
+                entries,
+                map.nulls().cloned(),
+                *sorted,
+            ))
+        }
+        _ => Arc::clone(array),
+    }
+}
+
+fn renamed_list<O: OffsetSizeTrait>(
+    list: &GenericListArray<O>,
+    field: &Field,
+    element_type: &SparkType,
+) -> ArrayRef {
+    let values = renamed(list.values(), element_type);
+    let field = Arc::new(retyped(field, &values));
+    Arc::new(GenericListArray::new(
+        field,
+        list.offsets().clone(),
+        values,
+        list.nulls().cloned(),
+    ))
 }
 
 /// Whether the value at `row` is `NULL`: also every value of an array of the null type, which
@@ -1049,4 +1217,199 @@ impl<'de> Deserializer<'de> for ValueDeserializer<'de> {
 /// A `TIMESTAMP_NTZ` as `chrono::NaiveDateTime` parses it, with a `T` between date and time.
 fn ntz_text(value: NaiveDateTime) -> String {
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::{
+        Int32Array, LargeListArray, ListArray, MapBuilder, StringArray, StringBuilder,
+    };
+    use spark_connect_core::types::StructField;
+
+    use super::*;
+
+    fn spark_field(name: &str, data_type: SparkType) -> StructField {
+        StructField {
+            name: name.to_string(),
+            data_type,
+            nullable: true,
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_batch_takes_the_names_of_the_spark_schema_at_every_depth() {
+        let inner = StructArray::from(vec![(
+            Arc::new(Field::new("a", ArrowType::Int32, true)),
+            Arc::new(Int32Array::from(vec![7])) as ArrayRef,
+        )]);
+        let list = ListArray::new(
+            Arc::new(Field::new("item", inner.data_type().clone(), true)),
+            arrow::buffer::OffsetBuffer::from_lengths([1]),
+            Arc::new(inner.clone()),
+            None,
+        );
+        let large_list = LargeListArray::new(
+            Arc::new(Field::new("item", inner.data_type().clone(), true)),
+            arrow::buffer::OffsetBuffer::from_lengths([1]),
+            Arc::new(inner.clone()),
+            None,
+        );
+        let mut map = MapBuilder::new(None, StringBuilder::new(), StringBuilder::new());
+        map.keys().append_value("k");
+        map.values().append_value("v");
+        map.append(true).unwrap();
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(inner.clone()),
+            Arc::new(list.clone()),
+            Arc::new(map.finish()),
+            Arc::new(large_list.clone()),
+        ];
+        let arrow_schema = Schema::new(
+            columns
+                .iter()
+                .enumerate()
+                .map(|(i, column)| Field::new(format!("c{i}"), column.data_type().clone(), true))
+                .collect::<Vec<_>>(),
+        );
+        let batch = RecordBatch::try_new(Arc::new(arrow_schema), columns).unwrap();
+        let struct_of = |name: &str| SparkType::Struct {
+            fields: vec![spark_field(name, SparkType::Integer)],
+        };
+        let string = || SparkType::String {
+            collation: "UTF8_BINARY".to_string(),
+        };
+        let large_points = || {
+            spark_field(
+                "large_points",
+                SparkType::Array {
+                    element_type: Box::new(struct_of("z")),
+                    contains_null: true,
+                },
+            )
+        };
+        let schema = SparkType::Struct {
+            fields: vec![
+                spark_field("point", struct_of("x")),
+                spark_field(
+                    "points",
+                    SparkType::Array {
+                        element_type: Box::new(struct_of("y")),
+                        contains_null: true,
+                    },
+                ),
+                spark_field(
+                    "labels",
+                    SparkType::Map {
+                        key_type: Box::new(string()),
+                        value_type: Box::new(string()),
+                        value_contains_null: true,
+                    },
+                ),
+                large_points(),
+            ],
+        };
+
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct X {
+            x: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct Y {
+            y: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct Z {
+            z: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct W {
+            w: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct U {
+            u: i32,
+        }
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct Named {
+            point: X,
+            points: Vec<Y>,
+            labels: Vec<(String, String)>,
+            large_points: Vec<Z>,
+        }
+        let renamed = with_names_of(batch.clone(), Some(&schema)).unwrap();
+        let rows: Vec<Named> = from_record_batch(&renamed).unwrap();
+        assert_eq!(
+            rows,
+            [Named {
+                point: X { x: 7 },
+                points: vec![Y { y: 7 }],
+                labels: vec![("k".to_string(), "v".to_string())],
+                large_points: vec![Z { z: 7 }],
+            }]
+        );
+        let unnamed = with_names_of(batch, None).unwrap();
+        assert!(from_record_batch::<Named>(&unnamed).is_err());
+
+        let named_on_top = |column: ArrayRef, field: StructField| {
+            let arrow_field = Field::new(&field.name, column.data_type().clone(), true);
+            let batch =
+                RecordBatch::try_new(Arc::new(Schema::new(vec![arrow_field])), vec![column])
+                    .unwrap();
+            let schema = SparkType::Struct {
+                fields: vec![field],
+            };
+            with_names_of(batch, Some(&schema)).unwrap()
+        };
+        let array_of = |element| SparkType::Array {
+            element_type: Box::new(element),
+            contains_null: true,
+        };
+        let points = named_on_top(
+            Arc::new(list),
+            spark_field("points", array_of(struct_of("y"))),
+        );
+        let rows: Vec<(Vec<Y>,)> = from_record_batch(&points).unwrap();
+        assert_eq!(rows, [(vec![Y { y: 7 }],)]);
+        let large = named_on_top(Arc::new(large_list), large_points());
+        let rows: Vec<(Vec<Z>,)> = from_record_batch(&large).unwrap();
+        assert_eq!(rows, [(vec![Z { z: 7 }],)]);
+
+        let entries = StructArray::from(vec![
+            (
+                Arc::new(Field::new("keys", ArrowType::Utf8, false)),
+                Arc::new(StringArray::from(vec!["k"])) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("values", inner.data_type().clone(), true)),
+                Arc::new(inner.clone()) as ArrayRef,
+            ),
+        ]);
+        let scores = MapArray::new(
+            Arc::new(Field::new("entries", entries.data_type().clone(), false)),
+            arrow::buffer::OffsetBuffer::from_lengths([1]),
+            entries,
+            None,
+            false,
+        );
+        let map_of_structs = SparkType::Map {
+            key_type: Box::new(string()),
+            value_type: Box::new(struct_of("w")),
+            value_contains_null: true,
+        };
+        let scores = named_on_top(Arc::new(scores), spark_field("scores", map_of_structs));
+        let rows: Vec<(Vec<(String, W)>,)> = from_record_batch(&scores).unwrap();
+        assert_eq!(rows, [(vec![("k".to_string(), W { w: 7 })],)]);
+
+        let udt = SparkType::Udt {
+            type_str: "location".to_string(),
+            jvm_class: None,
+            python_class: None,
+            serialized_python_class: None,
+            sql_type: Some(Box::new(struct_of("u"))),
+        };
+        let located = named_on_top(Arc::new(inner), spark_field("location", udt));
+        let rows: Vec<(U,)> = from_record_batch(&located).unwrap();
+        assert_eq!(rows, [(U { u: 7 },)]);
+    }
 }

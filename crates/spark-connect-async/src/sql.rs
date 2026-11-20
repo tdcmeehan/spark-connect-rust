@@ -5,14 +5,16 @@ use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use spark_connect_core::actions;
 use spark_connect_core::expression::Expression;
 use spark_connect_core::plan::{relation_with_ids, LogicalPlan};
 
 use crate::column::IntoArgument;
 use crate::dataframe::DataFrame;
 use crate::error::Result;
+use crate::progress::Observations;
 use crate::session::Session;
+use crate::stream;
+use spark_connect_proto as proto;
 
 /// The SQL statement that [`Session::sql`] returns: add its arguments, then await it to send
 /// it.
@@ -89,10 +91,22 @@ impl IntoFuture for Sql {
     fn into_future(self) -> Self::IntoFuture {
         let (session, plan) = self.plan();
         let relation = relation_with_ids(&plan, session.plan_ids());
+        let observations = Observations::of(&plan);
         Box::pin(async move {
+            let command = proto::command::CommandType::SqlCommand(proto::SqlCommand {
+                input: Some(relation?),
+                ..Default::default()
+            });
             let returned =
-                actions::session::sql(session.client(), session.tags().to_vec(), relation?, ())
-                    .await?;
+                stream::command_result(session.clone(), command, observations, |response| {
+                    match response {
+                        proto::execute_plan_response::ResponseType::SqlCommandResult(result) => {
+                            result.relation
+                        }
+                        _ => None,
+                    }
+                })
+                .await?;
             Ok(match returned {
                 Some(relation) => DataFrame::new(
                     session,
