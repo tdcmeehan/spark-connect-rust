@@ -11,6 +11,7 @@ use spark_connect_core::types::{DataType, DayTimeIntervalType, YearMonthInterval
 
 use crate::dataframe::DataFrame;
 use crate::value::Decimal;
+use crate::window::Window;
 
 /// An expression over the columns of a DataFrame: a column, a literal, or an operation on
 /// other columns. Its methods build new columns; nothing reaches the server until an action
@@ -290,6 +291,11 @@ impl Column {
     /// The descending order of the column, `NULL`s last.
     pub fn desc_nulls_last(self) -> Column {
         Column(self.0.desc_nulls_last())
+    }
+
+    /// The value of the window function or aggregate for each row, over the rows of `window`.
+    pub fn over(self, window: Window) -> Column {
+        Column(self.0.over(window.into_core()))
     }
 }
 
