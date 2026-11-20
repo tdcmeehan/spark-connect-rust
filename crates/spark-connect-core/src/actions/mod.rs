@@ -232,7 +232,9 @@ pub async fn execute_command_ignoring_errors(
 }
 
 /// The future that `make` makes, on the heap, so that the async fn that awaits it holds a pointer.
-fn boxed<F: Future>(make: impl FnOnce() -> F) -> Pin<Box<F>> {
+/// Not a stable API.
+#[doc(hidden)]
+pub fn boxed<F: Future>(make: impl FnOnce() -> F) -> Pin<Box<F>> {
     Box::pin(make())
 }
 

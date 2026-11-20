@@ -34,11 +34,12 @@ This workflow validates the pure-Rust implementation:
 
 - **Build**: `cargo build --release` builds the workspace `default-members`
   (`apache-spark-connect-proto`, `apache-spark-connect-core`, `apache-spark-connect-blocking`,
-  `apache-spark-connect`, `apache-spark-connect-macros` and `apache-spark-connect-build`).
-  `pyspark-rs` is not a default member, so the Python workflows build it separately.
-- **Test**: Runs `cargo test` on `apache-spark-connect`, `apache-spark-connect-core` and
-  `apache-spark-connect-blocking`, then builds and tests `apache-spark-connect` with the
-  `datafusion,polars` features
+  `apache-spark-connect`, `apache-spark-connect-async`, `apache-spark-connect-macros` and
+  `apache-spark-connect-build`). `pyspark-rs` is not a default member, so the Python workflows
+  build it separately.
+- **Test**: Runs `cargo test` on `apache-spark-connect`, `apache-spark-connect-core`,
+  `apache-spark-connect-blocking` and `apache-spark-connect-async`, then builds and tests
+  `apache-spark-connect` with the `datafusion,polars` features
 - **No-stub audit**: Runs `scripts/audit_no_stubs.sh` to enforce the "100% coverage, zero stubs"
   rule (see [Design notes](architecture.md))
 - **Warnings**: The workflow sets `RUSTFLAGS` to `-D warnings`
@@ -49,8 +50,8 @@ This workflow validates the pure-Rust implementation:
 2. Install Rust (stable channel, minimal profile) with caching
 3. Install system dependencies (protobuf-compiler)
 4. Build the default members
-5. Test `apache-spark-connect`, `apache-spark-connect-core` and `apache-spark-connect-blocking`,
-   then build and test with `datafusion,polars`
+5. Test `apache-spark-connect`, `apache-spark-connect-core`, `apache-spark-connect-blocking` and
+   `apache-spark-connect-async`, then build and test with `datafusion,polars`
 6. Audit for placeholder/deferred markers
 
 The same workflow has three more jobs:
@@ -241,7 +242,8 @@ This workflow runs on pushes and pull requests targeting `master` and `branch-*`
 one job does three things:
 
 - **Rust coverage**: `cargo llvm-cov` over the unit and golden tests of `apache-spark-connect`,
-  `apache-spark-connect-core` and `apache-spark-connect-blocking`, plus the behavioral e2e test targets
+  `apache-spark-connect-core`, `apache-spark-connect-blocking` and `apache-spark-connect-async`,
+  plus the behavioral e2e test targets
   of the live pass (the `--test` list of its "Generate Rust coverage report" step: the non-ML
   `e2e_*` files, such as `e2e_functions` and `e2e_streaming`, and the `e2e_*` ML live tests, such
   as `e2e_kmeans` and `e2e_random_forest`) against a live Connect server, merged into one report.
