@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use arrow::datatypes::TimeUnit;
 use spark_connect_proto as proto;
 
 use crate::error::{Result, SparkError};
@@ -464,6 +465,18 @@ pub fn i128_to_decimal_string(unscaled: i128, scale: i32) -> String {
     }
 }
 
+/// The nanoseconds since midnight of a `TIME` that Arrow holds as `value` in `unit`, as PySpark's
+/// `TimeType.fromInternal` reads it.
+#[doc(hidden)]
+pub fn time_nanos(value: i64, unit: TimeUnit) -> i64 {
+    match unit {
+        TimeUnit::Second => value * 1_000_000_000,
+        TimeUnit::Millisecond => value * 1_000_000,
+        TimeUnit::Microsecond => value * 1_000,
+        TimeUnit::Nanosecond => value,
+    }
+}
+
 /// A borrowed column decoder, resolved once per record batch. Returned Values
 /// own their contents; neither rows nor nested values retain the Arrow arrays.
 #[doc(hidden)]
@@ -767,15 +780,22 @@ impl<'a> ArrowValueLayout<'a> {
                 scale: Some(arr.scale() as i32),
             }),
             ArrowValueDecoder::FixedSizeBinary(arr) => Ok(Value::Binary(arr.value(index).to_vec())),
-            // A TIME, in nanoseconds since midnight, as PySpark's `TimeType.fromInternal` reads.
-            ArrowValueDecoder::Time64Microsecond(arr) => Ok(Value::Time(arr.value(index) * 1_000)),
-            ArrowValueDecoder::Time64Nanosecond(arr) => Ok(Value::Time(arr.value(index))),
-            ArrowValueDecoder::Time32Millisecond(arr) => {
-                Ok(Value::Time(arr.value(index) as i64 * 1_000_000))
-            }
-            ArrowValueDecoder::Time32Second(arr) => {
-                Ok(Value::Time(arr.value(index) as i64 * 1_000_000_000))
-            }
+            ArrowValueDecoder::Time64Microsecond(arr) => Ok(Value::Time(time_nanos(
+                arr.value(index),
+                TimeUnit::Microsecond,
+            ))),
+            ArrowValueDecoder::Time64Nanosecond(arr) => Ok(Value::Time(time_nanos(
+                arr.value(index),
+                TimeUnit::Nanosecond,
+            ))),
+            ArrowValueDecoder::Time32Millisecond(arr) => Ok(Value::Time(time_nanos(
+                arr.value(index).into(),
+                TimeUnit::Millisecond,
+            ))),
+            ArrowValueDecoder::Time32Second(arr) => Ok(Value::Time(time_nanos(
+                arr.value(index).into(),
+                TimeUnit::Second,
+            ))),
             // A year-month interval, the months that the server sends of it.
             ArrowValueDecoder::IntervalYearMonth(arr) => {
                 Ok(Value::YearMonthInterval(arr.value(index)))
@@ -856,5 +876,36 @@ impl<'a> ArrowValueLayout<'a> {
                 self.array.data_type()
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::{
+        ArrayRef, Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
+        Time64NanosecondArray,
+    };
+
+    use super::*;
+
+    #[test]
+    fn a_time_of_every_arrow_unit_is_its_nanoseconds_since_midnight() {
+        let arrays: [ArrayRef; 4] = [
+            Arc::new(Time32SecondArray::from(vec![3_723])),
+            Arc::new(Time32MillisecondArray::from(vec![3_723_004])),
+            Arc::new(Time64MicrosecondArray::from(vec![3_723_000_005])),
+            Arc::new(Time64NanosecondArray::from(vec![3_723_000_000_006])),
+        ];
+        let times: Vec<Value> = arrays
+            .iter()
+            .map(|array| ArrowValueLayout::new(array.as_ref()).value_at(0).unwrap())
+            .collect();
+        let nanos = [
+            3_723_000_000_000,
+            3_723_004_000_000,
+            3_723_000_005_000,
+            3_723_000_000_006,
+        ];
+        assert_eq!(times, nanos.map(Value::Time));
     }
 }
