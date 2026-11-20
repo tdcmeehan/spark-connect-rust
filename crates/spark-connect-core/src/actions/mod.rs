@@ -174,7 +174,7 @@ impl<O: ExecutionObserver> Execution<O> {
         let Some(mut response) = self.responses.receive(message)? else {
             return Ok(None);
         };
-        capture(&mut response, &mut self.info, &mut self.responses.observer)?;
+        capture_response(&mut response, &mut self.info, &mut self.responses.observer)?;
         Ok(Some(response))
     }
 
@@ -237,8 +237,10 @@ fn boxed<F: Future>(make: impl FnOnce() -> F) -> Pin<Box<F>> {
 }
 
 /// Takes what `response` reports into `info`, and gives its observed metrics to `observer`, whose
-/// error is one of the execution, with its operation id, as PySpark's client raises it.
-fn capture(
+/// error is one of the execution, with its operation id, as PySpark's client raises it. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn capture_response(
     response: &mut proto::ExecutePlanResponse,
     info: &mut ExecutionInfo,
     observer: &mut impl ExecutionObserver,

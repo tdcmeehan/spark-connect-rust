@@ -2664,9 +2664,8 @@ fn execute_command_reporting(
     session.execute_command(command_type, reported, observations)
 }
 
-/// For the tests of the capture of a response: what an action of the core does with each one, as
-/// it captures what the execution reports and hands the observed metrics to the session's
-/// observer, whose error is one of the execution, with its operation id.
+/// For the tests of the capture of a response: the core's step for each response of an
+/// execution, with the session's observer.
 #[cfg(test)]
 fn capture_execution(
     resp: &mut proto::ExecutePlanResponse,
@@ -2674,17 +2673,8 @@ fn capture_execution(
     session: &SparkSession,
     observations: &[(String, crate::observation::Observation)],
 ) -> Result<()> {
-    use spark_connect_core::actions::ExecutionObserver;
-    let observed = info.capture(resp);
-    if observed.is_empty() {
-        return Ok(());
-    }
     let mut observer = SessionObserver::start(session, session.progress_handlers(), observations)?;
-    let set = observer.on_observed_metrics(observed);
-    set.map_err(|error| match &info.operation_id {
-        Some(operation_id) => error.with_operation_id(operation_id.as_str()),
-        None => error,
-    })
+    spark_connect_core::actions::capture_response(resp, info, &mut observer)
 }
 
 /// Whether `value` is a fill of PySpark's `fillna`: a bool, an integer, a float or a string. Any

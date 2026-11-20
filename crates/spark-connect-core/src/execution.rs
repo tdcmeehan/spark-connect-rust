@@ -25,8 +25,7 @@ impl ExecutionInfo {
     /// Takes the operation id, the metrics and the observed metrics off `response`. Returns the
     /// observed metrics that it took. They must be taken before the `response_type` of the
     /// response is consumed, as they are fields of their own.
-    #[doc(hidden)]
-    pub fn capture(
+    pub(crate) fn capture(
         &mut self,
         response: &mut proto::ExecutePlanResponse,
     ) -> &[proto::execute_plan_response::ObservedMetrics] {
