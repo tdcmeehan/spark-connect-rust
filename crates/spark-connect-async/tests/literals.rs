@@ -28,7 +28,7 @@ fn old(literal: L) -> OldColumn {
 }
 
 fn sent(column: &Column) -> proto::Expression {
-    column.expression().to_proto()
+    OldColumn::from(column.clone()).to_proto()
 }
 
 #[test]

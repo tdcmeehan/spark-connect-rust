@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use spark_connect_core::column::Column as CoreColumn;
 use spark_connect_core::expression::{
     AsSubquery, ColumnReference, Expression, ExpressionNode, SubqueryExpression, SubqueryType,
 };
@@ -10,7 +11,7 @@ use spark_connect_core::types::DataType;
 use spark_connect_proto as proto;
 use tokio::sync::OnceCell;
 
-use crate::column::{expressions, subquery_column, Column};
+use crate::column::{expressions, subquery_column, to_core, Column};
 use crate::error::Result;
 use crate::observation::Observation;
 use crate::options::{
@@ -63,8 +64,8 @@ fn strings(names: impl IntoIterator<Item = impl Into<String>>) -> Vec<String> {
     names.into_iter().map(Into::into).collect()
 }
 
-fn columns(columns: impl IntoIterator<Item = impl Into<Column>>) -> Vec<Column> {
-    columns.into_iter().map(Into::into).collect()
+fn columns(columns: impl IntoIterator<Item = impl Into<Column>>) -> Vec<CoreColumn> {
+    columns.into_iter().map(to_core).collect()
 }
 
 impl DataFrame {
@@ -174,7 +175,7 @@ impl DataFrame {
     pub fn filter(&self, condition: impl Into<Column>) -> DataFrame {
         self.with_plan(LogicalPlan::Filter {
             input: self.input(),
-            condition: condition.into(),
+            condition: to_core(condition),
         })
     }
 
@@ -190,7 +191,7 @@ impl DataFrame {
     ) -> DataFrame {
         let (column_names, columns) = columns
             .into_iter()
-            .map(|(name, column)| (name.into(), column.into()))
+            .map(|(name, column)| (name.into(), to_core(column)))
             .unzip();
         self.with_plan(LogicalPlan::WithColumns {
             input: self.input(),
@@ -396,7 +397,7 @@ impl DataFrame {
             left: self.input(),
             right: right.input(),
             join_type: join_type.plan(),
-            on,
+            on: on.map(to_core),
             using_columns,
         })
     }
@@ -413,7 +414,7 @@ impl DataFrame {
             left: self.input(),
             right: right.input(),
             join_type: join_type.plan(),
-            on: condition,
+            on: condition.map(to_core),
         })
     }
 
@@ -423,16 +424,16 @@ impl DataFrame {
         self.with_plan(LogicalPlan::AsOfJoin {
             left: self.input(),
             right: right.input(),
-            left_as_of: join.left_as_of,
-            right_as_of: join.right_as_of,
-            on: join.on,
+            left_as_of: to_core(join.left_as_of),
+            right_as_of: to_core(join.right_as_of),
+            on: join.on.map(to_core),
             using_columns: join.using_columns,
             join_type: if join.left_outer {
                 AsOfJoinType::LeftOuter
             } else {
                 AsOfJoinType::Inner
             },
-            tolerance: join.tolerance,
+            tolerance: join.tolerance.map(to_core),
             allow_exact_matches: join.allow_exact_matches,
             direction: join.direction.core(),
         })
