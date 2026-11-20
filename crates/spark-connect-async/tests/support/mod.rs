@@ -24,13 +24,17 @@ use std::fmt::Debug;
 /// they first appear. Plan ids come from one counter of the process, so two plans built apart
 /// never share them; what is compared is which nodes and references share an id.
 pub fn renumbered(message: &impl Debug) -> String {
-    const FIELD: &str = "plan_id: ";
-    let text = format!("{message:?}");
+    numbered_after(&format!("{message:?}"), "plan_id: ")
+}
+
+/// `text` with the number after each `marker`, bare or in `Some(..)`, numbered 1, 2, ... in the
+/// order in which the numbers first appear.
+pub fn numbered_after(text: &str, marker: &str) -> String {
     let mut ids: HashMap<String, usize> = HashMap::new();
     let mut out = String::with_capacity(text.len());
-    let mut rest = text.as_str();
-    while let Some(at) = rest.find(FIELD) {
-        let (before, after) = rest.split_at(at + FIELD.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(marker) {
+        let (before, after) = rest.split_at(at + marker.len());
         out.push_str(before);
         let prefix = if after.starts_with("Some(") {
             "Some("

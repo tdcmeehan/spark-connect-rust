@@ -92,6 +92,8 @@ jobs:
         # They list the Rust dependencies that the wheels link, from Cargo.lock. A change of
         # dependencies without regenerating them (python3 scripts/gen_binary_licenses.py) fails.
         run: python3 scripts/gen_binary_licenses.py --check
+      - name: Generated functions of the async crate (check) - blocking
+        run: python3 scripts/gen_async_functions.py --check
 
   python-ruff:
     name: ruff (our scripts, tests and hand-written pyspark shim)
