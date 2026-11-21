@@ -200,9 +200,7 @@ impl Drop for CachedRelation {
         );
         let session = self.session.clone();
         self.runtime.spawn(async move {
-            let _ =
-                stream::command_result(session, command, Observations::default(), |_| None::<()>)
-                    .await;
+            let _ = stream::command(session, command, Observations::default()).await;
         });
     }
 }
@@ -462,11 +460,7 @@ impl DataFrame {
             })
         });
         let (session, observations) = (self.session().clone(), Observations::of(self.plan()));
-        async move {
-            stream::command_result(session, command?, observations, |_| None::<()>)
-                .await
-                .map(drop)
-        }
+        async move { stream::command(session, command?, observations).await }
     }
 
     /// A DataFrame of the rows of this one as the server keeps them, whose plan does not

@@ -21,6 +21,8 @@ pub mod functions;
 pub mod group;
 #[doc(hidden)]
 pub mod interop;
+#[doc(hidden)]
+pub mod local_rows;
 pub mod merge;
 pub mod ml;
 pub mod observation;

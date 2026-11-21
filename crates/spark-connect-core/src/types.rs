@@ -1680,7 +1680,7 @@ fn parse_json_object(
 ///
 /// Neither checks the range of an argument, such as the precision of a decimal: PySpark's types
 /// take any, and the server refuses the type. A decimal that Arrow cannot hold is refused when it
-/// is converted (see `decimal128_precision_and_scale` of the session).
+/// is converted (see `decimal128_precision_and_scale` of local_rows.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TypeStringGrammar {
     Json,
@@ -3886,7 +3886,7 @@ mod tests {
         // As PySpark, whose `DecimalType(39, 0)`, `_parse_datatype_json_string` and
         // `pyspark_types_to_proto_types` do not validate the precision or the scale: the server
         // rejects the type on analysis. The client only refuses it where it has to build an
-        // Arrow type (`decimal128_precision_and_scale` in session.rs).
+        // Arrow type (`decimal128_precision_and_scale` in local_rows.rs).
         for (precision, scale) in [(39, 0), (5, 6), (10, -2), (300, 0), (0, 0)] {
             let dt = DataType::Decimal { precision, scale };
             let text = format!("decimal({precision},{scale})");

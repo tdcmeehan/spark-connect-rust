@@ -148,6 +148,18 @@ pub(crate) fn command_result<T: Send + 'static>(
     .boxed()
 }
 
+/// Executes `command` of `session` to its end, whose metrics set `observations`, and ignores
+/// its results.
+pub(crate) fn command(
+    session: Session,
+    command: proto::command::CommandType,
+    observations: Observations,
+) -> BoxFuture<'static, Result<()>> {
+    command_result(session, command, observations, |_| None::<()>)
+        .map(|result| result.map(drop))
+        .boxed()
+}
+
 type Step = (
     Box<Execution<Observer>>,
     spark_connect_core::error::Result<Option<(Vec<RecordBatch>, Option<SchemaRef>)>>,
