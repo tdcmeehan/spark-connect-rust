@@ -341,7 +341,7 @@ impl DataStreamWriter {
         };
         let start = self.input.to_relation().map(|input| spec.to_proto(input));
         let observations = Observations::of(self.input.plan());
-        async move {
+        self.input.holding(async move {
             let command = proto::command::CommandType::WriteStreamOperationStart(start?);
             let result = stream::command_result(
                 session.clone(),
@@ -360,7 +360,7 @@ impl DataStreamWriter {
                 run_id: started.run_id,
                 name: started.name.or(name),
             })
-        }
+        })
     }
 
     /// Starts the query, which writes to `path`, and returns it once the server has started it.

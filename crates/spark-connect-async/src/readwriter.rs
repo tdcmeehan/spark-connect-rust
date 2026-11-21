@@ -437,7 +437,8 @@ impl DataFrameWriter {
             self.input.session().clone(),
             Observations::of(self.input.plan()),
         );
-        async move { stream::command(session, command?, observations).await }
+        self.input
+            .holding(async move { stream::command(session, command?, observations).await })
     }
 
     /// Writes the DataFrame to `path`.
@@ -583,7 +584,8 @@ impl DataFrameWriterV2 {
             self.input.session().clone(),
             Observations::of(self.input.plan()),
         );
-        async move { stream::command(session, command?, observations).await }
+        self.input
+            .holding(async move { stream::command(session, command?, observations).await })
     }
 
     /// Creates the table from the DataFrame; fails if it exists.

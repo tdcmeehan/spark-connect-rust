@@ -113,12 +113,12 @@ impl IntoFuture for MergeIntoWriter {
     type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 
     fn into_future(self) -> Self::IntoFuture {
-        let (session, observations) = (
-            self.source.session().clone(),
-            Observations::of(self.source.plan()),
-        );
+        let source = self.source.clone();
+        let (session, observations) = (source.session().clone(), Observations::of(source.plan()));
         let command = self.command();
-        Box::pin(async move { stream::command(session, command?, observations).await })
+        Box::pin(
+            source.holding(async move { stream::command(session, command?, observations).await }),
+        )
     }
 }
 

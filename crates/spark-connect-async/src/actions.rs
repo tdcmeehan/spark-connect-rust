@@ -188,9 +188,6 @@ struct CachedRelation {
 
 impl Drop for CachedRelation {
     fn drop(&mut self) {
-        if self.session.is_stopped() {
-            return;
-        }
         let command = proto::command::CommandType::RemoveCachedRemoteRelationCommand(
             proto::RemoveCachedRemoteRelationCommand {
                 relation: Some(proto::CachedRemoteRelation {
@@ -198,10 +195,7 @@ impl Drop for CachedRelation {
                 }),
             },
         );
-        let session = self.session.clone();
-        self.runtime.spawn(async move {
-            let _ = stream::command(session, command, Observations::default()).await;
-        });
+        stream::spawn_command(&self.runtime, self.session.clone(), command);
     }
 }
 
@@ -273,7 +267,7 @@ impl DataFrame {
     pub fn stream(&self) -> impl Future<Output = Result<RecordBatchStream>> + Send + 'static {
         let (session, relation) = (self.session().clone(), self.to_relation());
         let observations = Observations::of(self.plan());
-        async move { stream::query(session, relation?, observations).await }
+        self.holding(async move { stream::query(session, relation?, observations).await })
     }
 
     /// Runs the query, and returns the stream of its rows as values of `T`, which
@@ -460,7 +454,7 @@ impl DataFrame {
             })
         });
         let (session, observations) = (self.session().clone(), Observations::of(self.plan()));
-        async move { stream::command(session, command?, observations).await }
+        self.holding(async move { stream::command(session, command?, observations).await })
     }
 
     /// A DataFrame of the rows of this one as the server keeps them, whose plan does not
@@ -479,7 +473,7 @@ impl DataFrame {
             })
         });
         let (session, observations) = (self.session().clone(), Observations::of(self.plan()));
-        async move {
+        self.holding(async move {
             let relation_id =
                 stream::command_result(session.clone(), command?, observations, |response| {
                     match response {
@@ -503,7 +497,7 @@ impl DataFrame {
                     owner: Some(RelationOwner(Arc::new(owner))),
                 },
             ))
-        }
+        })
     }
 
     /// The files that the query reads, as far as the server can tell.
@@ -517,8 +511,10 @@ impl DataFrame {
         other: &DataFrame,
     ) -> impl Future<Output = Result<bool>> + Send + 'static {
         let client = self.session().client();
-        let (relation, other) = (self.to_relation(), other.to_relation());
-        Box::pin(async move { Ok(core_actions::same_semantics(client, relation?, other?).await?) })
+        let (relation, other_relation) = (self.to_relation(), other.to_relation());
+        self.holding(other.holding(Box::pin(async move {
+            Ok(core_actions::same_semantics(client, relation?, other_relation?).await?)
+        })))
     }
 
     /// A hash of the plan, the same for plans of [`DataFrame::same_semantics`].
@@ -538,8 +534,8 @@ impl DataFrame {
     }
 
     /// `analysis` of the relation of this DataFrame, on the heap, as the futures of the
-    /// actions nest it. An error of the relation, such as of a plan too deep to send, is its
-    /// result, and nothing is sent.
+    /// actions nest it, which keeps the plan until it is done. An error of the relation, such
+    /// as of a plan too deep to send, is its result, and nothing is sent.
     fn analyzed<T: 'static, F>(
         &self,
         analysis: impl FnOnce(Arc<SparkConnectClient>, proto::Relation) -> F + Send + 'static,
@@ -549,7 +545,9 @@ impl DataFrame {
     {
         let client = self.session().client();
         let relation = self.to_relation();
-        Box::pin(async move { Ok(analysis(client, relation?).await?) })
+        self.holding(Box::pin(
+            async move { Ok(analysis(client, relation?).await?) },
+        ))
     }
 
     /// Each row as the text of a JSON object.
