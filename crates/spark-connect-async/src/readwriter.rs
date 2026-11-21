@@ -173,9 +173,26 @@ pub struct DataFrameReader {
     format: Option<String>,
     schema: Option<TypeOrDdl>,
     options: HashMap<String, String>,
+    streaming: bool,
+    source_name: Option<String>,
 }
 
 impl DataFrameReader {
+    /// A read of a stream, as [`crate::streaming::DataStreamReader`] makes it.
+    pub(crate) fn of_stream(session: Session) -> Self {
+        DataFrameReader {
+            streaming: true,
+            ..session.read()
+        }
+    }
+
+    /// Read the source under the name `name`, which a stream's checkpoint keeps its progress
+    /// under.
+    pub(crate) fn source_name(mut self, name: String) -> Self {
+        self.source_name = Some(name);
+        self
+    }
+
     /// Read the format `source`, such as `parquet`; by default, the server's default source.
     pub fn format(mut self, source: impl Into<String>) -> Self {
         self.format = Some(source.into());
@@ -216,9 +233,9 @@ impl DataFrameReader {
                 options: self.options,
                 paths,
                 predicates,
-                source_name: None,
+                source_name: self.source_name,
             },
-            is_streaming: false,
+            is_streaming: self.streaming,
         };
         DataFrame::new(self.session, plan)
     }
@@ -293,7 +310,7 @@ impl DataFrameReader {
                 table_name: name.into(),
                 options: self.options,
             },
-            is_streaming: false,
+            is_streaming: self.streaming,
         };
         DataFrame::new(self.session, plan)
     }
@@ -304,7 +321,7 @@ impl DataFrameReader {
         let plan = LogicalPlan::RelationChanges {
             table_name: name.into(),
             options: self.options,
-            is_streaming: None,
+            is_streaming: self.streaming.then_some(true),
         };
         DataFrame::new(self.session, plan)
     }
@@ -664,6 +681,8 @@ impl Session {
             format: None,
             schema: None,
             options: HashMap::new(),
+            streaming: false,
+            source_name: None,
         }
     }
 

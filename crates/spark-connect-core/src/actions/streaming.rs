@@ -35,19 +35,39 @@ pub async fn start(
 ) -> Result<Started> {
     let command = proto::command::CommandType::WriteStreamOperationStart(start);
     let (responses, _) = execute_command(client, tags, command, observer).await?;
+    started(
+        responses
+            .into_iter()
+            .filter_map(|response| response.response_type.and_then(start_result)),
+    )
+}
+
+/// The result of a start of a streaming query that `response` carries, if it is one. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn start_result(response: ResponseType) -> Option<proto::WriteStreamOperationStartResult> {
+    match response {
+        ResponseType::WriteStreamOperationStartResult(result) => Some(result),
+        _ => None,
+    }
+}
+
+/// The streaming query that `results`, the results of a start of a query, tell of. Not a stable
+/// API.
+#[doc(hidden)]
+pub fn started(
+    results: impl IntoIterator<Item = proto::WriteStreamOperationStartResult>,
+) -> Result<Started> {
     let mut started = Started::default();
-    for response in responses {
-        if let Some(ResponseType::WriteStreamOperationStartResult(result)) = response.response_type
-        {
-            if let Some(id) = result.query_id {
-                started.query_id = id.id;
-                started.run_id = id.run_id;
-            }
-            if !result.name.is_empty() {
-                started.name = Some(result.name);
-            }
-            started.started_event_json = result.query_started_event_json;
+    for result in results {
+        if let Some(id) = result.query_id {
+            started.query_id = id.id;
+            started.run_id = id.run_id;
         }
+        if !result.name.is_empty() {
+            started.name = Some(result.name);
+        }
+        started.started_event_json = result.query_started_event_json;
     }
     if started.query_id.is_empty() {
         return Err(SparkError::connect_msg(
@@ -66,11 +86,18 @@ pub async fn query_command(
     observer: impl ExecutionObserver,
 ) -> Result<proto::StreamingQueryCommandResult> {
     let command = proto::command::CommandType::StreamingQueryCommand(command);
-    let result = command_result(client, tags, command, observer, |result| match result {
+    let result = command_result(client, tags, command, observer, query_result);
+    Ok(result.await?.unwrap_or_default())
+}
+
+/// The result of a command of a streaming query that `response` carries, if it is one. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn query_result(response: ResponseType) -> Option<proto::StreamingQueryCommandResult> {
+    match response {
         ResponseType::StreamingQueryCommandResult(result) => Some(result),
         _ => None,
-    });
-    Ok(result.await?.unwrap_or_default())
+    }
 }
 
 /// Runs `command`, a command of the streaming query manager, and returns its result, or the
@@ -82,11 +109,18 @@ pub async fn manager_command(
     observer: impl ExecutionObserver,
 ) -> Result<proto::StreamingQueryManagerCommandResult> {
     let command = proto::command::CommandType::StreamingQueryManagerCommand(command);
-    let result = command_result(client, tags, command, observer, |result| match result {
+    let result = command_result(client, tags, command, observer, manager_result);
+    Ok(result.await?.unwrap_or_default())
+}
+
+/// The result of a command of the streaming query manager that `response` carries, if it is
+/// one. Not a stable API.
+#[doc(hidden)]
+pub fn manager_result(response: ResponseType) -> Option<proto::StreamingQueryManagerCommandResult> {
+    match response {
         ResponseType::StreamingQueryManagerCommandResult(result) => Some(result),
         _ => None,
-    });
-    Ok(result.await?.unwrap_or_default())
+    }
 }
 
 /// Unsubscribes the session from the events of its listener bus.
@@ -95,15 +129,36 @@ pub async fn unsubscribe(
     tags: Vec<String>,
     observer: impl ExecutionObserver,
 ) -> Result<()> {
-    let command = proto::StreamingQueryListenerBusCommand {
-        command: Some(
-            proto::streaming_query_listener_bus_command::Command::RemoveListenerBusListener(true),
-        ),
-    };
-    let command = proto::command::CommandType::StreamingQueryListenerBusCommand(command);
-    execute_command(client, tags, command, observer)
+    execute_command(client, tags, unsubscribe_command(), observer)
         .await
         .map(drop)
+}
+
+/// The command that subscribes a session to the events of its listener bus. Not a stable API.
+#[doc(hidden)]
+pub fn subscribe_command() -> proto::command::CommandType {
+    listener_bus_command(
+        proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
+    )
+}
+
+/// The command that unsubscribes a session from the events of its listener bus. Not a stable
+/// API.
+#[doc(hidden)]
+pub fn unsubscribe_command() -> proto::command::CommandType {
+    listener_bus_command(
+        proto::streaming_query_listener_bus_command::Command::RemoveListenerBusListener(true),
+    )
+}
+
+fn listener_bus_command(
+    command: proto::streaming_query_listener_bus_command::Command,
+) -> proto::command::CommandType {
+    proto::command::CommandType::StreamingQueryListenerBusCommand(
+        proto::StreamingQueryListenerBusCommand {
+            command: Some(command),
+        },
+    )
 }
 
 /// The events of the streaming query listener bus of a session, as the server sends them: each
@@ -119,25 +174,26 @@ pub struct ListenerEvents<O> {
 impl<O: ExecutionObserver> ListenerEvents<O> {
     /// Subscribes the session to the events of its listener bus.
     pub async fn subscribe(client: Arc<SparkConnectClient>, observer: O) -> Result<Self> {
-        let command = proto::StreamingQueryListenerBusCommand {
-            command: Some(
-                proto::streaming_query_listener_bus_command::Command::AddListenerBusListener(true),
-            ),
-        };
         let request = execution::execute_plan_request(
             client.session_id(),
             Vec::new(),
-            execution::command(
-                proto::command::CommandType::StreamingQueryListenerBusCommand(command),
-            ),
+            execution::command(subscribe_command()),
         );
-        Ok(ListenerEvents {
-            execution: Execution::start(client, request, observer).await?,
+        let execution = Execution::start(client, request, observer).await?;
+        Ok(Self::of(execution))
+    }
+
+    /// The events of `execution`, a subscription to the listener bus that has started. Not a
+    /// stable API.
+    #[doc(hidden)]
+    pub fn of(execution: Execution<O>) -> Self {
+        ListenerEvents {
+            execution,
             buffered: VecDeque::new(),
             done: false,
             cancel: None,
             interrupted: false,
-        })
+        }
     }
 
     /// Ends the events like the end of the stream once `cancel` completes, also while a
@@ -216,15 +272,23 @@ impl<O: ExecutionObserver> ListenerEvents<O> {
     }
 
     /// Reads the responses until the one that tells that the server added the listener of the
-    /// session (`listener_bus_listener_added`), keeping their events, which [`Self::next`] gives
-    /// first, as PySpark Connect's `_register_server_side_listener` waits for it.
+    /// session (`listener_bus_listener_added`), or to the end of the stream, keeping their
+    /// events, which [`Self::next`] gives first, as PySpark Connect's
+    /// `_register_server_side_listener` waits for it.
     pub async fn wait_until_listener_added(&mut self) -> Result<()> {
+        self.listener_was_added().await.map(drop)
+    }
+
+    /// Reads the responses as [`Self::wait_until_listener_added`] does, and returns whether the
+    /// server added the listener before the stream ended. Not a stable API.
+    #[doc(hidden)]
+    pub async fn listener_was_added(&mut self) -> Result<bool> {
         while let Some(added) = self.next_response().await? {
             if added {
-                break;
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// The next event, or `None` once the server ends the stream.
