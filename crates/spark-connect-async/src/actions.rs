@@ -19,7 +19,6 @@ use crate::column::Column;
 use crate::dataframe::DataFrame;
 use crate::error::{Error, Result};
 use crate::progress::Observations;
-use crate::session::Session;
 use crate::stream::{self, RecordBatchStream};
 use crate::value::Row;
 
@@ -175,27 +174,6 @@ impl Checkpoint {
     pub fn storage_level(mut self, level: StorageLevel) -> Self {
         self.storage_level = Some(level);
         self
-    }
-}
-
-/// The relation that a checkpoint cached on the server, which the last DataFrame of it to drop
-/// removes.
-struct CachedRelation {
-    relation_id: String,
-    session: Session,
-    runtime: tokio::runtime::Handle,
-}
-
-impl Drop for CachedRelation {
-    fn drop(&mut self) {
-        let command = proto::command::CommandType::RemoveCachedRemoteRelationCommand(
-            proto::RemoveCachedRemoteRelationCommand {
-                relation: Some(proto::CachedRemoteRelation {
-                    relation_id: std::mem::take(&mut self.relation_id),
-                }),
-            },
-        );
-        stream::spawn_command(&self.runtime, self.session.clone(), command);
     }
 }
 
@@ -474,22 +452,34 @@ impl DataFrame {
         });
         let (session, observations) = (self.session().clone(), Observations::of(self.plan()));
         self.holding(async move {
-            let relation_id =
-                stream::command_result(session.clone(), command?, observations, |response| {
+            let cache = session.clone();
+            // Kept as its answer comes, so that a checkpoint dropped while the rest of its stream
+            // drains still removes the relation.
+            let (relation_id, owner) =
+                stream::command_result(session.clone(), command?, observations, move |response| {
                     match response {
                         proto::execute_plan_response::ResponseType::CheckpointCommandResult(
                             result,
-                        ) => result.relation.map(|relation| relation.relation_id),
+                        ) => {
+                            let relation_id = result.relation?.relation_id;
+                            let remove =
+                                proto::command::CommandType::RemoveCachedRemoteRelationCommand(
+                                    proto::RemoveCachedRemoteRelationCommand {
+                                        relation: Some(proto::CachedRemoteRelation {
+                                            relation_id: relation_id.clone(),
+                                        }),
+                                    },
+                                );
+                            Some((
+                                relation_id,
+                                stream::RemoveOnDrop::new(cache.clone(), remove),
+                            ))
+                        }
                         _ => None,
                     }
                 })
                 .await?
                 .ok_or_else(|| Error::decode("the server returned no checkpoint"))?;
-            let owner = CachedRelation {
-                relation_id: relation_id.clone(),
-                session: session.clone(),
-                runtime: tokio::runtime::Handle::current(),
-            };
             Ok(DataFrame::new(
                 session,
                 LogicalPlan::CachedRemoteRelation {

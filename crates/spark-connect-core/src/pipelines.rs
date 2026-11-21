@@ -8,7 +8,7 @@ use crate::types::DataType;
 use proto::pipeline_command;
 use proto::pipeline_command::{
     define_flow, define_output, CreateDataflowGraph, DefineFlow, DefineOutput,
-    DefineSqlGraphElements, StartRun,
+    DefineSqlGraphElements, DropDataflowGraph, StartRun,
 };
 
 /// The details needed to define one pipeline output (table/materialized-view/view/sink).
@@ -166,12 +166,34 @@ pub fn define_sql_graph_elements(
     sql_text: &str,
     sql_file_path: &str,
 ) -> proto::command::CommandType {
+    sql_graph_elements(dataflow_graph_id, sql_text, Some(sql_file_path))
+}
+
+/// [`define_sql_graph_elements`] with the file path left out when it is `None`. Not a stable
+/// API.
+#[doc(hidden)]
+pub fn sql_graph_elements(
+    dataflow_graph_id: &str,
+    sql_text: &str,
+    sql_file_path: Option<&str>,
+) -> proto::command::CommandType {
     let inner = DefineSqlGraphElements {
         dataflow_graph_id: Some(dataflow_graph_id.to_string()),
-        sql_file_path: Some(sql_file_path.to_string()),
+        sql_file_path: sql_file_path.map(str::to_string),
         sql_text: Some(sql_text.to_string()),
     };
     wrap(pipeline_command::CommandType::DefineSqlGraphElements(inner))
+}
+
+/// The `PipelineCommand.DropDataflowGraph` that removes a dataflow graph from the server. Not a
+/// stable API.
+#[doc(hidden)]
+pub fn drop_dataflow_graph(dataflow_graph_id: &str) -> proto::command::CommandType {
+    wrap(pipeline_command::CommandType::DropDataflowGraph(
+        DropDataflowGraph {
+            dataflow_graph_id: Some(dataflow_graph_id.to_string()),
+        },
+    ))
 }
 
 /// The `PipelineCommand.StartRun` that starts, or validates, a run of a graph.

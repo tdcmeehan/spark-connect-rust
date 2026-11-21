@@ -149,6 +149,25 @@ pub(crate) fn catalog_rows(
     .boxed()
 }
 
+/// Starts the execution of `command` of `session`, and returns its responses once the server has
+/// accepted it, with its operation id. The future is boxed, as that of [`query`].
+pub(crate) fn command_responses(
+    session: Session,
+    command: proto::command::CommandType,
+) -> BoxFuture<'static, Result<(Responses<Observer>, String)>> {
+    async move {
+        let plan = proto::plan::OpType::Command(proto::Command {
+            command_type: Some(command),
+        });
+        let client = session.client();
+        accepted(&session, plan, |request, observer| {
+            Responses::start(client, request, observer)
+        })
+        .await
+    }
+    .boxed()
+}
+
 /// Executes `command` of `session` to its end, whose metrics set `observations`, and returns the
 /// first response that `pick` takes. The future is boxed, as that of [`query`].
 pub(crate) fn command_result<T: Send + 'static>(
@@ -158,14 +177,7 @@ pub(crate) fn command_result<T: Send + 'static>(
     mut pick: impl FnMut(proto::execute_plan_response::ResponseType) -> Option<T> + Send + 'static,
 ) -> BoxFuture<'static, Result<Option<T>>> {
     async move {
-        let plan = proto::plan::OpType::Command(proto::Command {
-            command_type: Some(command),
-        });
-        let client = session.client();
-        let (mut responses, _) = accepted(&session, plan, |request, observer| {
-            Responses::start(client, request, observer)
-        })
-        .await?;
+        let (mut responses, _) = command_responses(session.clone(), command).await?;
         let mut info = CoreInfo::default();
         let mut picked = None;
         while let Some(mut response) = responses.next().await? {
@@ -194,7 +206,7 @@ pub(crate) fn command(
 /// Executes `command` of `session` from `runtime` without waiting for it, unless the session is
 /// stopped, and ignores its result: what a value sends when it is dropped, such as the removal of
 /// what the server keeps for it.
-pub(crate) fn spawn_command(
+fn spawn_command(
     runtime: &tokio::runtime::Handle,
     session: Session,
     command: proto::command::CommandType,
@@ -205,6 +217,38 @@ pub(crate) fn spawn_command(
     runtime.spawn(async move {
         let _ = self::command(session, command, Observations::default()).await;
     });
+}
+
+/// What the server keeps for a value of a session, such as a fitted model: `command` removes it
+/// when this drops, sent from the runtime that created this.
+pub(crate) struct RemoveOnDrop {
+    session: Session,
+    runtime: tokio::runtime::Handle,
+    command: Option<proto::command::CommandType>,
+}
+
+impl RemoveOnDrop {
+    /// The removal by `command` of what `session` keeps, from the current runtime.
+    pub(crate) fn new(session: Session, command: proto::command::CommandType) -> Self {
+        RemoveOnDrop {
+            session,
+            runtime: tokio::runtime::Handle::current(),
+            command: Some(command),
+        }
+    }
+
+    /// The session that keeps it.
+    pub(crate) fn session(&self) -> &Session {
+        &self.session
+    }
+}
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if let Some(command) = self.command.take() {
+            spawn_command(&self.runtime, self.session.clone(), command);
+        }
+    }
 }
 
 type Step = (
