@@ -23,8 +23,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use spark_connect::rust_udf::{self as wasm_udf, AbiType, PythonPacker, UserDefinedFunction};
 use spark_connect::udf::eval_type;
-use spark_connect::wasm_udf::{self, AbiType, PythonPacker, UserDefinedFunction};
 use wasm_udf_tests::udf;
 
 const PRELUDE: &str = r#"

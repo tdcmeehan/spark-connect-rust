@@ -35,6 +35,9 @@ pub mod reattach;
 pub mod retries;
 pub mod row;
 pub mod runtime;
+/// Run Rust UDFs on Spark via WebAssembly. Requires the `rust-udf` feature.
+#[cfg(feature = "rust-udf")]
+pub mod rust_udf;
 mod srs;
 pub mod streaming;
 // Shared with `apache-spark-connect`, whose session keeps per-thread tags the same way.
@@ -42,9 +45,6 @@ pub mod streaming;
 pub mod thread_entries;
 pub mod types;
 pub mod udf;
-/// Run Rust UDFs on Spark via WebAssembly. Requires the `wasm-udf` feature.
-#[cfg(feature = "wasm-udf")]
-pub mod wasm_udf;
 pub mod window;
 
 pub use artifact::{

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""WASM UDF packer, embedded in the Rust crate (`spark_connect::wasm_udf`).
+"""WASM UDF packer, embedded in the Rust crate (`spark_connect::rust_udf`).
 
 The Rust client runs this source as ``python -c <this>`` (so it executes as
 ``__main__``), feeding a JSON spec on stdin and reading the raw cloudpickled
@@ -39,7 +39,7 @@ Input JSON (stdin)::
       "output_type": "long"                           # Spark type-JSON value
     }
 
-The binary ABI (little-endian, mirroring ``spark_connect::wasm_udf::AbiType``):
+The binary ABI (little-endian, mirroring ``spark_connect::rust_udf::AbiType``):
 
 * ``i32``/``f32``: 4 bytes; ``i64``/``f64``: 8 bytes; ``bool``: 1 byte.
 * ``string``: ``u32`` byte-length then UTF-8; ``binary``: ``u32`` length then bytes.

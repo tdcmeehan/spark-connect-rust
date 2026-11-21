@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use spark_connect_macros::spark_wasm_udf;
+use spark_connect_macros::spark_udf;
 
-#[spark_wasm_udf]
+#[spark_udf]
 mod fixtures {
     /// The value of the environment variable `name` in the module, if it is set.
     pub fn env_var(name: String) -> Option<String> {

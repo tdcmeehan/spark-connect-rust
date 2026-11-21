@@ -23,8 +23,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use spark_connect::rust_udf::{PythonPacker, UserDefinedFunction};
 use spark_connect::udf::eval_type;
-use spark_connect::wasm_udf::{PythonPacker, UserDefinedFunction};
 use wasm_udf_tests::udf as unknown;
 use wasm_udf_wasi_tests::udf as wasi;
 

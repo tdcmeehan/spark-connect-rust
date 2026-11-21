@@ -58,9 +58,11 @@ The same workflow has three more jobs:
 
 - **Core transport tests (aarch64 Linux)** (`ubuntu-24.04-arm`, 20-minute limit): runs
   `cargo test --locked -p apache-spark-connect-core --release --lib` for `aarch64-unknown-linux-gnu`
-- **WASM UDF feature**: installs the `wasm32-unknown-unknown` target and the Python packages
-  `cloudpickle`, `pyspark`, `wasmtime` and `pyarrow`. It runs the `wasm-udf` feature tests, builds
-  the WASM examples, and runs the ignored packer test and the WASM runner tests.
+- **Rust UDF feature**: installs the `wasm32-unknown-unknown` target and the Python packages
+  `cloudpickle`, `pyspark`, `wasmtime` and `pyarrow`. It runs the `rust-udf` feature tests, builds
+  the WASM examples, and runs the ignored packer test and the WASM runner tests. Its last step
+  builds the deprecated names (`#[spark_wasm_udf]`, `spark_connect::wasm_udf` and the `wasm-udf`
+  feature) and checks that the macro and the module warn.
 - **Minimum supported Rust**: `cargo +1.88 check --locked` on the published crates, with
   `RUSTFLAGS` cleared
 

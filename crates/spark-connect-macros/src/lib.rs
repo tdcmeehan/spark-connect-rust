@@ -1,7 +1,8 @@
 //! Procedural macros for the Rust Spark Connect client.
 //!
-//! Provides [`macro@spark_wasm_udf`], which turns a module of plain Rust
+//! Provides [`macro@spark_udf`], which turns a module of plain Rust
 //! functions into Spark UDFs that run on the executors via WebAssembly.
+//! [`macro@spark_wasm_udf`] is its deprecated old name.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
@@ -17,7 +18,7 @@ use syn::{
 /// * keeps the function callable natively,
 /// * emits (when compiled for `wasm32`) a `#[no_mangle] extern "C"` export that
 ///   decodes the arguments and encodes the result with the length-prefixed
-///   binary ABI (`spark_connect::wasm_udf::AbiType`), and
+///   binary ABI (`spark_connect::rust_udf::AbiType`), and
 /// * generates, on non-`wasm32` targets, a direct-call constructor
 ///   `udf::<name>(col0, col1, ...) -> Result<Column>` (one column per argument,
 ///   arity checked at compile time) plus a builder `udf::<name>_udf() ->
@@ -32,9 +33,9 @@ use syn::{
 /// on the builder calls it once per row instead, like functions with other types.
 ///
 /// ```ignore
-/// use spark_connect_macros::spark_wasm_udf;
+/// use spark_connect_macros::spark_udf;
 ///
-/// #[spark_wasm_udf]
+/// #[spark_udf]
 /// mod udfs {
 ///     pub fn add_one(x: i64) -> i64 { x + 1 }
 ///     pub fn shout(s: String) -> String { format!("{}!", s.to_uppercase()) }
@@ -48,7 +49,7 @@ use syn::{
 /// Supported types: `i32`, `i64`, `f32`, `f64`, `bool`, `String`, `Vec<u8>`
 /// (binary), `Vec<T>` (array), and `Option<T>` (nullable), nested arbitrarily.
 #[proc_macro_attribute]
-pub fn spark_wasm_udf(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn spark_udf(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let module = parse_macro_input!(item as ItemMod);
     match expand(module) {
         Ok(ts) => ts.into(),
@@ -56,9 +57,18 @@ pub fn spark_wasm_udf(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-/// Map a Rust type to a `spark_connect::wasm_udf::AbiType` constructor expr.
+/// The old name of [`macro@spark_udf`], kept as a deprecated alias.
+#[deprecated(
+    note = "renamed `spark_udf`; the `wasm-udf` feature of apache-spark-connect is now `rust-udf`"
+)]
+#[proc_macro_attribute]
+pub fn spark_wasm_udf(attr: TokenStream, item: TokenStream) -> TokenStream {
+    spark_udf(attr, item)
+}
+
+/// Map a Rust type to a `spark_connect::rust_udf::AbiType` constructor expr.
 fn abi_type(ty: &Type) -> Result<proc_macro2::TokenStream, syn::Error> {
-    let root = quote!(::spark_connect::wasm_udf::AbiType);
+    let root = quote!(::spark_connect::rust_udf::AbiType);
     if let Some(ident) = path_ident(ty) {
         match ident.as_str() {
             "i32" => return Ok(quote!(#root::I32)),
@@ -83,7 +93,7 @@ fn abi_type(ty: &Type) -> Result<proc_macro2::TokenStream, syn::Error> {
     }
     Err(syn::Error::new_spanned(
         ty,
-        "#[spark_wasm_udf] supports i32/i64/f32/f64/bool/String/Vec<u8>/Vec<T>/Option<T> \
+        "#[spark_udf] supports i32/i64/f32/f64/bool/String/Vec<u8>/Vec<T>/Option<T> \
          (use owned types, e.g. `String` not `&str`)",
     ))
 }
@@ -138,13 +148,13 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
     if func.sig.asyncness.is_some() {
         return Err(syn::Error::new_spanned(
             &func.sig,
-            "#[spark_wasm_udf] cannot be applied to async functions",
+            "#[spark_udf] cannot be applied to async functions",
         ));
     }
     if !func.sig.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &func.sig.generics,
-            "#[spark_wasm_udf] cannot be applied to generic functions",
+            "#[spark_udf] cannot be applied to generic functions",
         ));
     }
     let name = func.sig.ident.clone();
@@ -162,7 +172,7 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
             FnArg::Receiver(r) => {
                 return Err(syn::Error::new_spanned(
                     r,
-                    "#[spark_wasm_udf] cannot be applied to methods (`self`)",
+                    "#[spark_udf] cannot be applied to methods (`self`)",
                 ))
             }
         }
@@ -170,7 +180,7 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
     if arg_tys.is_empty() {
         return Err(syn::Error::new_spanned(
             &func.sig,
-            "#[spark_wasm_udf] requires at least one argument",
+            "#[spark_udf] requires at least one argument",
         ));
     }
     let ret_ty = match &func.sig.output {
@@ -178,7 +188,7 @@ fn collect_udf(func: &ItemFn) -> Result<Udf, syn::Error> {
         ReturnType::Default => {
             return Err(syn::Error::new_spanned(
                 &func.sig,
-                "#[spark_wasm_udf] requires a return type",
+                "#[spark_udf] requires a return type",
             ))
         }
     };
@@ -203,7 +213,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
     let Some((_, items)) = &module.content else {
         return Err(syn::Error::new_spanned(
             &module,
-            "#[spark_wasm_udf] must be applied to an inline module with a body",
+            "#[spark_udf] must be applied to an inline module with a body",
         ));
     };
 
@@ -217,7 +227,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
     if udfs.is_empty() {
         return Err(syn::Error::new_spanned(
             &module,
-            "#[spark_wasm_udf] module contains no functions",
+            "#[spark_udf] module contains no functions",
         ));
     }
 
@@ -310,19 +320,19 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
             .map(|i| format_ident!("__a{i}"))
             .collect();
         let builder_doc = format!(
-            "Builder for the `{name_str}` UDF, generated by `#[spark_wasm_udf]`. \
+            "Builder for the `{name_str}` UDF, generated by `#[spark_udf]`. \
              For advanced configuration (`.as_nondeterministic()`, `.with_packer()`) \
              before `.call(cols)`; the common case is `{name_str}(cols...)`."
         );
         let call_doc = format!(
-            "Apply the `{name_str}` UDF to columns, generated by `#[spark_wasm_udf]`. \
+            "Apply the `{name_str}` UDF to columns, generated by `#[spark_udf]`. \
              Takes one column per argument and returns the result column."
         );
         ctors.push(quote! {
             #[doc = #builder_doc]
-            pub fn #builder() -> ::spark_connect::wasm_udf::UserDefinedFunction {
+            pub fn #builder() -> ::spark_connect::rust_udf::UserDefinedFunction {
                 const __MODULE: &[u8] = include_bytes!(env!("WASM_UDFS_MODULE"));
-                ::spark_connect::wasm_udf::udf(
+                ::spark_connect::rust_udf::udf(
                     #name_str,
                     __MODULE.to_vec(),
                     #export_str,
@@ -341,8 +351,7 @@ fn expand(mut module: ItemMod) -> Result<proc_macro2::TokenStream, syn::Error> {
         });
     }
 
-    let doc =
-        format!("UDF constructors generated by `#[spark_wasm_udf]` from module `{mod_ident}`.");
+    let doc = format!("UDF constructors generated by `#[spark_udf]` from module `{mod_ident}`.");
     Ok(quote! {
         // Off wasm32 the exported UDF functions are called only from the
         // `#[cfg(target_arch = "wasm32")]` wrappers injected above, so on the host

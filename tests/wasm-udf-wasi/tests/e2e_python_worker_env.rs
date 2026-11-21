@@ -25,10 +25,10 @@ use std::process::Command;
 use spark_connect::column::{col, Column};
 use spark_connect::expression::ExpressionNode;
 use spark_connect::row::Value;
+use spark_connect::rust_udf::PythonPacker;
 use spark_connect::session::SparkSession;
 use spark_connect::types::DataType;
 use spark_connect::udf::{eval_type, CommonInlineUserDefinedFunctionExpression, PythonUDFPayload};
-use spark_connect::wasm_udf::PythonPacker;
 use wasm_udf_tests::udf as unknown;
 use wasm_udf_wasi_tests::udf as wasi;
 

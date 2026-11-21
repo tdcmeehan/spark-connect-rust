@@ -272,7 +272,7 @@ Run all of these green before pushing:
 ```
 cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
-cargo test -p apache-spark-connect -p apache-spark-connect-core --release --features wasm-udf --no-run
+cargo test -p apache-spark-connect -p apache-spark-connect-core --release --features rust-udf --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate
 cargo clippy --workspace --all-targets -- -D warnings              # BLOCKING CI gate (needs the wasm32-unknown-unknown target)
 # CI's lint job pins Rust 1.100.0 and also lints datafusion,polars and the excluded crates
@@ -286,7 +286,8 @@ confirm `gh` is authenticated as the account you intend to push with
 The request snapshots (`crates/spark-connect/tests/request_snapshots`) pin the bytes of
 every request the Rust API builds. A change that alters them on purpose rewrites
 `tests/golden/rust_requests.jsonl` with `SPARK_CONNECT_UPDATE_REQUEST_SNAPSHOTS=1 cargo test
--p apache-spark-connect --features wasm-udf,datafusion,polars --test request_snapshots`. A new
+-p apache-spark-connect --features wasm-udf,datafusion,polars --test request_snapshots` (the UDF
+cases need `wasm-udf`, the deprecated name of `rust-udf`). A new
 public function gets a case: rerun `scripts/gen_request_snapshot_functions.py` for a SQL
 function or `scripts/gen_request_snapshot_ml.py` for an ML class (it reads the rustdoc JSON
 that `scripts/gen_rust_api_inventory.py` describes), or add one under `cases/`.
@@ -327,7 +328,7 @@ Do not rely on the previous version's suite. When bumping to vX.Y.Z:
   Python interpreter with `pyspark` (for its vendored `cloudpickle` +
   `pyspark.sql.types._parse_datatype_json_value`), and the executors need only
   `wasmtime`. If the packer's ABI/codec changes, keep it
-  byte-compatible with `spark_connect::wasm_udf::AbiType` and the build-time runtime
+  byte-compatible with `spark_connect::rust_udf::AbiType` and the build-time runtime
   in `apache-spark-connect-build`. The tests that check this are outside the
   workspace: `cargo test --manifest-path tests/wasm-udf/Cargo.toml -- --ignored`
   (Python with `pyspark`, `pyarrow` and `wasmtime`), formatted with

@@ -44,7 +44,7 @@ SPARK_REMOTE=sc://localhost:15002 \
   cargo test -p apache-spark-connect --test e2e_dataframe -- --test-threads=1
 ```
 
-The `wasm-udf` example crates need the `wasm32` target and are built by manifest
+The UDF example crates need the `wasm32` target and are built by manifest
 path (they're excluded from the workspace):
 
 ```bash

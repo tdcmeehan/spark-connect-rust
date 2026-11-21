@@ -92,15 +92,15 @@ API, running a Spark Connect server, and more.
 
 ## User-Defined Functions (UDFs)
 
-Write UDFs as plain Rust functions and call them directly — `#[spark_wasm_udf]`
+Write UDFs as plain Rust functions and call them directly — `#[spark_udf]`
 compiles them to WebAssembly and ships them to the executors:
 
 <!-- snippet: no-run -->
 ```rust
 use spark_connect::{SparkSession, col};
-use spark_connect_macros::spark_wasm_udf;
+use spark_connect_macros::spark_udf;
 
-#[spark_wasm_udf]
+#[spark_udf]
 mod udfs {
     pub fn add_one(x: i64) -> i64 { x + 1 }
 }
@@ -116,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See the [WASM UDF guide](https://apache.github.io/spark-connect-rust/udfs/) for
+See the [Rust UDF guide](https://apache.github.io/spark-connect-rust/udfs/) for
 the full setup, SQL registration, supported types, and more.
 
 ## Contributing

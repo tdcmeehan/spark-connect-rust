@@ -71,7 +71,7 @@ jobs:
       - name: clippy - blocking
         # Any finding fails the job. Lints this codebase triggers by design are allowed once,
         # with a reason, in `[workspace.lints.clippy]` of the root Cargo.toml. The workspace
-        # run builds `apache-spark-connect` with `wasm-udf` on (feature unification through
+        # run builds `apache-spark-connect` with `rust-udf` on (feature unification through
         # `examples/wasm-udfs`); the second run covers the default feature set, and the third
         # the `datafusion` and `polars` integrations. The crates that the workspace excludes,
         # which the other workflows build and test, are linted through their manifests.
