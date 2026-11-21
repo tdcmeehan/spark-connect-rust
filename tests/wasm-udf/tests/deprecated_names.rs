@@ -34,6 +34,29 @@ mod old_names {
             x + 1
         }
     }
+
+    // The old name ignores the arguments that the new name rejects.
+    pub mod with_arguments {
+        use spark_connect_macros::spark_wasm_udf;
+
+        #[spark_wasm_udf(anything, x = "y", 1 + 1)]
+        pub mod udfs {
+            pub fn add_one(x: i64) -> i64 {
+                x + 1
+            }
+        }
+    }
+
+    pub mod with_a_crate_option_and_more {
+        use spark_connect_macros::spark_wasm_udf;
+
+        #[spark_wasm_udf(crate = spark_connect_async, anything)]
+        pub mod udfs {
+            pub fn add_one(x: i64) -> i64 {
+                x + 1
+            }
+        }
+    }
 }
 
 mod new_names {
@@ -78,6 +101,16 @@ fn the_deprecated_names_build_what_the_new_names_build() {
         (
             "#[spark_wasm_udf]",
             old_names::udf::add_one_udf(),
+            new_names::udf::add_one_udf(),
+        ),
+        (
+            "#[spark_wasm_udf] with arguments",
+            old_names::with_arguments::udf::add_one_udf(),
+            new_names::udf::add_one_udf(),
+        ),
+        (
+            "#[spark_wasm_udf] with a crate option and more",
+            old_names::with_a_crate_option_and_more::udf::add_one_udf(),
             new_names::udf::add_one_udf(),
         ),
         ("wasm_udf::udf", by_hand, by_hand_with_the_new_names),

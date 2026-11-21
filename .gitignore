@@ -21,6 +21,7 @@
 /examples/wasm-udf-inline/target
 /tests/wasm-udf/target
 /tests/wasm-udf-wasi/target
+/tests/rust-udf-async/target
 **/*.rs.bk
 Cargo.lock
 __pycache__/

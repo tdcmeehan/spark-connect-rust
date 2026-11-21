@@ -35,6 +35,8 @@ pub mod options;
 pub mod pipelines;
 pub mod progress;
 pub mod readwriter;
+#[cfg(feature = "rust-udf")]
+pub mod rust_udf;
 pub mod session;
 pub mod sql;
 pub mod stat;
