@@ -24,7 +24,14 @@ pub async fn rows(
         Vec::new(),
         execution::root(LogicalPlan::Catalog { catalog }.to_proto()),
     );
-    let mut execution = Execution::start(client, request, observer).await?;
+    let execution = Execution::start(client, request, observer).await?;
+    rows_of(execution).await
+}
+
+/// The rows of `execution`, an execution of a catalog operation that has started, decoded as
+/// [`rows`] decodes them. Not a stable API.
+#[doc(hidden)]
+pub async fn rows_of<O: ExecutionObserver>(mut execution: Execution<O>) -> Result<Vec<Row>> {
     let mut rows = Vec::new();
     while let Some(batch) = execution.next_batch(&|_| Ok(())).await? {
         let decoded = decode_arrow_batch(&batch);
