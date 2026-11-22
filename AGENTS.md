@@ -273,7 +273,7 @@ Run all of these green before pushing:
 cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-blocking -p apache-spark-connect-async --release --lib
 cargo test -p apache-spark-connect --release --no-run              # compiles ALL integration tests
 cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-async --release --features rust-udf --no-run
-cargo test -p apache-spark-connect-async --release --features blocking --no-run
+cargo test -p apache-spark-connect-async --release --features blocking,rust-udf --no-run
 cargo fmt --all --check                                            # BLOCKING CI gate
 cargo clippy --workspace --all-targets -- -D warnings              # BLOCKING CI gate (needs the wasm32-unknown-unknown target)
 # CI's lint job pins Rust 1.100.0 and also lints datafusion,polars and the excluded crates

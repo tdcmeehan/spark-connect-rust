@@ -161,6 +161,7 @@ jobs:
       - name: Feature-gated unit tests
         run: |
           cargo test -p apache-spark-connect -p apache-spark-connect-core -p apache-spark-connect-async --features rust-udf
+          cargo test -p apache-spark-connect-async --features blocking,rust-udf
           cargo test -p apache-spark-connect-macros
 
       - name: Build the macro/build helpers and the UDF crates + examples
