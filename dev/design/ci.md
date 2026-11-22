@@ -38,7 +38,8 @@ This workflow validates the pure-Rust implementation:
   `apache-spark-connect-build`). `pyspark-rs` is not a default member, so the Python workflows
   build it separately.
 - **Test**: Runs `cargo test` on `apache-spark-connect`, `apache-spark-connect-core`,
-  `apache-spark-connect-blocking` and `apache-spark-connect-async`, then builds and tests
+  `apache-spark-connect-blocking` and `apache-spark-connect-async`, and on
+  `apache-spark-connect-async` with its `blocking` feature, then builds and tests
   `apache-spark-connect` with the `datafusion,polars` features
 - **No-stub audit**: Runs `scripts/audit_no_stubs.sh` to enforce the "100% coverage, zero stubs"
   rule (see [Design notes](architecture.md))

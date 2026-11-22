@@ -158,7 +158,8 @@ jobs:
           # alone never executed those tests, so its files reflected only incidental e2e coverage
           # (e.g. error.rs at ~35%), dragging the total below 90%.
           cargo llvm-cov --no-cfg-coverage --no-report -p apache-spark-connect -p apache-spark-connect-core \
-            -p apache-spark-connect-blocking -p apache-spark-connect-async
+            -p apache-spark-connect-blocking -p apache-spark-connect-async \
+            --features apache-spark-connect-async/blocking,apache-spark-connect-async/rust-udf,apache-spark-connect-async/datafusion,apache-spark-connect-async/polars
           # The second line of tests is the ML live tests that the connect-e2e job of
           # build_python_connect.yml runs: keep the two lists in sync. Without them, the native ML
           # code counts only its unit and golden tests.
